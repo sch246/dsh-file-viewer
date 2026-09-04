@@ -169,7 +169,7 @@ case "$MODE" in
     echo 'setup: no service restart was performed; Bundle membership takes effect at the next externally managed start'
     ;;
   *)
-    echo 'usage: pnpm setup -- [--check|--apply|--install]' >&2
+    echo 'usage: pnpm run setup [--check|--apply|--install]' >&2
     exit 2
     ;;
 esac

@@ -138,7 +138,7 @@ NODE
     echo 'uninstall: no service restart was performed; the running Bundle set is unchanged until its next externally managed start'
     ;;
   *)
-    echo 'usage: pnpm uninstall -- [--check|--remove]' >&2
+    echo 'usage: pnpm run uninstall [--check|--remove]' >&2
     exit 2
     ;;
 esac

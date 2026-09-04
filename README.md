@@ -102,9 +102,9 @@ pnpm install
 DSH_CHECKOUT=/path/to/deepseek-harness pnpm run typecheck
 DSH_CHECKOUT=/path/to/deepseek-harness pnpm run build
 
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm setup
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm setup -- --apply
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm setup -- --install
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run setup --check
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run setup --apply
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run setup --install
 ```
 
 `--apply` changes only compatible Harness source and records the exact patch digest and ownership in the checkout's Git-private receipt. `--install` requires that exact patch, rebuilds Harness libraries and both plugin packages, then adds the viewer Bundle and editor package to the profile in one pnpm transaction. The post-install checks require both dependency and lockfile entries, both exact local links, one viewer Bundle entry, no editor Bundle entry, and both composed graph rows.
@@ -119,8 +119,8 @@ Bundle membership takes effect when an external operator next starts the profile
 Uninstall also defaults to read-only inspection. Explicit removal removes whichever of the two profile dependencies are present in one transaction and reverses Host source only when the receipt proves this setup applied the same patch bytes.
 
 ```sh
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm uninstall
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm uninstall -- --remove
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run uninstall --check
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run uninstall --remove
 ```
 
 If an owned patch has drifted or the receipt names another digest, removal fails before changing the profile or Host source. If the patch existed before setup, removal preserves it. A successful owned reversal rebuilds Harness libraries and leaves service activation to the external operator.

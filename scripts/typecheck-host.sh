@@ -12,6 +12,12 @@ if [ "$(node -p "require('$CHECKOUT/package.json').version")" != "0.1.2-alpha.2"
   echo "typecheck: DSH_CHECKOUT must be DeepSeek Harness 0.1.2-alpha.2" >&2
   exit 1
 fi
+if [ -e "$ROOT/harness" ] && [ ! -L "$ROOT/harness" ]; then
+  echo "typecheck: refusing to replace non-symlink $ROOT/harness" >&2
+  exit 1
+fi
+rm -f "$ROOT/harness"
+ln -s "$CHECKOUT" "$ROOT/harness"
 
 cd "$ROOT"
 pnpm exec tsc -p packages/dsh-file-viewer/tsconfig.host.json --pretty false --noEmit
