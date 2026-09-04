@@ -1,13 +1,28 @@
-import { writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
-import { WorkspaceTypertGenerator } from '@deepseek-ai/dsh-typert-generator'
 
-const root = new URL('..', import.meta.url).pathname
-const [artifact] = new WorkspaceTypertGenerator(root, { checkDiagnostics: false })
+const root = join(import.meta.dirname, '..')
+const checkout = process.env.DSH_CHECKOUT
+if (checkout === undefined || checkout === '') {
+  throw new Error('generate-typert: set DSH_CHECKOUT to an explicit DeepSeek Harness alpha.2 checkout')
+}
+const generatorEntry = join(checkout, 'packages/typert/generator/lib/types/index.js')
+if (!existsSync(generatorEntry)) {
+  throw new Error(`generate-typert: Harness generator is not built at ${generatorEntry}`)
+}
+const { WorkspaceTypertGenerator } = await import(pathToFileURL(generatorEntry).href)
+const [artifact] = new WorkspaceTypertGenerator(root, {
+  checkDiagnostics: false,
+  externalProjectReferences: true,
+})
   .generate(['@dsh-external/dsh-file-viewer'], ['host'])
 
 if (artifact === undefined || artifact.remote === undefined) {
-  throw new Error('typert: Host Remote artifact was not generated')
+  throw new Error(
+    'generate-typert: expected one Host artifact with Remote output; '
+    + 'the Harness generator must support externalProjectReferences for this external workspace',
+  )
 }
 
 const output = join(root, artifact.packageRoot, 'lib')

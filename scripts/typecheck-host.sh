@@ -14,4 +14,4 @@ if [ "$(node -p "require('$CHECKOUT/package.json').version")" != "0.1.2-alpha.2"
 fi
 
 cd "$ROOT"
-pnpm exec tsc -b tsconfig.host.json --pretty false
+pnpm exec tsc -p packages/dsh-file-viewer/tsconfig.host.json --pretty false --noEmit

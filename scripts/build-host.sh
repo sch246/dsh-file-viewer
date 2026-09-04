@@ -3,6 +3,18 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE="$ROOT/packages/dsh-file-viewer"
+CHECKOUT="${DSH_CHECKOUT:?build: set DSH_CHECKOUT to an explicit DeepSeek Harness alpha.2 checkout}"
+
+if [ ! -f "$CHECKOUT/package.json" ]; then
+  echo "build: invalid DSH_CHECKOUT: $CHECKOUT" >&2
+  exit 1
+fi
+if [ -e "$ROOT/harness" ] && [ ! -L "$ROOT/harness" ]; then
+  echo "build: refusing to replace non-symlink $ROOT/harness" >&2
+  exit 1
+fi
+rm -f "$ROOT/harness"
+ln -s "$CHECKOUT" "$ROOT/harness"
 
 bash "$ROOT/scripts/typecheck-host.sh"
 rm -rf "$PACKAGE/lib/index.js" "$PACKAGE/lib/index.js.map" \

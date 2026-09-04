@@ -11,14 +11,20 @@
     "typecheck:host": "bash scripts/typecheck-host.sh",
     "test": "pnpm run test:host",
     "test:host": "vitest run packages/dsh-file-viewer/tests",
-    "setup": "bash scripts/setup.sh",
-    "uninstall": "bash scripts/uninstall.sh"
+    "setup": "bash scripts/setup-host.sh",
+    "uninstall": "bash scripts/uninstall-host.sh"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.0-rc",
+    "@deepseek-ai/dsh-brand": "^0.1.2-alpha.2",
     "@deepseek-ai/dsh-fs": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-invariants": "^0.1.2-alpha.2",
+    "@deepseek-ai/dsh-llm": "^0.1.2-alpha.2",
+    "@deepseek-ai/dsh-sandbox": "^0.1.2-alpha.2",
+    "@deepseek-ai/dsh-scope": "^0.1.2-alpha.2",
     "@deepseek-ai/dsh-session": "0.1.2-alpha.2",
     "@deepseek-ai/dsh-session-persistence": "0.1.2-alpha.2",
+    "@deepseek-ai/dsh-timeout": "^0.1.2-alpha.2",
     "@deepseek-ai/dsh-typert-generator": "0.1.2-alpha.2",
     "@deepseek-ai/dsh-typert-protocol": "0.1.2-alpha.2",
     "@deepseek-ai/schemastery": "^3.18.2",
