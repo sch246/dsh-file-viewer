@@ -64,6 +64,8 @@ export type FileViewerSessionSnapshot =
     readonly baseline: string
     readonly version?: unknown
     readonly saving: boolean
+    readonly saveSupported: boolean
+    readonly externalOpenSupported: boolean
     readonly failure?: FileViewerFailure
   }
 
@@ -166,6 +168,8 @@ export class FileViewerService {
         baseline: loaded.text,
         ...(loaded.version === undefined ? {} : { version: loaded.version }),
         saving: false,
+        saveSupported: source.save !== undefined,
+        externalOpenSupported: source.openExternal !== undefined,
       }
       this.notify(record)
     } catch (error: unknown) {
