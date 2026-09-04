@@ -16,10 +16,10 @@ export interface FileViewerEditorHandle {
 }
 
 const theme = EditorView.theme({
-  '&': { height: '100%', color: 'var(--dsw-text-primary)', backgroundColor: 'var(--dsw-surface-primary)' },
-  '.cm-content': { caretColor: 'var(--dsw-accent-primary)', fontFamily: 'var(--dsw-font-mono)' },
-  '.cm-cursor': { borderLeftColor: 'var(--dsw-accent-primary)' },
-  '.cm-gutters': { backgroundColor: 'var(--dsw-surface-secondary)', color: 'var(--dsw-text-secondary)', border: 'none' },
+  '&': { height: '100%', color: 'var(--dsw-alias-label-primary)', backgroundColor: 'var(--dsw-alias-bg-layer-1)' },
+  '.cm-content': { caretColor: 'var(--dsw-alias-brand-primary)', fontFamily: 'monospace' },
+  '.cm-cursor': { borderLeftColor: 'var(--dsw-alias-brand-primary)' },
+  '.cm-gutters': { backgroundColor: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)', border: 'none' },
   '&.cm-focused': { outline: 'none' },
 })
 

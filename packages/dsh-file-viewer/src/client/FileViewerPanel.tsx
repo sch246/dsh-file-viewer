@@ -1,7 +1,4 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type {
-  InjectFace, PropsLocale, PropsRuntime,
-} from '@deepseek-ai/dsh-client-ui-slots'
 import type { FileViewerEditorModule } from './editor-module.ts'
 import type { FileViewerFailure, FileViewerSessionSnapshot } from './service.ts'
 import { isFileViewerDirty } from './service.ts'
@@ -20,9 +17,8 @@ export interface FileViewerPanelInjected {
 
 /** Composed Files tab props. */
 export type FileViewerPanelProps =
-  & PropsRuntime<'rightbar.tab'>
-  & InjectFace<FileViewerPanelInjected>
-  & PropsLocale<typeof NS>
+  & FileViewerPanelInjected
+  & { readonly t: (key: import('./locales.ts').FileViewerLocaleKey) => string }
 
 function failureKey(failure: FileViewerFailure):
   | 'sourceUnavailable'

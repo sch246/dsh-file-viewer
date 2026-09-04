@@ -26,7 +26,7 @@
     "cordis.patch.yml",
     "README.md"
   ],
-  "scripts": { "build": "bash ../../scripts/build-host.sh" },
+  "scripts": { "build": "bash ../../scripts/build-host.sh", "typecheck": "bash ../../scripts/typecheck-host.sh" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
@@ -35,6 +35,8 @@
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-api-session-controller",
         "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-modules",
+        "@deepseek-ai/dsh-client-ui-chat",
         "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-ui-slots",
         "@dsh-external/dsh-right-sidebar"
@@ -58,5 +60,8 @@
     "@dsh-external/dsh-file-viewer-editor": "0.1.0",
     "@dsh-external/dsh-right-sidebar": "0.0.1",
     "react": "^18.2.0"
+  },
+  "dependencies": {
+    "@dsh-external/dsh-file-viewer-editor": "workspace:^"
   }
 }

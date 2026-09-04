@@ -21,12 +21,6 @@ export type FileViewerLocaleKey =
   | 'saveFailed'
   | 'externalOpenFailed'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface LocaleNamespaceMap {
-    'file-viewer': FileViewerLocaleKey
-  }
-}
-
 export const en: Record<FileViewerLocaleKey, string> = {
   tab: 'Files',
   empty: 'Open a file to preview it here.',

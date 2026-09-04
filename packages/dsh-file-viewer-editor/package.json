@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/dsh-file-viewer-editor",
   "version": "0.1.0",
-  "description": "Lazy CodeMirror editor client module for dsh-file-viewer",
+  "description": "CodeMirror editor graph row materialized by dsh-file-viewer on first ready document",
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",
@@ -12,6 +12,7 @@
     "./package.json": "./package.json"
   },
   "files": ["lib", "README.md"],
+  "scripts": { "build": "bash ../../scripts/build-host.sh" },
   "dsh": { "client": { "platform": "web" } },
   "dependencies": {
     "@codemirror/state": "^6.5.2",

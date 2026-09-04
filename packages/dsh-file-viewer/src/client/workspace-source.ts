@@ -10,6 +10,7 @@ import {
 
 /** Generated-Remote method shape consumed by the workspace adapter. */
 export interface FileViewerWorkspaceRemoteClient {
+  openMode(): Promise<RemoteResult<'preview' | 'system' | 'preview-or-system'>>
   load(request: WorkspaceLoadRequest, signal?: AbortSignal): Promise<RemoteResult<WorkspaceTextDocument>>
   save(request: WorkspaceSaveRequest, signal?: AbortSignal): Promise<RemoteResult<WorkspaceSaveResult>>
 }
@@ -26,7 +27,7 @@ export interface SessionPathRemoteClient {
 /** Dependencies that keep generated transport and Client Session state outside the source. */
 export interface WorkspaceSourceDependencies {
   readonly workspace: FileViewerWorkspaceRemoteClient
-  readonly session: SessionPathRemoteClient
+  readonly session?: SessionPathRemoteClient
   readonly cwdOf: (sessionId: SessionId) => string | undefined
   readonly externalOpenSupported: boolean
 }
@@ -49,6 +50,9 @@ export function createWorkspaceSource(dependencies: WorkspaceSourceDependencies)
       return { text: value.text, title: value.path, version: value.version }
     },
     save: async (ref, text, version, signal) => {
+      if (typeof version !== 'string' || version === '') {
+        throw new Error('file-viewer: workspace save requires the opaque version returned by load')
+      }
       const value = valueOf(await dependencies.workspace.save({
         sessionId: ref.sessionId,
         path: ref.resourceId,
@@ -57,10 +61,10 @@ export function createWorkspaceSource(dependencies: WorkspaceSourceDependencies)
       }, signal))
       return { version: value.version }
     },
-    ...(dependencies.externalOpenSupported
+    ...(dependencies.externalOpenSupported && dependencies.session !== undefined
       ? {
           openExternal: async (ref, signal): Promise<void> => {
-            valueOf(await dependencies.session.openWorkspacePath({
+            valueOf(await dependencies.session!.openWorkspacePath({
               path: resolveWorkspacePath(dependencies.cwdOf(ref.sessionId), ref.resourceId),
             }, signal))
           },

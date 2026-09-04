@@ -14,13 +14,14 @@ export function createFileViewerClientService(
     registerSource: (source: FileViewerSource) => runtime.registerSource(source),
     open: async (ref: FileViewerDocumentRef): Promise<void> => {
       const loading = runtime.open(ref)
+      let sidebarError: unknown
       try {
         rightSidebar.openTab(ref.sessionId, 'files')
       } catch (error: unknown) {
-        await loading
-        throw error
+        sidebarError = error
       }
       await loading
+      if (sidebarError !== undefined) throw sidebarError
     },
     snapshot: (sessionId: SessionId) => runtime.snapshot(sessionId),
     subscribe: (sessionId: SessionId, listener: () => void) => runtime.subscribe(sessionId, listener),

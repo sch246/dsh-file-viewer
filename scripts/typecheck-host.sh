@@ -15,3 +15,6 @@ fi
 
 cd "$ROOT"
 pnpm exec tsc -p packages/dsh-file-viewer/tsconfig.host.json --pretty false --noEmit
+node "$ROOT/scripts/generate-typert-host.mjs"
+pnpm exec tsc -p packages/dsh-file-viewer/tsconfig.client.json --pretty false --noEmit
+pnpm exec tsc -p packages/dsh-file-viewer-editor/tsconfig.json --pretty false --noEmit

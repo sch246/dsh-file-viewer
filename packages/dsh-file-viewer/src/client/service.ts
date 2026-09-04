@@ -52,6 +52,14 @@ export interface FileViewerFailure {
   readonly message?: string
 }
 
+/** Stable rejection raised after the corresponding failed snapshot is published. */
+export class FileViewerOpenError extends Error {
+  constructor(readonly failure: FileViewerFailure, options?: ErrorOptions) {
+    super(`file-viewer: ${failure.code}${failure.message === undefined ? '' : `: ${failure.message}`}`, options)
+    this.name = 'FileViewerOpenError'
+  }
+}
+
 export type FileViewerSessionSnapshot =
   | { readonly status: 'idle' }
   | { readonly status: 'loading'; readonly ref: FileViewerDocumentRef }
@@ -155,7 +163,7 @@ export class FileViewerService {
       this.finish(record, operation)
       record.snapshot = { status: 'failed', ref, failure: { code: 'source-unavailable' } }
       this.notify(record)
-      return
+      throw new FileViewerOpenError(record.snapshot.failure)
     }
     try {
       const loaded = await source.load(ref, operation.controller.signal)
@@ -174,8 +182,10 @@ export class FileViewerService {
       this.notify(record)
     } catch (error: unknown) {
       if (!this.isCurrent(record, operation)) return
-      record.snapshot = { status: 'failed', ref, failure: { code: 'load-failed', message: errorMessage(error) } }
+      const failure = { code: 'load-failed', message: errorMessage(error) } as const
+      record.snapshot = { status: 'failed', ref, failure }
       this.notify(record)
+      throw new FileViewerOpenError(failure, { cause: error })
     } finally {
       this.finish(record, operation)
     }
