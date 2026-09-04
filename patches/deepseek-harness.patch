@@ -1,0 +1,356 @@
+diff --git a/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.i18n.yaml b/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.i18n.yaml
+new file mode 100644
+index 0000000000..fff3d3a800
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.i18n.yaml
+@@ -0,0 +1,6 @@
++# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
++# side as of the last confirmed-consistent state. Both languages carry equal authority;
++# after editing either side, bring the other along and re-record with:
++#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.md
++2026-09-05-chat-workspace-file-open-waterfall.md: 51a2184153e6d67a1e3c0f3782e5facd6139296d
++2026-09-05-chat-workspace-file-open-waterfall.zh.md: 3b385ffd95fa6ca6492cd1481f60d09fbd351ea0
+diff --git a/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.md b/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.md
+new file mode 100644
+index 0000000000..51a2184153
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.md
+@@ -0,0 +1,29 @@
++# Agent Note: Chat workspace-file open waterfall
++
++Status: implemented
++
++English | [中文](2026-09-05-chat-workspace-file-open-waterfall.zh.md)
++
++## Problem
++
++Chat exposes one `ChatViewInjected.openFile` callback to tool rows, produced-file links, and closing-message mentions. The callback directly invoked the native Host opener, so a Client plugin could not present the file itself without replacing Chat presentation code or adding a second file-open registry.
++
++## Decision
++
++`ChatViewInjected.openFile` dispatches the typed `chat/open-workspace-file` waterfall for file paths. Its request carries the addressed `SessionId` and the workspace path. A listener handles the request by returning without `next()` and delegates by returning `next()`; one request therefore reaches either the handling listener or the terminal native action, never both.
++
++The terminal action preserves the native behavior: it resolves the path with `resolveWorkspacePath(cwd, path)`, calls `session/openWorkspacePath`, and rejects on a Remote refusal. Listener throws and rejections also propagate unchanged to Chat's busy, retry, and stale-settlement handling. The Produced Files **Show in folder** action passes `.` directly to the terminal native action, so directory opening is outside the file waterfall.
++
++The event belongs to ui-chat and names no viewer implementation. An external Client plugin can depend on the exported request type and register an ordinary Cordis listener; ui-chat has no dependency on that plugin.
++
++## Alternatives considered
++
++**Add a file-viewer registry.** Rejected because Cordis already provides ordered, disposable middleware and the Chat callback is the single file-open entry point.
++
++**Always open natively and notify viewers afterward.** Rejected because it double-opens handled files and gives a viewer no way to replace the native action.
++
++**Catch listener failures and fall back to native opening.** Rejected because an unexpected viewer failure would open a second application and hide the failure from Chat's existing retry UI.
++
++## Consequences
++
++Client plugins can replace file opening per request or delegate to the native Host behavior. Focused ui-chat tests pin native fallback, handled short-circuiting, explicit delegation, request identity, error propagation, and the unchanged workspace-folder path. The tool-row file-open decision remains the owner of link presentation and Host opener policy ([tool-call file open](../feature/2026-07-28-tool-call-file-open-in-os.md)).
+diff --git a/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.zh.md b/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.zh.md
+new file mode 100644
+index 0000000000..3b385ffd95
+--- /dev/null
++++ b/.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.zh.md
+@@ -0,0 +1,29 @@
++# Agent Note: Chat workspace 文件打开 waterfall
++
++Status: implemented
++
++[English](2026-09-05-chat-workspace-file-open-waterfall.md) | 中文
++
++## 问题
++
++Chat 通过唯一的 `ChatViewInjected.openFile` 回调服务于工具行、产出文件链接和收尾消息中的文件提及。该回调直接调用原生 Host 打开器，因此 Client 插件若要自行呈现文件，就必须替换 Chat 呈现代码或另建一套文件打开 registry。
++
++## 决策
++
++`ChatViewInjected.openFile` 对文件路径分发 typed `chat/open-workspace-file` waterfall。请求携带目标 `SessionId` 和 workspace 路径。listener 不调用 `next()` 而直接返回时处理请求，返回 `next()` 时委托请求；因此一个请求只会到达处理它的 listener 或末端原生操作，不会同时到达两者。
++
++末端操作精确保留原生行为：它通过 `resolveWorkspacePath(cwd, path)` 解析路径、调用 `session/openWorkspacePath`，并在 Remote 拒绝时 reject。listener 抛错或 reject 也原样传播到 Chat 的 busy、重试和陈旧结果处理。Produced Files 的**在文件夹中显示**操作会把 `.` 直接交给末端原生操作，因此目录打开不进入文件 waterfall。
++
++该事件由 ui-chat 持有，其名称不指向任何 viewer 实现。外部 Client 插件可以依赖导出的请求类型并注册普通 Cordis listener；ui-chat 不依赖该插件。
++
++## 考虑过的替代方案
++
++**增加文件 viewer registry。** 否决，因为 Cordis 已提供有序且可 dispose 的 middleware，而 Chat 回调就是唯一的文件打开入口。
++
++**始终原生打开，再通知 viewer。** 否决，因为这会重复打开已处理的文件，也不允许 viewer 替代原生操作。
++
++**捕获 listener 失败并回退到原生打开。** 否决，因为 viewer 意外失败时会打开另一个应用，并向 Chat 既有的重试 UI 隐藏失败。
++
++## 后果
++
++Client 插件可以逐请求替换文件打开行为，或委托给原生 Host 行为。ui-chat 聚焦测试固定原生回退、已处理请求的短路、显式委托、请求身份、错误传播和不变的 workspace 文件夹路径。工具行文件打开决策继续持有链接呈现和 Host 打开器策略（[工具调用文件打开](../feature/2026-07-28-tool-call-file-open-in-os.zh.md)）。
+diff --git a/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.i18n.yaml b/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.i18n.yaml
+index 85a24356aa..084a13a3f4 100644
+--- a/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.i18n.yaml
++++ b/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.md
+-2026-07-28-tool-call-file-open-in-os.md: 4655af04243b28284cf46c058a472ee658d9a035
+-2026-07-28-tool-call-file-open-in-os.zh.md: 769aeaeaa74af54aef60521505a8ed107500fa8a
++2026-07-28-tool-call-file-open-in-os.md: 3eeb75e56e51af23c2443feab8812a7aae9bd72c
++2026-07-28-tool-call-file-open-in-os.zh.md: f590db823f9181ae4c5f6c360d1625f2099f82b9
+diff --git a/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.md b/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.md
+index 4655af0424..3eeb75e56e 100644
+--- a/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.md
++++ b/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.md
+@@ -10,14 +10,14 @@ Chat tool rows treated the whole summary line as a click target that opened the
+ 
+ ## Decision
+ 
+-File-tool path summaries (`read` / `write` / `edit` args carrying `path` or `file_path`) render as links underlined at rest with a pointer cursor. Clicking the path calls `session/openWorkspacePath` through the chat view's `openFile` injection; the chat view resolves relative paths against the addressed Session's cwd when it is known. File-link rows disable args expand (leading icon is inert); whole-row click, row hover fill, and the click-to-open-details gesture are removed from tool rows (including bash and todo registrations). The details panel and its inject surface remain for programmatic selection; rows no longer drive them.
++File-tool path summaries (`read` / `write` / `edit` args carrying `path` or `file_path`) render as links underlined at rest with a pointer cursor. Clicking the path calls the chat view's `openFile` injection, which dispatches the typed file-open waterfall before its `session/openWorkspacePath` fallback ([file-open extension point](../architecture/2026-09-05-chat-workspace-file-open-waterfall.md)). File-link rows disable args expand (leading icon is inert); whole-row click, row hover fill, and the click-to-open-details gesture are removed from tool rows (including bash and todo registrations). The details panel and its inject surface remain for programmatic selection; rows no longer drive them.
+ 
+ `session/openWorkspacePath` uses the authenticated Remote carrier, while the product UI offers the gesture only on a loopback page whose `session/canOpenWorkspacePath` result is true. Platform adapters open without a shell: `open` on macOS, PowerShell `Invoke-Item` on Windows, and `xdg-open` on desktop Linux; browser-renderable documents prefer the named default browser on macOS and desktop Linux. WSL is a separate host shape despite Node reporting `linux`: the adapter recognizes its environment or Microsoft kernel release, translates the Linux path with `wslpath -w`, and passes the resulting Windows/UNC path to the same PowerShell handoff. The opener's platform facts and command runner are injectable for tests. URL-only read args (`web_fetch`) are not file links.
+ 
+ ## Alternatives considered
+ 
+ - Keep row-click details and add a separate file affordance — rejected; the product ask replaces the row gesture with the file link.
+-- Open files inside an in-app preview — rejected; the ask is the OS default application.
++- Make an in-app preview the mandatory opener — rejected; the Host default application remains the fallback, while an optional Client plugin can handle the file-open waterfall.
+ - Treat WSL as desktop Linux — rejected; a WSL process reports `linux`, but a Linux desktop association is optional while its ordinary operator desktop and browser live on Windows.
+ - Reuse `host.pickDirectory`'s timeout exemption — unnecessary; path open hand-off completes quickly under the normal unary deadline.
+ 
+diff --git a/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.zh.md b/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.zh.md
+index 769aeaeaa7..f590db823f 100644
+--- a/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.zh.md
++++ b/.agents/notes/implemented/feature/2026-07-28-tool-call-file-open-in-os.zh.md
+@@ -10,14 +10,14 @@ Status: implemented
+ 
+ ## 决策
+ 
+-文件工具的路径摘要（`read`／`write`／`edit` 参数中的 `path` 或 `file_path`）渲染为静止状态下即带下划线的链接，并使用 pointer 光标。点击路径会经聊天视图的 `openFile` injection 调用 `session/openWorkspacePath`；聊天视图会在目标 Session 的 cwd 已知时据此解析相对路径。带文件链接的行关闭参数展开（左侧图标不可点）；工具行（含 bash 与 todo 注册）去掉整行点击、整行悬停底色，以及点击打开 details 的手势。details 面板及其 inject 面仍保留供程序化选择；工具行不再驱动它们。
++文件工具的路径摘要（`read`／`write`／`edit` 参数中的 `path` 或 `file_path`）渲染为静止状态下即带下划线的链接，并使用 pointer 光标。点击路径会调用聊天视图的 `openFile` injection；该 injection 先分发 typed 文件打开 waterfall，再回退到 `session/openWorkspacePath`（[文件打开扩展点](../architecture/2026-09-05-chat-workspace-file-open-waterfall.zh.md)）。带文件链接的行关闭参数展开（左侧图标不可点）；工具行（含 bash 与 todo 注册）去掉整行点击、整行悬停底色，以及点击打开 details 的手势。details 面板及其 inject 面仍保留供程序化选择；工具行不再驱动它们。
+ 
+ `session/openWorkspacePath` 使用经过认证的 Remote carrier，而产品 UI 只在 loopback 页面且 `session/canOpenWorkspacePath` 结果为 true 时提供该手势。平台适配器不经 shell 打开：macOS 为 `open`，Windows 为 PowerShell `Invoke-Item`，桌面 Linux 为 `xdg-open`；浏览器可渲染的文档会在 macOS 与桌面 Linux 上优先使用指定的默认浏览器。尽管 Node 将 WSL 报告为 `linux`，WSL 仍是一种独立的宿主形态：适配器根据其环境或 Microsoft 内核 release 识别它，用 `wslpath -w` 转换 Linux 路径，并将所得 Windows/UNC 路径交给同一 PowerShell 交接。打开器的平台信息和命令运行器可在测试中注入。仅含 URL 的 read 参数（`web_fetch`）不是文件链接。
+ 
+ ## 考虑过的替代方案
+ 
+ - 保留整行点击打开 details，另加文件入口 — 否决；产品要求用文件链接替换整行手势。
+-- 在应用内预览文件 — 否决；要求是操作系统默认应用。
++- 将应用内预览设为强制打开器 — 否决；Host 默认应用仍是回退行为，可选 Client 插件可以处理文件打开 waterfall。
+ - 将 WSL 当作桌面 Linux — 否决；WSL 进程报告 `linux`，但 Linux 桌面文件关联并非必有，而其常规用户桌面和浏览器位于 Windows 上。
+ - 复用 `host.pickDirectory` 的超时豁免 — 不必要；打开路径的交接在常规一元截止时间内即可完成。
+ 
+diff --git a/packages/client/ui-chat/README.i18n.yaml b/packages/client/ui-chat/README.i18n.yaml
+index a38a72ef3e..07ba49fd2d 100644
+--- a/packages/client/ui-chat/README.i18n.yaml
++++ b/packages/client/ui-chat/README.i18n.yaml
+@@ -2,5 +2,5 @@
+ # side as of the last confirmed-consistent state. Both languages carry equal authority;
+ # after editing either side, bring the other along and re-record with:
+ #   pnpm run verify-translation-pairing --write packages/client/ui-chat/README.md
+-README.md: 5c7549da07e8101c6b08b4cad57afd5158980b7f
+-README.zh.md: a558bf94f5436eebdf035ca7507ecd25ec3c8d8a
++README.md: 83062edd3fa13a0a41c2bbbbf0260427a8d763d4
++README.zh.md: 8bce7a1613031964bc07f253343d1dc582e4e6d0
+diff --git a/packages/client/ui-chat/README.md b/packages/client/ui-chat/README.md
+index 5c7549da07..83062edd3f 100644
+--- a/packages/client/ui-chat/README.md
++++ b/packages/client/ui-chat/README.md
+@@ -13,6 +13,7 @@ The browser Chat target for Conversation assembly. It registers Chat event defin
+ ## Table of Contents
+ 
+ - [System prompt row](#system-prompt-row)
++- [File opening](#file-opening)
+ - [Turn token usage](#turn-token-usage)
+ - [Turn Process Folding](#turn-process-folding)
+ - [Model Experience](#model-experience)
+@@ -28,6 +29,13 @@ Chat shows a collapsed `System prompt` row for each non-empty initial or resumed
+ 
+ -----
+ 
++<a id="file-opening"></a>
++## File opening
++
++Chat sends file links through the typed `chat/open-workspace-file` waterfall with the addressed Session id and workspace path. A Client plugin handles the request by returning without `next()` or delegates to the native opener with `next()`; the terminal action resolves the path against the Session cwd and calls `session/openWorkspacePath`. Handler failures reach Chat's existing retry dialog. The Show in folder action keeps its direct native `.` request and does not enter the file waterfall ([decision](../../../.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.md)).
++
++-----
++
+ <a id="turn-token-usage"></a>
+ ## Turn token usage
+ 
+diff --git a/packages/client/ui-chat/README.zh.md b/packages/client/ui-chat/README.zh.md
+index a558bf94f5..8bce7a1613 100644
+--- a/packages/client/ui-chat/README.zh.md
++++ b/packages/client/ui-chat/README.zh.md
+@@ -13,6 +13,7 @@ Conversation 组装的浏览器 Chat target。本包注册 Chat event definition
+ ## 目录
+ 
+ - [系统提示词行](#system-prompt-row)
++- [文件打开](#file-opening)
+ - [轮次 token 用量](#turn-token-usage)
+ - [轮次过程折叠](#turn-process-folding)
+ - [模型体验](#model-experience)
+@@ -28,6 +29,13 @@ Chat 会为每个非空的初始或恢复请求、显式消息序列起点或真
+ 
+ -----
+ 
++<a id="file-opening"></a>
++## 文件打开
++
++Chat 通过 typed `chat/open-workspace-file` waterfall（瀑布式事件）发送文件链接，并携带目标 Session id 与 workspace 路径。Client 插件可以不调用 `next()` 而直接返回以处理请求，也可以调用 `next()` 委托给原生打开器；末端操作会基于 Session cwd 解析路径并调用 `session/openWorkspacePath`。handler 失败会进入 Chat 既有的重试对话框。「在文件夹中显示」操作继续直接发送原生 `.` 请求，不进入文件 waterfall（[决策](../../../.agents/notes/implemented/architecture/2026-09-05-chat-workspace-file-open-waterfall.zh.md)）。
++
++-----
++
+ <a id="turn-token-usage"></a>
+ ## 轮次 token 用量
+ 
+diff --git a/packages/client/ui-chat/src/client/apply.ts b/packages/client/ui-chat/src/client/apply.ts
+index be061dff13..b0dbea3f92 100644
+--- a/packages/client/ui-chat/src/client/apply.ts
++++ b/packages/client/ui-chat/src/client/apply.ts
+@@ -83,6 +83,13 @@ export function apply(ctx: Context): void {
+   const transcriptView = new TranscriptViewPolicy(
+     ctx.settingsScope.bind<ChatSettings>({ namespace: CHAT_SETTINGS_NAMESPACE }),
+   )
++  const openNativeWorkspacePath = async (sessionId: SessionId, path: string): Promise<void> => {
++    const cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
++    const result = await ctx.remote.session.openWorkspacePath({
++      path: resolveWorkspacePath(cwd, path),
++    })
++    if (!result.ok) throw new Error(`path open failed: ${result.error.message}`)
++  }
+ 
+   ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+     name: 'settings.general.item',
+@@ -117,13 +124,13 @@ export function apply(ctx: Context): void {
+             ctx.layout.openDetails()
+           },
+           fileMentions: (owner: TurnTailOwnerProps) => ctx.get('chatFileMentions')?.forClosing(owner),
+-          openFile: async (path) => {
+-            const cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
+-            const result = await ctx.remote.session.openWorkspacePath({
+-              path: resolveWorkspacePath(cwd, path),
+-            })
+-            if (!result.ok) throw new Error(`path open failed: ${result.error.message}`)
+-          },
++          openFile: path => path === '.'
++            ? openNativeWorkspacePath(sessionId, path)
++            : ctx.waterfall(
++              'chat/open-workspace-file',
++              { sessionId, path },
++              () => openNativeWorkspacePath(sessionId, path),
++            ),
+           loadOlder: () => { void session.loadOlder() },
+           loadImage: Object.assign(
+             (attachment: ImageAttachmentRef) => ctx.uiConversation.imageUrl(sessionId, attachment),
+diff --git a/packages/client/ui-chat/src/client/contract/slots.ts b/packages/client/ui-chat/src/client/contract/slots.ts
+index 307d8f703b..b9f8dc7d3b 100644
+--- a/packages/client/ui-chat/src/client/contract/slots.ts
++++ b/packages/client/ui-chat/src/client/contract/slots.ts
+@@ -1,5 +1,6 @@
+ /** Chat-owned Slot declarations and composed component props. */
+ import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
++import type { SessionId } from '@deepseek-ai/dsh-session/types'
+ import type {
+   ConversationTurnDataMap, MessageImageLoader, MessageImagesOwnerProps, RenderMessageImages, TurnLocation,
+ } from '@deepseek-ai/dsh-client-ui-conversation/client'
+@@ -42,11 +43,33 @@ export interface ChatFileMentions {
+   forClosing(owner: TurnTailOwnerProps): MarkdownFileMentions | undefined
+ }
+ 
++/** One Chat request to open a file from a Session workspace. */
++export interface ChatFileOpenRequest {
++  /** Session that owns the workspace path. */
++  readonly sessionId: SessionId
++  /** Path as presented by the workspace-backed Chat node. */
++  readonly path: string
++}
++
+ declare module '@deepseek-ai/cordis' {
+   interface Context {
+     /** Optional prose file-mention provider. */
+     chatFileMentions: ChatFileMentions
+   }
++
++  interface Events {
++    /**
++     * Let a Client plugin handle one Chat workspace-file open request. A
++     * listener that does not handle the request must call `next()`.
++     * @param request - addressed Session and workspace path.
++     * @dshScopeScan unsupported
++     * @mode waterfall
++     */
++    'chat/open-workspace-file'(
++      request: ChatFileOpenRequest,
++      next: () => Promise<void>,
++    ): Promise<void>
++  }
+ }
+ 
+ /** Hook constrained to business data published on the current Chat Node's Turn. */
+diff --git a/packages/client/ui-chat/src/client/index.ts b/packages/client/ui-chat/src/client/index.ts
+index f45b686af5..d4fe8cc6ad 100644
+--- a/packages/client/ui-chat/src/client/index.ts
++++ b/packages/client/ui-chat/src/client/index.ts
+@@ -30,7 +30,7 @@ export type { ChatStoreState, SelectionTarget, ToolCallId, TurnProcessViewEntry
+ export type { TranscriptViewRowInjected, TranscriptViewRowProps } from './settings/TranscriptViewRow.tsx'
+ export type { TranscriptViewMode } from '../chat-settings.ts'
+ export type {
+-  AssistantActionOwnerProps, ChatFileMentions, ChatNodeOwnerProps, ChatNodeTurnDataInjected,
++  AssistantActionOwnerProps, ChatFileMentions, ChatFileOpenRequest, ChatNodeOwnerProps, ChatNodeTurnDataInjected,
+   ChatNodeViewProps, ChatScrollPosition, ChatStore, ChatViewInjected, ChatViewSlotProps,
+   CommandRowOwnerProps, CommandRowProps, DetailsInjected, DetailsSlotProps,
+   DetailsToolOwnerProps, MessageImagesProps,
+diff --git a/packages/client/ui-chat/tests/apply-inject.client.spec.tsx b/packages/client/ui-chat/tests/apply-inject.client.spec.tsx
+index 052c2b3bf8..2eb7cfa104 100644
+--- a/packages/client/ui-chat/tests/apply-inject.client.spec.tsx
++++ b/packages/client/ui-chat/tests/apply-inject.client.spec.tsx
+@@ -133,6 +133,54 @@ describe('Chat inject API', () => {
+     await b.runtime.dispose()
+   })
+ 
++  it('lets a Chat file-open listener handle the addressed workspace path', async () => {
++    const b = await bench()
++    const requests: unknown[] = []
++    b.runtime.ctx.on('chat/open-workspace-file', async (request) => {
++      requests.push(request)
++    })
++
++    await b.chatViewApi(ROOT).injected.openFile('src/a.ts')
++
++    expect(requests).toEqual([{ sessionId: ROOT, path: 'src/a.ts' }])
++    expect(b.openWorkspacePath).not.toHaveBeenCalled()
++    await b.runtime.dispose()
++  })
++
++  it('opens natively only after a Chat file-open listener delegates', async () => {
++    const b = await bench()
++    b.runtime.ctx.on('chat/open-workspace-file', async (_request, next) => next())
++
++    await b.chatViewApi(ROOT).injected.openFile('src/a.ts')
++
++    expect(b.openWorkspacePath).toHaveBeenCalledOnce()
++    expect(b.openWorkspacePath).toHaveBeenCalledWith({ path: '/proj/src/a.ts' })
++    await b.runtime.dispose()
++  })
++
++  it('propagates a Chat file-open listener failure without a native open', async () => {
++    const b = await bench()
++    b.runtime.ctx.on('chat/open-workspace-file', async () => {
++      throw new Error('viewer failed')
++    })
++
++    await expect(b.chatViewApi(ROOT).injected.openFile('src/a.ts')).rejects.toThrow('viewer failed')
++    expect(b.openWorkspacePath).not.toHaveBeenCalled()
++    await b.runtime.dispose()
++  })
++
++  it('keeps the workspace-folder action on the native opener', async () => {
++    const b = await bench()
++    const listener = vi.fn()
++    b.runtime.ctx.on('chat/open-workspace-file', listener)
++
++    await b.chatViewApi(ROOT).injected.openFile('.')
++
++    expect(listener).not.toHaveBeenCalled()
++    expect(b.openWorkspacePath).toHaveBeenCalledWith({ path: '/proj/.' })
++    await b.runtime.dispose()
++  })
++
+   it('fails loud when a Chat View inject resolves no Session', async () => {
+     const b = await bench()
+     const entry = b.runtime.slots.entries('conversation.view')[0]!
