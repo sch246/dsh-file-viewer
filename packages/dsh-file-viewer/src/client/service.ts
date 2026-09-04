@@ -82,9 +82,9 @@ type ReadySnapshot = Extract<FileViewerSessionSnapshot, { status: 'ready' }>
 interface SessionRecord {
   snapshot: FileViewerSessionSnapshot
   generation: number
-  controller?: AbortController
+  controller: AbortController | undefined
   externalGeneration: number
-  externalController?: AbortController
+  externalController: AbortController | undefined
   listeners: Set<() => void>
 }
 
@@ -101,6 +101,16 @@ export function isFileViewerDirty(snapshot: FileViewerSessionSnapshot): boolean 
 function errorMessage(error: unknown): string | undefined {
   const message = error instanceof Error ? error.message : String(error)
   return message === '' ? undefined : message
+}
+
+function failure(code: FileViewerErrorCode, error: unknown): FileViewerFailure {
+  const message = errorMessage(error)
+  return { code, ...(message === undefined ? {} : { message }) }
+}
+
+function clearFailure(snapshot: ReadySnapshot): ReadySnapshot {
+  const { failure: _failure, ...ready } = snapshot
+  return ready
 }
 
 /**
@@ -182,10 +192,10 @@ export class FileViewerService {
       this.notify(record)
     } catch (error: unknown) {
       if (!this.isCurrent(record, operation)) return
-      const failure = { code: 'load-failed', message: errorMessage(error) } as const
-      record.snapshot = { status: 'failed', ref, failure }
+      const loadFailure = failure('load-failed', error)
+      record.snapshot = { status: 'failed', ref, failure: loadFailure }
       this.notify(record)
-      throw new FileViewerOpenError(failure, { cause: error })
+      throw new FileViewerOpenError(loadFailure, { cause: error })
     } finally {
       this.finish(record, operation)
     }
@@ -196,7 +206,7 @@ export class FileViewerService {
     this.assertLive()
     const record = this.record(sessionId)
     if (record.snapshot.status !== 'ready') return
-    record.snapshot = { ...record.snapshot, text, failure: undefined }
+    record.snapshot = { ...clearFailure(record.snapshot), text }
     this.notify(record)
   }
 
@@ -214,18 +224,17 @@ export class FileViewerService {
     }
     const operation = this.begin(record)
     const savedText = current.text
-    record.snapshot = { ...current, saving: true, failure: undefined }
+    record.snapshot = { ...clearFailure(current), saving: true }
     this.notify(record)
     try {
       const saved = await source.save(current.ref, savedText, current.version, operation.controller.signal)
       if (!this.isCurrent(record, operation)) return
       const latest = this.readySnapshot(record)
       record.snapshot = {
-        ...latest,
+        ...clearFailure(latest),
         baseline: savedText,
         ...(saved.version === undefined ? { version: current.version } : { version: saved.version }),
         saving: false,
-        failure: undefined,
       }
       this.notify(record)
     } catch (error: unknown) {
@@ -234,7 +243,7 @@ export class FileViewerService {
       record.snapshot = {
         ...latest,
         saving: false,
-        failure: { code: 'save-failed', message: errorMessage(error) },
+        failure: failure('save-failed', error),
       }
       this.notify(record)
     } finally {
@@ -270,7 +279,7 @@ export class FileViewerService {
     }
     const operation = this.beginExternal(record)
     if (current.failure !== undefined) {
-      record.snapshot = { ...current, failure: undefined }
+      record.snapshot = clearFailure(current)
       this.notify(record)
     }
     try {
@@ -278,7 +287,7 @@ export class FileViewerService {
     } catch (error: unknown) {
       if (!this.isCurrentExternal(record, operation)) return
       const latest = this.readySnapshot(record)
-      record.snapshot = { ...latest, failure: { code: 'external-open-failed', message: errorMessage(error) } }
+      record.snapshot = { ...latest, failure: failure('external-open-failed', error) }
       this.notify(record)
     } finally {
       this.finishExternal(record, operation)
@@ -303,7 +312,9 @@ export class FileViewerService {
       record = {
         snapshot: { status: 'idle' },
         generation: 0,
+        controller: undefined,
         externalGeneration: 0,
+        externalController: undefined,
         listeners: new Set(),
       }
       this.sessions.set(sessionId, record)

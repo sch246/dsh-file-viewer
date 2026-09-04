@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   FileViewerService,
+  FileViewerOpenError,
   FileViewerSourceId,
   isFileViewerDirty,
   type FileViewerDocumentRef,
@@ -223,7 +224,10 @@ describe('FileViewerService', () => {
     const sessionId = sid('session')
     source.enqueueLoad(Promise.reject(new DOMException('source aborted itself', 'AbortError')))
 
-    await service.open(ref(sessionId, source, 'one'))
+    await expect(service.open(ref(sessionId, source, 'one'))).rejects.toMatchObject({
+      name: 'FileViewerOpenError',
+      failure: { code: 'load-failed', message: 'source aborted itself' },
+    })
 
     expect(service.snapshot(sessionId)).toEqual({
       status: 'failed',
@@ -238,7 +242,7 @@ describe('FileViewerService', () => {
     const source = new MemorySource('missing')
     const sessionId = sid('session')
 
-    await service.open(ref(sessionId, source, 'one'))
+    await expect(service.open(ref(sessionId, source, 'one'))).rejects.toBeInstanceOf(FileViewerOpenError)
 
     expect(service.snapshot(sessionId)).toEqual({
       status: 'failed',

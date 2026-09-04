@@ -1,5 +1,12 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
+import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-modules/client'
+import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
+import type { ChatFileOpenRequest } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@dsh-external/dsh-right-sidebar/client'
 import fileViewerRemote from '@dsh-external/dsh-file-viewer/remote'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
@@ -9,9 +16,10 @@ import { createFileViewerClientService } from './face.ts'
 import { FileViewerPanel, type FileViewerPanelInjected } from './FileViewerPanel.tsx'
 import { en, NS, zh } from './locales.ts'
 import { FileViewerService } from './service.ts'
+import type { FileViewerSourceId } from './service.ts'
 import { FILE_VIEWER_CSS } from './styles.ts'
 import {
-  createWorkspaceSource, type FileViewerWorkspaceRemoteClient, type SessionPathRemoteClient,
+  createWorkspaceSource,
 } from './workspace-source.ts'
 
 export type { FileViewerClientService } from './contract.ts'
@@ -21,36 +29,6 @@ export type {
 } from './service.ts'
 export { FileViewerOpenError, FileViewerSourceId } from './service.ts'
 
-interface SessionListSnapshot {
-  readonly byId: Readonly<Record<string, { readonly cwd?: string } | undefined>>
-}
-
-interface FileViewerRuntimeContext {
-  readonly remote: {
-    $mount(contribution: unknown): Promise<() => Promise<void>>
-    readonly fileViewerWorkspace: FileViewerWorkspaceRemoteClient
-  }
-  readonly sessions: { readonly list: { getSnapshot(): SessionListSnapshot } }
-  readonly rightSidebar: import('@dsh-external/dsh-right-sidebar/client').RightSidebarService
-  readonly modules: { import(id: string, base: string, config: object): Promise<unknown> }
-  readonly locale: {
-    register(namespace: string, locales: object): () => void
-    bind(namespace: string): (key: import('./locales.ts').FileViewerLocaleKey) => string
-  }
-  readonly slots: {
-    inject(name: string, callback: () => () => void): () => void
-    register(options: object, component: unknown): () => void
-  }
-  get(name: string): unknown
-  provide(name: 'fileViewer', value: FileViewerClientService): void
-  on(event: 'chat/open-workspace-file', listener: (
-    request: { readonly sessionId: SessionId; readonly path: string },
-    next: () => Promise<void>,
-  ) => Promise<void>): () => void
-  effect(callback: () => () => void, label: string): () => void
-  inject(names: readonly string[], callback: (ctx: Context) => Promise<() => void>): PromiseLike<void> & { dispose(): Promise<void> }
-}
-
 function valueOf<T>(result: RemoteResult<T>): T {
   if (result.ok) return result.value
   throw result.error
@@ -59,22 +37,43 @@ function valueOf<T>(result: RemoteResult<T>): T {
 /** Required bootstrap service; feature dependencies wait for the mounted generated namespace. */
 export const inject = ['remote']
 
-async function registerRuntime(baseCtx: Context): Promise<() => void> {
-  const ctx = baseCtx as unknown as FileViewerRuntimeContext
-  const mode = valueOf(await ctx.remote.fileViewerWorkspace.openMode())
-  const sessionRemote = ctx.get('remote.session') as SessionPathRemoteClient | undefined
-  let externalOpenSupported = false
-  if (sessionRemote !== undefined) {
-    const capability = await sessionRemote.canOpenWorkspacePath()
-    externalOpenSupported = capability.ok && capability.value
+/** Build the Chat waterfall listener for the configured Host routing policy. */
+export function createWorkspaceFileOpenListener(
+  mode: 'preview' | 'system' | 'preview-or-system',
+  sourceId: FileViewerSourceId,
+  open: FileViewerClientService['open'],
+): (request: ChatFileOpenRequest, next: () => Promise<void>) => Promise<void> {
+  return async (request, next) => {
+    if (mode === 'system') return await next()
+    const ref = { sessionId: request.sessionId, sourceId, resourceId: request.path }
+    if (mode === 'preview') {
+      await open(ref)
+      return
+    }
+    try {
+      await open(ref)
+    } catch {
+      return await next()
+    }
   }
+}
+
+async function registerRuntime(ctx: Context): Promise<() => void> {
+  const mode = valueOf<'preview' | 'system' | 'preview-or-system'>(
+    await ctx.remote.fileViewerWorkspace.openMode(),
+  )
+  let externalOpenSupported = false
+  try {
+    const capability = await ctx.remote.session.canOpenWorkspacePath()
+    externalOpenSupported = capability.ok && capability.value
+  } catch { /* External open capability does not gate the viewer. */ }
 
   const runtime = new FileViewerService()
   const face: FileViewerClientService = createFileViewerClientService(runtime, ctx.rightSidebar)
   ctx.provide('fileViewer', face)
   const workspace = createWorkspaceSource({
     workspace: ctx.remote.fileViewerWorkspace,
-    ...(sessionRemote === undefined ? {} : { session: sessionRemote }),
+    session: ctx.remote.session,
     cwdOf: (sessionId: SessionId) => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd,
     externalOpenSupported,
   })
@@ -91,20 +90,10 @@ async function registerRuntime(baseCtx: Context): Promise<() => void> {
     return editorModule
   }
 
-  const offOpen = ctx.on('chat/open-workspace-file', async (request, next) => {
-    if (mode === 'system') return await next()
-    const ref = { sessionId: request.sessionId, sourceId: workspace.id, resourceId: request.path }
-    if (mode === 'preview') {
-      await face.open(ref)
-      return
-    }
-    try {
-      await face.open(ref)
-      return
-    } catch {
-      return await next()
-    }
-  })
+  const offOpen = ctx.on(
+    'chat/open-workspace-file',
+    createWorkspaceFileOpenListener(mode, workspace.id, ref => face.open(ref)),
+  )
 
   const offPresentation = ctx.effect(() => {
     const offLocale = ctx.locale.register(NS, { zh, en })
@@ -118,13 +107,13 @@ async function registerRuntime(baseCtx: Context): Promise<() => void> {
   const t = ctx.locale.bind(NS)
   const offTab = ctx.slots.inject('rightbar.tab', () => ctx.slots.register({
     name: 'rightbar.tab', id: 'files', order: 0, label: () => t('tab'), locale: NS,
-    inject: (sessionId: SessionId): FileViewerPanelInjected => ({
-      snapshot: () => face.snapshot(sessionId),
-      subscribe: listener => face.subscribe(sessionId, listener),
-      edit: text => { face.edit(sessionId, text) },
-      save: () => { void face.save(sessionId) },
-      refresh: () => { void face.refresh(sessionId) },
-      openExternal: () => { void face.openExternal(sessionId) },
+    inject: (rawSessionId): FileViewerPanelInjected => ({
+      snapshot: () => face.snapshot(SessionId(rawSessionId)),
+      subscribe: listener => face.subscribe(SessionId(rawSessionId), listener),
+      edit: text => { face.edit(SessionId(rawSessionId), text) },
+      save: () => { void face.save(SessionId(rawSessionId)) },
+      refresh: () => { void face.refresh(SessionId(rawSessionId)) },
+      openExternal: () => { void face.openExternal(SessionId(rawSessionId)) },
       loadEditor,
     }),
   }, FileViewerPanel))
@@ -140,9 +129,8 @@ async function registerRuntime(baseCtx: Context): Promise<() => void> {
 
 /** Mount the generated Host descriptor, then register runtime behavior after its namespace is ready. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
-  const client = ctx as unknown as FileViewerRuntimeContext
-  const disposeRemote = await client.remote.$mount(fileViewerRemote)
-  const runtime = client.inject(
+  const disposeRemote = await ctx.remote.$mount(fileViewerRemote)
+  const runtime = ctx.inject(
     ['slots', 'locale', 'modules', 'sessions', 'rightSidebar', 'remote.fileViewerWorkspace'],
     registerRuntime,
   )

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { FileViewerEditorModule } from './editor-module.ts'
 import type { FileViewerFailure, FileViewerSessionSnapshot } from './service.ts'
 import { isFileViewerDirty } from './service.ts'
-import type { NS } from './locales.ts'
 
 /** Callbacks injected for one Session-scoped Files tab occurrence. */
 export interface FileViewerPanelInjected {

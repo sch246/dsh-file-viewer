@@ -6,9 +6,9 @@ const node: UserConfig = {
 }
 const client: UserConfig = {
   entry: { client: 'lib/types/client.js' }, outDir: 'lib', format: 'cjs', platform: 'browser',
-  dts: false, sourcemap: true, clean: false, deps: { alwaysBundle: () => true },
+  dts: false, sourcemap: true, clean: false, noExternal: () => true,
   outputOptions: {
-    entryFileNames: 'client.js', codeSplitting: false,
+    entryFileNames: 'client.js',
     banner: 'window.__ModuleLoader__.load({ id: "@dsh-external/dsh-file-viewer-editor", factory: (require) => {',
     footer: 'return module.exports; } });',
     intro: 'var module = { exports: {} }; var exports = module.exports;',

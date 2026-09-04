@@ -1,33 +1,15 @@
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type { RemoteResult, TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 import { resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
-import type {
-  WorkspaceLoadRequest, WorkspaceSaveRequest, WorkspaceSaveResult, WorkspaceTextDocument,
-} from '../types.ts'
+import type { WorkspaceSaveRequest } from '../types.ts'
 import {
   FileViewerSourceId, type FileViewerSource,
 } from './service.ts'
 
-/** Generated-Remote method shape consumed by the workspace adapter. */
-export interface FileViewerWorkspaceRemoteClient {
-  openMode(): Promise<RemoteResult<'preview' | 'system' | 'preview-or-system'>>
-  load(request: WorkspaceLoadRequest, signal?: AbortSignal): Promise<RemoteResult<WorkspaceTextDocument>>
-  save(request: WorkspaceSaveRequest, signal?: AbortSignal): Promise<RemoteResult<WorkspaceSaveResult>>
-}
-
-/** Existing native Session path-open methods consumed by the workspace adapter. */
-export interface SessionPathRemoteClient {
-  canOpenWorkspacePath(): Promise<RemoteResult<boolean>>
-  openWorkspacePath(
-    request: { readonly path: string },
-    signal?: AbortSignal,
-  ): Promise<RemoteResult<{ readonly opened: true }>>
-}
-
 /** Dependencies that keep generated transport and Client Session state outside the source. */
 export interface WorkspaceSourceDependencies {
-  readonly workspace: FileViewerWorkspaceRemoteClient
-  readonly session?: SessionPathRemoteClient
+  readonly workspace: Pick<TypertClientRemote['fileViewerWorkspace'], 'load' | 'save'>
+  readonly session: Pick<TypertClientRemote['session'], 'openWorkspacePath'>
   readonly cwdOf: (sessionId: SessionId) => string | undefined
   readonly externalOpenSupported: boolean
 }
@@ -35,6 +17,14 @@ export interface WorkspaceSourceDependencies {
 function valueOf<T>(result: RemoteResult<T>): T {
   if (result.ok) return result.value
   throw result.error
+}
+
+function assertWorkspaceVersion(
+  version: unknown,
+): asserts version is WorkspaceSaveRequest['version'] {
+  if (version === undefined) {
+    throw new Error('file-viewer: workspace save requires the opaque version returned by load')
+  }
 }
 
 /** Create the built-in Session-workspace text source. */
@@ -50,21 +40,19 @@ export function createWorkspaceSource(dependencies: WorkspaceSourceDependencies)
       return { text: value.text, title: value.path, version: value.version }
     },
     save: async (ref, text, version, signal) => {
-      if (typeof version !== 'string' || version === '') {
-        throw new Error('file-viewer: workspace save requires the opaque version returned by load')
-      }
+      assertWorkspaceVersion(version)
       const value = valueOf(await dependencies.workspace.save({
         sessionId: ref.sessionId,
         path: ref.resourceId,
         text,
-        version: version as WorkspaceSaveRequest['version'],
+        version,
       }, signal))
       return { version: value.version }
     },
-    ...(dependencies.externalOpenSupported && dependencies.session !== undefined
+    ...(dependencies.externalOpenSupported
       ? {
           openExternal: async (ref, signal): Promise<void> => {
-            valueOf(await dependencies.session!.openWorkspacePath({
+            valueOf(await dependencies.session.openWorkspacePath({
               path: resolveWorkspacePath(dependencies.cwdOf(ref.sessionId), ref.resourceId),
             }, signal))
           },
