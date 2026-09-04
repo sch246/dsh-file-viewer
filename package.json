@@ -1,0 +1,24 @@
+{
+  "name": "dsh-file-viewer-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "typecheck": "bash scripts/typecheck.sh",
+    "test": "vitest run",
+    "setup": "bash scripts/setup.sh",
+    "uninstall": "bash scripts/uninstall.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsdown": "^0.15.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.4"
+  }
+}

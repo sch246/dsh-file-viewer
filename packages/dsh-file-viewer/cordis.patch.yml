@@ -1,0 +1,9 @@
+- insert:
+    - id: dsh-file-viewer
+      name: '@dsh-external/dsh-file-viewer'
+      config:
+        maxReadBytes: 1048576
+- insert:
+    - id: dsh-file-viewer-editor
+      name: '@dsh-external/dsh-file-viewer-editor'
+      config: {}
