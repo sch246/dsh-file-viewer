@@ -1,0 +1,24 @@
+{
+  "$schema": "dsh-file-viewer/current-state/1",
+  "id": "dsh-file-viewer",
+  "revision": "0.1.0",
+  "status": "source-defined",
+  "document": "STATE.md",
+  "decisionLog": "../logs/2026-09-05-file-viewer-platform.md",
+  "protocol": null,
+  "acceptedRealization": null,
+  "installationStatus": "not-recorded",
+  "packages": [
+    "@dsh-external/dsh-file-viewer",
+    "@dsh-external/dsh-file-viewer-editor"
+  ],
+  "acceptance": [
+    "VIEWER-001",
+    "VIEWER-002",
+    "VIEWER-003",
+    "VIEWER-004",
+    "VIEWER-005",
+    "VIEWER-006",
+    "VIEWER-007"
+  ]
+}
