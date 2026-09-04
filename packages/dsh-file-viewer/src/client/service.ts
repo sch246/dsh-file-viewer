@@ -67,11 +67,20 @@ export type FileViewerSessionSnapshot =
     readonly failure?: FileViewerFailure
   }
 
+type ReadySnapshot = Extract<FileViewerSessionSnapshot, { status: 'ready' }>
+
 interface SessionRecord {
   snapshot: FileViewerSessionSnapshot
   generation: number
   controller?: AbortController
+  externalGeneration: number
+  externalController?: AbortController
   listeners: Set<() => void>
+}
+
+interface SessionOperation {
+  readonly generation: number
+  readonly controller: AbortController
 }
 
 /** True when editor text differs from the last loaded or saved baseline. */
@@ -107,8 +116,7 @@ export class FileViewerService {
       for (const record of this.sessions.values()) {
         const ref = 'ref' in record.snapshot ? record.snapshot.ref : undefined
         if (ref?.sourceId !== source.id) continue
-        record.controller?.abort(new Error('source unloaded'))
-        record.generation += 1
+        this.invalidate(record, new Error('source unloaded'))
         record.snapshot = {
           status: 'failed',
           ref,
@@ -121,11 +129,13 @@ export class FileViewerService {
 
   /** Read the immutable current snapshot for one Session. */
   snapshot(sessionId: SessionId): FileViewerSessionSnapshot {
+    this.assertLive()
     return this.record(sessionId).snapshot
   }
 
   /** Subscribe to one Session; the disposer removes only this listener. */
   subscribe(sessionId: SessionId, listener: () => void): () => void {
+    this.assertLive()
     const listeners = this.record(sessionId).listeners
     listeners.add(listener)
     return () => { listeners.delete(listener) }
@@ -136,18 +146,18 @@ export class FileViewerService {
     this.assertLive()
     const source = this.sources.get(ref.sourceId)
     const record = this.record(ref.sessionId)
-    const generation = this.begin(record)
+    const operation = this.begin(record)
     record.snapshot = { status: 'loading', ref }
     this.notify(record)
     if (source === undefined) {
+      this.finish(record, operation)
       record.snapshot = { status: 'failed', ref, failure: { code: 'source-unavailable' } }
       this.notify(record)
       return
     }
     try {
-      const loaded = await source.load(ref, record.controller!.signal)
-      if (!this.isCurrent(record, generation)) return
-      record.controller = undefined
+      const loaded = await source.load(ref, operation.controller.signal)
+      if (!this.isCurrent(record, operation)) return
       record.snapshot = {
         status: 'ready',
         ref,
@@ -159,15 +169,17 @@ export class FileViewerService {
       }
       this.notify(record)
     } catch (error: unknown) {
-      if (!this.isCurrent(record, generation)) return
-      record.controller = undefined
+      if (!this.isCurrent(record, operation)) return
       record.snapshot = { status: 'failed', ref, failure: { code: 'load-failed', message: errorMessage(error) } }
       this.notify(record)
+    } finally {
+      this.finish(record, operation)
     }
   }
 
   /** Replace editor text for the currently-ready document. */
   edit(sessionId: SessionId, text: string): void {
+    this.assertLive()
     const record = this.record(sessionId)
     if (record.snapshot.status !== 'ready') return
     record.snapshot = { ...record.snapshot, text, failure: undefined }
@@ -186,35 +198,39 @@ export class FileViewerService {
       this.notify(record)
       return
     }
-    const generation = this.begin(record)
+    const operation = this.begin(record)
+    const savedText = current.text
     record.snapshot = { ...current, saving: true, failure: undefined }
     this.notify(record)
     try {
-      const saved = await source.save(current.ref, current.text, current.version, record.controller!.signal)
-      if (!this.isCurrent(record, generation)) return
-      record.controller = undefined
+      const saved = await source.save(current.ref, savedText, current.version, operation.controller.signal)
+      if (!this.isCurrent(record, operation)) return
+      const latest = this.readySnapshot(record)
       record.snapshot = {
-        ...current,
-        baseline: current.text,
+        ...latest,
+        baseline: savedText,
         ...(saved.version === undefined ? { version: current.version } : { version: saved.version }),
         saving: false,
         failure: undefined,
       }
       this.notify(record)
     } catch (error: unknown) {
-      if (!this.isCurrent(record, generation)) return
-      record.controller = undefined
+      if (!this.isCurrent(record, operation)) return
+      const latest = this.readySnapshot(record)
       record.snapshot = {
-        ...current,
+        ...latest,
         saving: false,
         failure: { code: 'save-failed', message: errorMessage(error) },
       }
       this.notify(record)
+    } finally {
+      this.finish(record, operation)
     }
   }
 
   /** Reload the current document only when it has no unsaved edits. */
   async refresh(sessionId: SessionId): Promise<void> {
+    this.assertLive()
     const current = this.snapshot(sessionId)
     if (current.status !== 'ready') return
     if (isFileViewerDirty(current)) {
@@ -228,6 +244,7 @@ export class FileViewerService {
 
   /** Ask the selected source to open its resource outside the browser. */
   async openExternal(sessionId: SessionId): Promise<void> {
+    this.assertLive()
     const record = this.record(sessionId)
     const current = record.snapshot
     if (current.status !== 'ready') return
@@ -237,13 +254,20 @@ export class FileViewerService {
       this.notify(record)
       return
     }
-    const controller = new AbortController()
-    try {
-      await source.openExternal(current.ref, controller.signal)
-    } catch (error: unknown) {
-      if (record.snapshot !== current) return
-      record.snapshot = { ...current, failure: { code: 'external-open-failed', message: errorMessage(error) } }
+    const operation = this.beginExternal(record)
+    if (current.failure !== undefined) {
+      record.snapshot = { ...current, failure: undefined }
       this.notify(record)
+    }
+    try {
+      await source.openExternal(current.ref, operation.controller.signal)
+    } catch (error: unknown) {
+      if (!this.isCurrentExternal(record, operation)) return
+      const latest = this.readySnapshot(record)
+      record.snapshot = { ...latest, failure: { code: 'external-open-failed', message: errorMessage(error) } }
+      this.notify(record)
+    } finally {
+      this.finishExternal(record, operation)
     }
   }
 
@@ -252,8 +276,8 @@ export class FileViewerService {
     if (this.disposed) return
     this.disposed = true
     for (const record of this.sessions.values()) {
-      record.controller?.abort(new Error('file viewer disposed'))
       record.listeners.clear()
+      this.invalidate(record, new Error('file viewer disposed'))
     }
     this.sources.clear()
     this.sessions.clear()
@@ -262,21 +286,70 @@ export class FileViewerService {
   private record(sessionId: SessionId): SessionRecord {
     let record = this.sessions.get(sessionId)
     if (record === undefined) {
-      record = { snapshot: { status: 'idle' }, generation: 0, listeners: new Set() }
+      record = {
+        snapshot: { status: 'idle' },
+        generation: 0,
+        externalGeneration: 0,
+        listeners: new Set(),
+      }
       this.sessions.set(sessionId, record)
     }
     return record
   }
 
-  private begin(record: SessionRecord): number {
-    record.controller?.abort(new Error('superseded'))
-    record.controller = new AbortController()
+  private begin(record: SessionRecord): SessionOperation {
     record.generation += 1
-    return record.generation
+    record.externalGeneration += 1
+    record.controller?.abort(new Error('superseded'))
+    record.externalController?.abort(new Error('superseded'))
+    const operation = { generation: record.generation, controller: new AbortController() }
+    record.controller = operation.controller
+    record.externalController = undefined
+    return operation
   }
 
-  private isCurrent(record: SessionRecord, generation: number): boolean {
-    return !this.disposed && record.generation === generation && record.controller?.signal.aborted === false
+  private beginExternal(record: SessionRecord): SessionOperation {
+    record.externalGeneration += 1
+    record.externalController?.abort(new Error('superseded'))
+    const operation = { generation: record.externalGeneration, controller: new AbortController() }
+    record.externalController = operation.controller
+    return operation
+  }
+
+  private invalidate(record: SessionRecord, reason: Error): void {
+    record.generation += 1
+    record.externalGeneration += 1
+    record.controller?.abort(reason)
+    record.externalController?.abort(reason)
+    record.controller = undefined
+    record.externalController = undefined
+  }
+
+  private isCurrent(record: SessionRecord, operation: SessionOperation): boolean {
+    return !this.disposed
+      && record.generation === operation.generation
+      && record.controller === operation.controller
+      && !operation.controller.signal.aborted
+  }
+
+  private isCurrentExternal(record: SessionRecord, operation: SessionOperation): boolean {
+    return !this.disposed
+      && record.externalGeneration === operation.generation
+      && record.externalController === operation.controller
+      && !operation.controller.signal.aborted
+  }
+
+  private finish(record: SessionRecord, operation: SessionOperation): void {
+    if (record.controller === operation.controller) record.controller = undefined
+  }
+
+  private finishExternal(record: SessionRecord, operation: SessionOperation): void {
+    if (record.externalController === operation.controller) record.externalController = undefined
+  }
+
+  /** Return the ready state after the caller proves its operation generation is current. */
+  private readySnapshot(record: SessionRecord): ReadySnapshot {
+    return record.snapshot as ReadySnapshot
   }
 
   private notify(record: SessionRecord): void {
