@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { FsTarget, FsVersion } from '@deepseek-ai/dsh-fs'
 import { FsError } from '@deepseek-ai/dsh-fs'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   WorkspaceLoadRequest, WorkspaceSaveRequest, WorkspaceSaveResult, WorkspaceTextDocument,
@@ -21,6 +22,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'file-viewer/not-text': { readonly path: string }
     /** The file changed after it was loaded. */
     'file-viewer/stale-version': { readonly path: string }
+    /** Workspace storage could not complete the operation. */
+    'file-viewer/unavailable': { readonly path: string }
     /** The Session or file does not exist. */
     'file-viewer/not-found': { readonly sessionId: SessionId; readonly path: string }
   }
@@ -29,6 +32,62 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
 interface ResolvedWorkspaceFile {
   readonly target: FsTarget
   readonly version: FsVersion
+}
+
+const BINARY_SAMPLE_BYTES = 8192
+
+function cancelled(cause?: unknown): RemoteError<'gateway/cancelled'> {
+  return new RemoteError('gateway/cancelled', 'file viewer request was cancelled', {}, { cause })
+}
+
+function throwIfCancelled(signal: AbortSignal): void {
+  if (signal.aborted) throw cancelled(signal.reason)
+}
+
+function tooLarge(path: string, maxReadBytes: number, cause?: unknown): RemoteError<'file-viewer/too-large'> {
+  return new RemoteError('file-viewer/too-large', `workspace path "${path}" exceeds the preview limit`, {
+    path,
+    maxReadBytes,
+  }, { cause })
+}
+
+/** Decode one bounded workspace payload with the same UTF-8 and NUL rejection as `ctx.fs.readText`. */
+export function decodeWorkspaceText(bytes: Uint8Array, path: string): string {
+  if (bytes.subarray(0, BINARY_SAMPLE_BYTES).includes(0)) {
+    throw new RemoteError('file-viewer/not-text', `workspace path "${path}" is not text`, { path })
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) throw error
+    throw new RemoteError('file-viewer/not-text', `workspace path "${path}" is not UTF-8 text`, {
+      path,
+    }, { cause: error })
+  }
+}
+
+function mapFsError(
+  error: unknown,
+  sessionId: SessionId,
+  path: string,
+  maxReadBytes: number,
+): never {
+  if (error instanceof RemoteError) throw error
+  if (!(error instanceof FsError)) throw error
+  switch (error.code) {
+    case 'FS_ABORTED': throw cancelled(error)
+    case 'FS_NOT_FOUND':
+      throw new RemoteError('file-viewer/not-found', `workspace path "${path}" was not found`, { sessionId, path }, { cause: error })
+    case 'FS_NOT_REGULAR_FILE':
+      throw new RemoteError('file-viewer/not-regular-file', `workspace path "${path}" is not a regular file`, { path }, { cause: error })
+    case 'FS_NOT_TEXT':
+      throw new RemoteError('file-viewer/not-text', `workspace path "${path}" is not text`, { path }, { cause: error })
+    case 'FS_TOO_LARGE': throw tooLarge(path, maxReadBytes, error)
+    case 'FS_STALE_VERSION':
+      throw new RemoteError('file-viewer/stale-version', `workspace path "${path}" changed on disk`, { path }, { cause: error })
+    default:
+      throw new RemoteError('file-viewer/unavailable', `workspace path "${path}" is unavailable`, { path }, { cause: error })
+  }
 }
 
 /** Host-side workspace text Remote backed exclusively by `ctx.fs`. */
@@ -52,15 +111,25 @@ export class FileViewerWorkspaceRemote extends TypertRemoteService {
   }
 
   private async cwdOf(sessionId: SessionId, signal: AbortSignal): Promise<string> {
-    signal.throwIfAborted()
+    throwIfCancelled(signal)
     const live = this.ctx.sessions.get(sessionId)
-    const header = live?.header ?? (await this.ctx.sessionPersistence.inspect(sessionId, signal).catch((error: unknown) => {
-      if (signal.aborted) throw signal.reason
-      throw new RemoteError('file-viewer/not-found', `session "${sessionId}" was not found`, {
-        sessionId,
-        path: '',
-      }, { cause: error })
-    })).meta
+    let header = live?.header
+    if (header === undefined) {
+      try {
+        header = (await this.ctx.sessionPersistence.inspect(sessionId, signal)).meta
+      } catch (error: unknown) {
+        if (signal.aborted) throw cancelled(error)
+        if (error instanceof SessionPersistenceNotFoundError) {
+          throw new RemoteError('file-viewer/not-found', `session "${sessionId}" was not found`, {
+            sessionId,
+            path: '',
+          }, { cause: error })
+        }
+        throw new RemoteError('file-viewer/unavailable', `session "${sessionId}" could not be inspected`, {
+          path: '',
+        }, { cause: error })
+      }
+    }
     if (header.cwd === undefined) {
       throw new RemoteError('file-viewer/no-workspace', `session "${sessionId}" has no workspace`, { sessionId })
     }
@@ -73,35 +142,34 @@ export class FileViewerWorkspaceRemote extends TypertRemoteService {
     signal: AbortSignal,
   ): Promise<ResolvedWorkspaceFile> {
     const cwd = await this.cwdOf(sessionId, signal)
-    signal.throwIfAborted()
-    const pathInfo = await this.ctx.fs.lstat(path, { cwd }, signal)
-    if (pathInfo === undefined) {
-      throw new RemoteError('file-viewer/not-found', `workspace path "${path}" was not found`, { sessionId, path })
+    try {
+      throwIfCancelled(signal)
+      const [root, target] = await Promise.all([
+        this.ctx.fs.resolve(cwd, { signal }),
+        this.ctx.fs.resolve(path, { cwd, signal }),
+      ])
+      if (!this.ctx.fs.contains(root, target)) {
+        throw new RemoteError('file-viewer/outside-workspace', `workspace path "${path}" escapes the workspace`, { path })
+      }
+      const pathInfo = await this.ctx.fs.lstat(path, { cwd }, signal)
+      if (pathInfo === undefined) {
+        throw new RemoteError('file-viewer/not-found', `workspace path "${path}" was not found`, { sessionId, path })
+      }
+      if (pathInfo.type !== 'file') {
+        throw new RemoteError('file-viewer/not-regular-file', `workspace path "${path}" is not a regular file`, { path })
+      }
+      const info = await this.ctx.fs.stat(target, signal)
+      if (info === undefined) {
+        throw new RemoteError('file-viewer/not-found', `workspace path "${path}" was not found`, { sessionId, path })
+      }
+      if (info.type !== 'file') {
+        throw new RemoteError('file-viewer/not-regular-file', `workspace path "${path}" is not a regular file`, { path })
+      }
+      if (info.size !== undefined && info.size > this.maxReadBytes) throw tooLarge(path, this.maxReadBytes)
+      return { target, version: info.version }
+    } catch (error: unknown) {
+      mapFsError(error, sessionId, path, this.maxReadBytes)
     }
-    if (pathInfo.type !== 'file') {
-      throw new RemoteError('file-viewer/not-regular-file', `workspace path "${path}" is not a regular file`, { path })
-    }
-    const [root, target] = await Promise.all([
-      this.ctx.fs.resolve(cwd, { signal }),
-      this.ctx.fs.resolve(path, { cwd, signal }),
-    ])
-    if (!this.ctx.fs.contains(root, target)) {
-      throw new RemoteError('file-viewer/outside-workspace', `workspace path "${path}" escapes the workspace`, { path })
-    }
-    const info = await this.ctx.fs.stat(target, signal)
-    if (info === undefined) {
-      throw new RemoteError('file-viewer/not-found', `workspace path "${path}" was not found`, { sessionId, path })
-    }
-    if (info.type !== 'file') {
-      throw new RemoteError('file-viewer/not-regular-file', `workspace path "${path}" is not a regular file`, { path })
-    }
-    if (info.size !== undefined && info.size > this.maxReadBytes) {
-      throw new RemoteError('file-viewer/too-large', `workspace path "${path}" exceeds the preview limit`, {
-        path,
-        maxReadBytes: this.maxReadBytes,
-      })
-    }
-    return { target, version: info.version }
   }
 
   /**
@@ -114,22 +182,16 @@ export class FileViewerWorkspaceRemote extends TypertRemoteService {
   async load(request: WorkspaceLoadRequest, signal: AbortSignal): Promise<WorkspaceTextDocument> {
     const resolved = await this.resolveFile(request.sessionId, request.path, signal)
     try {
-      const text = await this.ctx.fs.readText(resolved.target, signal)
-      if (new TextEncoder().encode(text).byteLength > this.maxReadBytes) {
-        throw new RemoteError('file-viewer/too-large', `workspace path "${request.path}" exceeds the preview limit`, {
+      const bytes = await this.ctx.fs.readBytes(resolved.target, signal, this.maxReadBytes)
+      const after = await this.ctx.fs.stat(resolved.target, signal)
+      if (after === undefined || after.version !== resolved.version) {
+        throw new RemoteError('file-viewer/stale-version', `workspace path "${request.path}" changed while loading`, {
           path: request.path,
-          maxReadBytes: this.maxReadBytes,
         })
       }
-      return { path: request.path, text, version: resolved.version }
+      return { path: request.path, text: decodeWorkspaceText(bytes, request.path), version: resolved.version }
     } catch (error: unknown) {
-      if (error instanceof RemoteError) throw error
-      if (error instanceof FsError && error.code === 'FS_NOT_TEXT') {
-        throw new RemoteError('file-viewer/not-text', `workspace path "${request.path}" is not text`, {
-          path: request.path,
-        }, { cause: error })
-      }
-      throw error
+      mapFsError(error, request.sessionId, request.path, this.maxReadBytes)
     }
   }
 
@@ -141,6 +203,9 @@ export class FileViewerWorkspaceRemote extends TypertRemoteService {
    */
   @Remote('save')
   async save(request: WorkspaceSaveRequest, signal: AbortSignal): Promise<WorkspaceSaveResult> {
+    if (new TextEncoder().encode(request.text).byteLength > this.maxReadBytes) {
+      throw tooLarge(request.path, this.maxReadBytes)
+    }
     const resolved = await this.resolveFile(request.sessionId, request.path, signal)
     try {
       const result = await this.ctx.fs.writeText(
@@ -151,12 +216,7 @@ export class FileViewerWorkspaceRemote extends TypertRemoteService {
       )
       return { version: result.version }
     } catch (error: unknown) {
-      if (error instanceof FsError && error.code === 'FS_STALE_VERSION') {
-        throw new RemoteError('file-viewer/stale-version', `workspace path "${request.path}" changed on disk`, {
-          path: request.path,
-        }, { cause: error })
-      }
-      throw error
+      mapFsError(error, request.sessionId, request.path, this.maxReadBytes)
     }
   }
 }
