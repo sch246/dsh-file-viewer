@@ -7,8 +7,8 @@
   "decisionLog": "../logs/2026-09-05-document-automation-initialization.md",
   "protocol": null,
   "acceptedRealization": null,
-  "installationStatus": "candidate-not-installed",
-  "deploymentLog": null,
+  "installationStatus": "locally-installed-and-activated",
+  "deploymentLog": "../logs/2026-09-05-repair-deployment.md",
   "packages": [
     "@dsh-external/dsh-file-viewer",
     "@dsh-external/dsh-file-viewer-editor"

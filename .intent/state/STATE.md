@@ -1,6 +1,6 @@
 # Resource workbench current intended state
 
-Status: candidate revision 0.3.1 under [the document automation initialization decision](../logs/2026-09-05-document-automation-initialization.md); privately validated, not installed or activated in the managed Web service; no accepted realization lock.
+Status: revision 0.3.1 under [the document automation initialization decision](../logs/2026-09-05-document-automation-initialization.md), [locally installed and activated](../logs/2026-09-05-repair-deployment.md) after private validation; no accepted realization lock.
 
 ## Intent
 
@@ -47,4 +47,4 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 
 ## Evidence status
 
-The candidate worktree defines this revision. Its [decision log](../logs/2026-09-05-document-automation-initialization.md) records regression and verification evidence; the [private browser log](../logs/2026-09-05-private-repair-acceptance.md) records integrated UI observations. This revision is not installed or activated in the managed Web service and has no accepted realization lock or user visual acceptance. [The generic deployment log](../logs/2026-09-05-generic-workbench-deployment.md) records deployment evidence for revision 0.3.0 only.
+The [decision log](../logs/2026-09-05-document-automation-initialization.md) records regression and verification evidence; the [private browser log](../logs/2026-09-05-private-repair-acceptance.md) records integrated UI observations. The [repair deployment log](../logs/2026-09-05-repair-deployment.md) records authorized local activation. This revision has no accepted realization lock or user visual acceptance. [The generic deployment log](../logs/2026-09-05-generic-workbench-deployment.md) records deployment evidence for revision 0.3.0 only.
