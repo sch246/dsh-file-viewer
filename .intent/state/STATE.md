@@ -1,6 +1,12 @@
 # File viewer current intended state
 
-Status: source-defined. This repository uses its own current-state record; it has no selected protocol, accepted realization lock, or recorded live installation.
+Status: revision in progress under ../logs/2026-09-05-document-workbench.md; no accepted realization lock. The following current revision supersedes conflicting single-document and workspace-source clauses pending their removal during implementation.
+
+## Current revision
+
+The editor owns independent instances, each with base/local/source snapshots, exact canonical-text hashes, opaque conditional-write revisions and guarded asynchronous operations. Opening a resource activates its existing session instance without reloading. Source capabilities control Update/Save and independent automatic preferences. Conflicts preserve both sides and pause automation; explicit directional resolution and differences are available. Source locations may link to a separate sidebar selector or remain plain text. Memory sources require no filesystem or selector.
+
+The separate file-manager plugin owns authenticated user filesystem access, tree operations, filesystem-link routing and the filesystem text source. The user interface does not inherit agent sandbox or approval restrictions; session cwd is only its initial location. The editor owns no filesystem policy. Local deployment and restart are authorized; upstream Harness changes are not.
 
 ## Intent
 
