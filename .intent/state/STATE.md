@@ -1,6 +1,6 @@
 # Resource workbench current intended state
 
-Status: revision 0.3.2 candidate under [the compact controls decision](../logs/2026-09-06-compact-resource-controls.md); not installed or activated, with no accepted realization lock. [The repair deployment](../logs/2026-09-05-repair-deployment.md) covers revision 0.3.1.
+Status: revision 0.3.2 installed and activated under [the deployment log](../logs/2026-09-06-compact-ui-activation.md), with no accepted realization lock or user visual acceptance. [The compact controls decision](../logs/2026-09-06-compact-resource-controls.md) records implementation evidence.
 
 ## Intent
 
@@ -51,4 +51,4 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 
 ## Evidence status
 
-The [compact controls decision](../logs/2026-09-06-compact-resource-controls.md) records candidate verification and remaining browser acceptance. [The automation initialization decision](../logs/2026-09-05-document-automation-initialization.md), [private browser log](../logs/2026-09-05-private-repair-acceptance.md) and [repair deployment log](../logs/2026-09-05-repair-deployment.md) describe revision 0.3.1 evidence. This candidate has no accepted realization lock, managed activation or user visual acceptance.
+The [compact controls decision](../logs/2026-09-06-compact-resource-controls.md) records candidate verification, and [the deployment log](../logs/2026-09-06-compact-ui-activation.md) records managed activation and browser smoke. [The automation initialization decision](../logs/2026-09-05-document-automation-initialization.md), [private browser log](../logs/2026-09-05-private-repair-acceptance.md) and [repair deployment log](../logs/2026-09-05-repair-deployment.md) describe revision 0.3.1 evidence. No accepted realization lock or user visual acceptance is recorded.
