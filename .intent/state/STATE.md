@@ -1,6 +1,6 @@
 # Resource workbench current intended state
 
-Status: revision 0.3.5 candidate under [the deleted fragment decision](../logs/2026-09-06-deleted-fragments.md). Revision 0.3.4 activation remains recorded in [the aligned comparison evidence](../logs/2026-09-06-aligned-comparison.md). No accepted realization lock or user visual acceptance is recorded.
+Status: revision 0.3.5 activated under [the deleted fragment decision](../logs/2026-09-06-deleted-fragments.md). Revision 0.3.4 activation remains recorded in [the aligned comparison evidence](../logs/2026-09-06-aligned-comparison.md). No accepted realization lock or user visual acceptance is recorded.
 
 ## Intent
 
