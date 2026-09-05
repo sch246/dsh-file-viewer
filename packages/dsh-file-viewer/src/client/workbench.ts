@@ -280,10 +280,11 @@ export class ResourceWorkbenchRuntime {
           const resourceRef = ref as unknown as ResourceRef
           const loaded = await source.readText!(resourceRef, signal)
           if (loaded.descriptor !== undefined) this.#applyLoadedDescriptor(resourceRef, loaded.descriptor)
+          const title = loaded.descriptor?.name ?? this.#resourceName(resourceRef)
           return {
             text: loaded.text,
             ...(loaded.version === undefined ? {} : { version: loaded.version }),
-            ...(loaded.descriptor?.name === undefined ? {} : { title: loaded.descriptor.name }),
+            ...(title === undefined ? {} : { title }),
             ...(loaded.descriptor?.location === undefined ? {} : { location: loaded.descriptor.location }),
           }
         },
@@ -300,7 +301,15 @@ export class ResourceWorkbenchRuntime {
               if (event.kind === 'snapshot' && event.snapshot.descriptor !== undefined) {
                 this.#applyLoadedDescriptor(resourceRef, event.snapshot.descriptor)
               }
-              listener(toFileViewerWatchEvent(event))
+              const textEvent = toFileViewerWatchEvent(event)
+              if (textEvent.kind === 'invalidate' || textEvent.snapshot.title !== undefined) {
+                listener(textEvent)
+                return
+              }
+              const title = this.#resourceName(resourceRef)
+              listener(title === undefined
+                ? textEvent
+                : { ...textEvent, snapshot: { ...textEvent.snapshot, title } })
             })
           },
         }),
@@ -1048,6 +1057,13 @@ export class ResourceWorkbenchRuntime {
     for (const [viewId, view] of this.#views) {
       if (refKey(view.descriptor.ref) === refKey(ref)) this.#applyDescriptor(viewId, view, update)
     }
+  }
+
+  #resourceName(ref: ResourceRef): string | undefined {
+    for (const view of this.#views.values()) {
+      if (refKey(view.descriptor.ref) === refKey(ref)) return view.descriptor.name
+    }
+    return undefined
   }
 
   #findView(ref: ResourceRef, handlerId: ResourceHandlerId | undefined, groupId: string | undefined): string | undefined {

@@ -197,6 +197,54 @@ describe('ResourceWorkbenchRuntime', () => {
     runtime.dispose()
   })
 
+  it('retains caller metadata until a text source explicitly replaces it', async () => {
+    const host = hostFixture()
+    const runtime = new ResourceWorkbenchRuntime({ host, hashText: async text => text })
+    runtime.registerHandler(handler(TEXT_RESOURCE_HANDLER_ID, 'default'))
+    const sourceId = ResourceSourceId('metadata')
+    let publish: Parameters<NonNullable<ResourceSource['watchText']>>[1] | undefined
+    runtime.registerSource({
+      id: sourceId,
+      readText: async () => ({ text: 'Read-only projection' }),
+      watchText: (_ref, listener) => {
+        publish = listener
+        return () => {}
+      },
+    })
+    const viewId = await runtime.open({
+      ref: { sessionId: SessionId('session'), sourceId, resourceId: 'projection' },
+      name: 'Readonly memory',
+      mediaType: 'text/plain',
+    })
+
+    expect(runtime.snapshot(viewId).descriptor.name).toBe('Readonly memory')
+    expect(runtime.textSnapshot(viewId)).toMatchObject({ title: 'Readonly memory' })
+    expect(host.update).not.toHaveBeenCalled()
+    expect(publish).toBeDefined()
+
+    publish!({ kind: 'snapshot', snapshot: { text: 'Updated projection' } })
+    await vi.waitFor(() => {
+      expect(runtime.textSnapshot(viewId)).toMatchObject({
+        title: 'Readonly memory',
+        latestSourceText: 'Updated projection',
+      })
+    })
+    publish!({
+      kind: 'snapshot',
+      snapshot: { text: 'Renamed projection', descriptor: { name: 'Explicit source name' } },
+    })
+    await vi.waitFor(() => {
+      expect(runtime.snapshot(viewId).descriptor.name).toBe('Explicit source name')
+      expect(runtime.textSnapshot(viewId)).toMatchObject({ title: 'Explicit source name' })
+    })
+    expect(host.update).toHaveBeenLastCalledWith(
+      SessionId('session'),
+      viewId,
+      expect.objectContaining({ title: 'Explicit source name' }),
+    )
+    runtime.dispose()
+  })
+
   it('defaults SVG to bytes, offers text open-with, and never decodes image bytes', async () => {
     const host = hostFixture()
     const confirmHandlerSwitch = vi.fn(() => false)
