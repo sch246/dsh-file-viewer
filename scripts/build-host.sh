@@ -17,17 +17,14 @@ rm -f "$ROOT/harness"
 ln -s "$CHECKOUT" "$ROOT/harness"
 
 rm -rf "$PACKAGE/lib" "$ROOT/packages/dsh-file-viewer-editor/lib"
-(cd "$PACKAGE" && pnpm exec tsc -p tsconfig.host.json --pretty false)
-(cd "$PACKAGE" && pnpm exec tsdown --config tsdown.host.config.ts)
-node "$ROOT/scripts/generate-typert-host.mjs"
 (cd "$PACKAGE" && pnpm exec tsc -p tsconfig.client.json --pretty false)
 (cd "$ROOT/packages/dsh-file-viewer-editor" && pnpm exec tsc -p tsconfig.json --pretty false)
 (cd "$PACKAGE" && pnpm exec tsdown --config tsdown.client.config.ts)
 (cd "$ROOT/packages/dsh-file-viewer-editor" && pnpm exec tsdown --config tsdown.config.ts)
 
-for artifact in index.js typert.host.js typert.host.d.ts typert.remote-client.js typert.remote-client.d.ts; do
+for artifact in index.js client.js; do
   test -f "$PACKAGE/lib/$artifact" || { echo "build: missing lib/$artifact" >&2; exit 1; }
 done
-for artifact in "$PACKAGE/lib/client.js" "$ROOT/packages/dsh-file-viewer-editor/lib/index.js" "$ROOT/packages/dsh-file-viewer-editor/lib/client.js"; do
+for artifact in "$ROOT/packages/dsh-file-viewer-editor/lib/index.js" "$ROOT/packages/dsh-file-viewer-editor/lib/client.js"; do
   test -f "$artifact" || { echo "build: missing $artifact" >&2; exit 1; }
 done

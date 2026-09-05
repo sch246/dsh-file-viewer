@@ -15,6 +15,7 @@
   "scripts": { "build": "bash ../../scripts/build-host.sh" },
   "dsh": { "client": { "platform": "web" } },
   "dependencies": {
+    "@codemirror/commands": "^6.8.1",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.1"
   },

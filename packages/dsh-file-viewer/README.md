@@ -1,74 +1,77 @@
 ---
-description: "Host contract for bounded UTF-8 workspace loads, guarded saves, and Chat file-open policy in the external DeepSeek Harness file viewer."
+description: "Source-neutral multi-instance text editing for users composing a DeepSeek Harness Web profile."
 kind: "package-bundle"
 ---
 
-# @dsh-external/dsh-file-viewer Host contract
+# @dsh-external/dsh-file-viewer
 
 ## Summary
 
-This package lets a Web profile preview and edit regular UTF-8 files inside a Session workspace. Its Host Remote applies one deployment-owned size bound to complete reads and saves, and it rejects paths or versions that cannot be handled safely. The repository root [README](../../README.md) owns Client sources, editor behavior, setup, and rollback.
+This Bundle adds a source-neutral text editor service and one reusable right-sidebar renderer to a Web profile. Client plugins can register content providers and open independent editor instances. Add the Bundle together with its editor dependency through the repository setup command; the file-manager plugin independently provides filesystem sources and navigation.
 
 ## Table of Contents
 
-- [Configuration](#configuration)
-- [Workspace Remote](#workspace-remote)
-- [Failures](#failures)
+- [Use this package](#use-this-package)
+- [Understand the implementation](#understand-the-implementation)
+- [Further Exploration](#further-exploration)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
 
 -----
 
-<a id="configuration"></a>
-## Configuration
+<a id="use-this-package"></a>
+## Use this package
 
-The Bundle inserts this Host row with a one-mebibyte preview bound; the omitted Chat policy uses its `preview-or-system` default:
+### Install into a profile
 
-```yaml
-- id: dsh-file-viewer
-  name: '@dsh-external/dsh-file-viewer'
-  config:
-    maxReadBytes: 1048576
+The repository setup command builds and installs the viewer Bundle and editor dependency together. It does not modify Harness source or restart the selected profile.
+
+```sh
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run setup --install
 ```
 
-| Field | Default | Meaning |
-|---|---|---|
-| `maxReadBytes` | required | Inclusive positive integer byte limit for a complete load or saved UTF-8 payload. The shipped Bundle supplies `1048576`. |
-| `openMode` | `preview-or-system` | Chat file-link policy: `preview`, `system`, or `preview-or-system`. |
+### What you get
 
-Changing the profile or home patch row replaces its complete `config`; preserve both fields when overriding either one.
+The Bundle inserts the browser `@dsh-external/dsh-file-viewer` row and the independent `@dsh-external/dsh-file-viewer-editor` graph row. The browser service exposes source registration and instance actions through `ctx.fileViewer`. Each open resource becomes a right-sidebar workbench instance rendered by the shared `text-editor` view.
 
------
-
-<a id="workspace-remote"></a>
-## Workspace Remote
-
-The `fileViewerWorkspace` Typert namespace exposes `openMode`, `load`, and `save`. `load` resolves the addressed Session's immutable header cwd through `ctx.fs`, resolves the requested path against it, checks containment, and reads the complete bounded payload. It rejects final symlinks, directories, other non-regular files, NUL-bearing content, and invalid UTF-8.
-
-The Host checks the opaque filesystem version before and after reading. `save` requires that returned version, applies the same containment, file-kind, and byte-bound checks, and calls guarded `replaceIfVersion` publication. A concurrent file change therefore becomes a stale-version error rather than an overwrite.
+The Bundle registers no file source or right-sidebar launcher. A source provider supplies loading, optional saving and watching, opaque revisions, and optional source-location selection. The file-manager plugin owns the user filesystem provider and Files launcher.
 
 -----
 
-<a id="failures"></a>
-## Failures
+<a id="understand-the-implementation"></a>
+## Understand the implementation
 
-Remote failures retain typed categories for missing Session or path, missing workspace, workspace escape, non-regular file, excessive size, non-text content, stale version, cancellation, and unavailable storage. The Client adapter converts a rejected load into a failed document snapshot and keeps dirty browser text after a rejected save.
+<details>
+<summary>Implementation internals — click to expand</summary>
 
-The Host depends on `fs`, `sessions`, and `sessionPersistence`. It fails during plugin activation when those required services are absent rather than silently disabling workspace access.
+[`cordis.patch.yml`](cordis.patch.yml) inserts the viewer and editor Client rows. [`src/client/service.ts`](src/client/service.ts) owns sources, editor instances, exact text hashes and guarded asynchronous operations. [`src/client/index.ts`](src/client/index.ts) registers the public face and one static workbench renderer. The CodeMirror implementation stays in the sibling editor package and materializes only after a ready document mounts.
+
+</details>
+
+-----
+
+<a id="further-exploration"></a>
+## Further Exploration
+
+- [Repository guide](../../README.md) — source registration, synchronization and installation.
+- [Current intended state](../../.intent/state/STATE.md) — acceptance requirements.
 
 -----
 
 <a id="model-experience"></a>
 ## Model Experience
 
-This package does not register a model-facing tool or add model-visible context. It changes the human browser action for Chat workspace-file links according to `openMode`.
+None. This Bundle changes human browser presentation and adds no model-visible input or tool.
 
+<a id="known-limitations-and-deferred-work"></a>
 ## Known Limitations and Deferred Work
 
-- The workspace source handles complete UTF-8 regular files only; it has no binary, partial-read, directory, or final-symlink view.
-- The editor is plain text and supplies no language mode, syntax service, or collaborative editing protocol.
-- Browser document state is in memory and is not restored after Client reload.
+- The editor presents complete plain text. Sources own size limits, partial-loading policy and canonical line representation.
+- Browser editor instances are in memory and do not survive a Client reload.
+- The differences view presents complete Base, Local and Source text without syntax-aware diff alignment.
 
-### Dev Note
+<a id="dev-note"></a>
+## Dev Note
 
 None.

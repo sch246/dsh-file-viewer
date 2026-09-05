@@ -1,33 +1,33 @@
-# Agent Note: Session-scoped file viewer platform
+# Agent Note: Session-scoped text editor platform
 
 Status: implemented
 
 ## Problem
 
-Chat has one workspace-file action, but an in-browser viewer needs document state, save conflict handling, presentation, and content adapters without making Chat depend on a specific viewer. Loading workspace files directly in the browser or through Node filesystem APIs would also bypass the Session workspace and configured Harness filesystem policy.
+Browser features need to present editable text from unrelated providers without sharing mutable document state or coupling the editor to filesystem policy. One Session can contain several open resources, and external source changes can race local edits, reads, saves, watches and instance closure.
 
 ## Decision
 
-The browser `FileViewerService` exclusively owns source registration and per-Session document state. Consumers receive a frozen `ctx.fileViewer` face with source registration and intent-level actions; sources receive document references and abort signals, not store mutation methods. One operation generation per Session prevents superseded loads or saves from publishing stale state.
+The browser `FileViewerService` exclusively owns source registration, independent editor instances, content hashes and synchronization actions. Consumers receive a frozen `ctx.fileViewer` face whose actions use opaque instance ids. Sources receive document references and abort signals, not state setters.
 
-The built-in workspace source is an adapter over a Host Typert Remote. The Host derives its root from the addressed Session header, resolves and inspects paths through `ctx.fs`, reads complete bounded UTF-8 text, and publishes saves only through the opaque version returned by load. This keeps workspace containment and backend policy at the capability owner.
+Each instance retains exact Base, Local and latest Source text. Content hashes classify their relationship without interpreting line endings or other source syntax. Manual Update observes source text without discarding local edits. Automatic Update requires source watching, and automatic Save requires conditional writes. Conflicts pause automation and remain visible until the user explicitly overwrites the source or discards local text.
 
-The Harness contribution is a generic `chat/open-workspace-file` waterfall. The viewer handles or delegates according to Host-owned `openMode`, while Chat retains the terminal native opener. The right-sidebar package owns layout and visibility; the viewer contributes one Files tab and calls its public `openTab` action.
+The right-sidebar workbench owns launchers, tabs, activation and close gestures. The viewer registers one static `text-editor` renderer and opens one workbench instance per exact Session, source and resource identity. A source can link its opaque location segments to another feature's launcher.
 
-CodeMirror state and view dependencies live in `@dsh-external/dsh-file-viewer-editor`. The viewer Bundle inserts both graph rows at boot, and the Client asks the module service for the editor factory only after a ready document mounts. This separates boot graph availability from `EditorView` lifetime without promising network-lazy delivery.
+The file-manager plugin owns authenticated user filesystem access, its filesystem source, navigation and Chat filesystem routing. Filesystem UI authorization follows the signed-in user and does not reuse agent sandbox or approval policy. The viewer has no Host Remote or built-in file source.
+
+CodeMirror state, view and undo dependencies live in `@dsh-external/dsh-file-viewer-editor`. The viewer Bundle inserts both browser graph rows. The Client creates an editor only after a ready instance mounts and updates the existing view without adding source refreshes to undo history.
 
 ## Alternatives considered
 
-**Make workspace files the service's only source.** Rejected because browser memory, generated content, and future remote sources would need parallel state owners and presentation paths.
+**Let each provider own its editor state.** Rejected because every provider would need duplicate operation generations, dirty-state comparison, automation, conflict behavior and workbench lifecycle wiring.
 
-**Expose the document store to providers.** Rejected because providers could bypass operation generations, dirty baselines, conflict state, and Session isolation.
+**Treat a Session as one document slot.** Rejected because switching resources would destroy unrelated local edits and force stale reads to compete for one state owner.
 
-**Put CodeMirror in the main viewer bundle.** Rejected because every viewer lifecycle would own editor dependencies and construction even when no document reaches ready state.
+**Give the editor filesystem access.** Rejected because memory and remote-backed sources need the same synchronization behavior, while filesystem authentication and navigation form a separate product responsibility.
 
-**Fall back to the native opener after every viewer error.** Rejected as the only policy because some deployments need a failed preview to remain visible instead of opening another application. `openMode` makes that choice explicit.
-
-**Read workspace content with Node filesystem APIs.** Rejected because it would create a second path policy and bypass the configured `ctx.fs` backend.
+**Resolve conflicts automatically.** Rejected because neither local nor source text has general precedence. Explicit directional actions preserve the user's choice.
 
 ## Consequences
 
-Other plugins can add sources without sharing writable state, and workspace reads and saves retain Harness policy and concurrency protection. The split editor adds one boot graph row and one profile dependency. Installation therefore adds and removes viewer and editor together, while only the viewer package is a Bundle. The setup receipt distinguishes exact setup-owned Host bytes from externally owned or drifted source, so uninstall can fail safely instead of reverting unrelated work.
+Client plugins can add sources without sharing writable viewer state. One source implementation defines canonical text, opaque revisions and optional locations for all of its resources. The file-manager can evolve filesystem behavior independently, while the editor keeps one synchronization path for every source. Installation adds and removes viewer and editor together, and its scripts never mutate Harness source.

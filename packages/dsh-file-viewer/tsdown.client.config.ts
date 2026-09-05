@@ -5,7 +5,12 @@ const CLIENT_EXTERNALS = [
   '@deepseek-ai/dsh-client-ui-slots', '@dsh-external/dsh-file-viewer-editor/client',
 ]
 
-export default {
+const node: UserConfig = {
+  entry: { index: 'lib/types/index.js' }, outDir: 'lib', format: 'esm', platform: 'node',
+  dts: false, sourcemap: true, clean: false,
+}
+
+const client: UserConfig = {
   entry: { client: 'lib/types/client/index.js' }, outDir: 'lib', format: 'cjs', platform: 'browser',
   dts: false, sourcemap: true, clean: false,
   external: CLIENT_EXTERNALS,
@@ -16,4 +21,6 @@ export default {
     footer: 'return module.exports; } });',
     intro: 'var module = { exports: {} }; var exports = module.exports;',
   },
-} satisfies UserConfig
+}
+
+export default [node, client]

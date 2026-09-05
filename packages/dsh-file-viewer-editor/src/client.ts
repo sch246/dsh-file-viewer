@@ -1,4 +1,5 @@
-import { EditorState } from '@codemirror/state'
+import { EditorSelection, EditorState, Transaction } from '@codemirror/state'
+import { history, historyKeymap } from '@codemirror/commands'
 import { EditorView, keymap } from '@codemirror/view'
 
 /** Parameters for one owned CodeMirror instance. */
@@ -32,9 +33,10 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
       doc: options.text,
       extensions: [
         theme,
+        history(),
         EditorState.readOnly.of(options.readOnly),
         EditorView.lineWrapping,
-        keymap.of([]),
+        keymap.of(historyKeymap),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !applying) options.onChange(update.state.doc.toString())
         }),
@@ -44,9 +46,18 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   return {
     setText: (text) => {
       if (text === view.state.doc.toString()) return
+      const selection = view.state.selection
+      const ranges = selection.ranges.map(range => EditorSelection.range(
+        Math.min(range.anchor, text.length),
+        Math.min(range.head, text.length),
+      ))
       applying = true
       try {
-        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: text },
+          selection: EditorSelection.create(ranges, selection.mainIndex),
+          annotations: Transaction.addToHistory.of(false),
+        })
       } finally {
         applying = false
       }

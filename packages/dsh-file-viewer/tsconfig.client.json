@@ -5,19 +5,13 @@
     "outDir": "lib/types",
     "tsBuildInfoFile": "lib/types/client/tsconfig.tsbuildinfo"
   },
-  "include": ["src/client", "src/types.ts"],
+  "include": ["src/index.ts", "src/client"],
   "references": [
     { "path": "../../harness/vendor/cordis" },
-    { "path": "../../harness/packages/api/remotes/tsconfig.client.json" },
-    { "path": "../../harness/packages/api/session-controller/tsconfig.client.json" },
     { "path": "../../harness/packages/client/locale" },
     { "path": "../../harness/packages/client/modules" },
-    { "path": "../../harness/packages/client/ui-chat" },
     { "path": "../../harness/packages/client/ui-renderer" },
     { "path": "../../harness/packages/client/ui-slots" },
-    { "path": "../../harness/packages/fs/fs" },
-    { "path": "../../harness/packages/core/session" },
-    { "path": "../../harness/packages/typert/protocol" },
-    { "path": "../../harness/packages/util/workspace-path" }
+    { "path": "../../harness/packages/core/session" }
   ]
 }

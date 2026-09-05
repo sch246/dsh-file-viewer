@@ -1,87 +1,48 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { SessionId } from '@deepseek-ai/dsh-session/types'
-import type {} from '@deepseek-ai/dsh-api-remotes/client'
-import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-modules/client'
-import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { ChatFileOpenRequest } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@dsh-external/dsh-right-sidebar/client'
-import fileViewerRemote from '@dsh-external/dsh-file-viewer/remote'
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import type { FileViewerClientService } from './contract.ts'
 import { asFileViewerEditorModule } from './editor-module.ts'
-import { createFileViewerClientService } from './face.ts'
+import {
+  createFileViewerClientService,
+  createFileViewerInstanceHost,
+  FILE_VIEWER_VIEW_ID,
+} from './face.ts'
 import { FileViewerPanel, type FileViewerPanelInjected } from './FileViewerPanel.tsx'
 import { en, NS, zh } from './locales.ts'
 import { FileViewerService } from './service.ts'
-import type { FileViewerSourceId } from './service.ts'
 import { FILE_VIEWER_CSS } from './styles.ts'
-import {
-  createWorkspaceSource,
-} from './workspace-source.ts'
 
 export type { FileViewerClientService } from './contract.ts'
 export type {
-  FileViewerDocumentRef, FileViewerFailure, FileViewerLoadedText, FileViewerSavedText,
-  FileViewerSessionSnapshot, FileViewerSource,
+  FileViewerAutomationPreferences,
+  FileViewerDocumentRef,
+  FileViewerFailure,
+  FileViewerErrorCode,
+  FileViewerInstanceSnapshot,
+  FileViewerLoadedText,
+  FileViewerLocation,
+  FileViewerOperation,
+  FileViewerSavedText,
+  FileViewerSource,
+  FileViewerSyncStatus,
+  FileViewerWatchEvent,
 } from './service.ts'
 export { FileViewerOpenError, FileViewerSourceId } from './service.ts'
 
-function valueOf<T>(result: RemoteResult<T>): T {
-  if (result.ok) return result.value
-  throw result.error
-}
-
-/** Required bootstrap service; feature dependencies wait for the mounted generated namespace. */
-export const inject = ['remote']
-
-/** Build the Chat waterfall listener for the configured Host routing policy. */
-export function createWorkspaceFileOpenListener(
-  mode: 'preview' | 'system' | 'preview-or-system',
-  sourceId: FileViewerSourceId,
-  open: FileViewerClientService['open'],
-): (request: ChatFileOpenRequest, next: () => Promise<void>) => Promise<void> {
-  return async (request, next) => {
-    if (mode === 'system') return await next()
-    const ref = { sessionId: request.sessionId, sourceId, resourceId: request.path }
-    if (mode === 'preview') {
-      await open(ref)
-      return
-    }
-    try {
-      await open(ref)
-    } catch {
-      return await next()
-    }
-  }
-}
+/** Client services required to present source-neutral text editor instances. */
+export const inject = ['slots', 'locale', 'modules', 'rightSidebar']
 
 async function registerRuntime(ctx: Context): Promise<() => void> {
-  const mode = valueOf<'preview' | 'system' | 'preview-or-system'>(
-    await ctx.remote.fileViewerWorkspace.openMode(),
-  )
-  let externalOpenSupported = false
-  void Promise.resolve()
-    .then(() => ctx.remote.session.canOpenWorkspacePath())
-    .then((capability) => {
-      externalOpenSupported = capability.ok && capability.value
-    })
-    .catch(() => {
-      externalOpenSupported = false
-    })
-
-  const runtime = new FileViewerService()
+  const t = ctx.locale.bind(NS)
+  const runtime = new FileViewerService({
+    host: createFileViewerInstanceHost(ctx.rightSidebar),
+    confirmDiscard: () => window.confirm(t('confirmClose')),
+  })
   const face: FileViewerClientService = createFileViewerClientService(runtime, ctx.rightSidebar)
   ctx.provide('fileViewer', face)
-  const workspace = createWorkspaceSource({
-    workspace: ctx.remote.fileViewerWorkspace,
-    session: ctx.remote.session,
-    cwdOf: (sessionId: SessionId) => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd,
-    externalOpenSupported: () => externalOpenSupported,
-  })
-  const unregisterWorkspace = face.registerSource(workspace)
 
   let editorModule: ReturnType<typeof asFileViewerEditorModule> | undefined
   let editorRequest: Promise<ReturnType<typeof asFileViewerEditorModule>> | undefined
@@ -94,11 +55,6 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     return editorModule
   }
 
-  const offOpen = ctx.on(
-    'chat/open-workspace-file',
-    createWorkspaceFileOpenListener(mode, workspace.id, ref => face.open(ref)),
-  )
-
   const offPresentation = ctx.effect(() => {
     const offLocale = ctx.locale.register(NS, { zh, en })
     const style = document.createElement('style')
@@ -108,42 +64,44 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     return () => { offLocale(); style.remove() }
   }, 'file-viewer: locale and styles')
 
-  const t = ctx.locale.bind(NS)
-  const offTab = ctx.slots.inject('rightbar.tab', () => ctx.slots.register({
-    name: 'rightbar.tab', id: 'files', order: 0, label: () => t('tab'), locale: NS,
-    inject: (rawSessionId): FileViewerPanelInjected => ({
-      snapshot: () => face.snapshot(SessionId(rawSessionId)),
-      subscribe: listener => face.subscribe(SessionId(rawSessionId), listener),
-      edit: text => { face.edit(SessionId(rawSessionId), text) },
-      save: () => { void face.save(SessionId(rawSessionId)) },
-      refresh: () => { void face.refresh(SessionId(rawSessionId)) },
-      openExternal: () => { void face.openExternal(SessionId(rawSessionId)) },
-      loadEditor,
-    }),
+  const offView = ctx.slots.inject('rightbar.view', () => ctx.slots.register({
+    name: 'rightbar.view',
+    id: FILE_VIEWER_VIEW_ID,
+    locale: NS,
+    inject: (_sessionId: string): FileViewerPanelInjected => {
+      return {
+        snapshot: instanceId => face.snapshot(instanceId),
+        subscribe: (instanceId, listener) => face.subscribe(instanceId, listener),
+        edit: (instanceId, text) => { face.edit(instanceId, text) },
+        save: instanceId => { void face.save(instanceId) },
+        refresh: instanceId => { void face.refresh(instanceId) },
+        overwriteSource: instanceId => { void face.overwriteSource(instanceId) },
+        discardLocal: instanceId => { face.discardLocal(instanceId) },
+        setAutoUpdate: (instanceId, enabled) => { face.setAutomation(instanceId, 'autoUpdate', enabled) },
+        setAutoSave: (instanceId, enabled) => { face.setAutomation(instanceId, 'autoSave', enabled) },
+        selectLocation: (instanceId, selection) => { void face.selectLocation(instanceId, selection) },
+        openExternal: instanceId => { void face.openExternal(instanceId) },
+        confirm: message => window.confirm(message),
+        loadEditor,
+      }
+    },
   }, FileViewerPanel))
 
   return () => {
-    offTab()
+    offView()
     offPresentation()
-    offOpen()
-    unregisterWorkspace()
     runtime.dispose()
   }
 }
 
-/** Mount the generated Host descriptor, then register runtime behavior after its namespace is ready. */
+/** Register the text editor service and its one static workbench renderer. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
-  const disposeRemote = await ctx.remote.$mount(fileViewerRemote)
-  const runtime = ctx.inject(
-    ['slots', 'locale', 'modules', 'sessions', 'rightSidebar', 'remote.fileViewerWorkspace', 'remote.session'],
-    registerRuntime,
-  )
+  const runtime = ctx.inject(['slots', 'locale', 'modules', 'rightSidebar'], registerRuntime)
   try {
     await runtime
   } catch (error: unknown) {
     await runtime.dispose()
-    await disposeRemote()
     throw error
   }
-  return async () => { await runtime.dispose(); await disposeRemote() }
+  return async () => { await runtime.dispose() }
 }
