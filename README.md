@@ -76,7 +76,9 @@ The image handler is the default for `image/*`; SVG also offers the text handler
 <a id="synchronize-a-document"></a>
 ## Synchronize a document
 
-Each exact text document compares hashes of the common base, local editor text and latest observed source text. Update observes the source while retaining local edits. Save uses the common base revision when the source supports conditional writes; a writable source without conditional writes requires explicit overwrite confirmation. Automatic preferences inherit global defaults, optional source defaults and explicit resource overrides. Reset removes the resource override. Capabilities gate execution without rewriting the saved preference. Source failures or conflicts pause automation without deleting the local text.
+Each exact text document compares hashes of the common base, local editor text and latest observed source text. Update observes the source while retaining local edits. Save uses the common base revision when the source supports conditional writes; a writable source without conditional writes requires explicit overwrite confirmation. Source failures or conflicts pause automation without deleting the local text.
+
+The two synchronization defaults initialize newly opened documents, with optional source defaults taking precedence. Changing a default leaves every existing document's automatic update/save choices unchanged, including during loading, refresh, source reconnection and Session switching. Views of the same exact document share these choices. Closing its last view and reopening initializes from the latest defaults. Capabilities gate execution: automatic update requires watching and automatic save requires conditional writes. The default controls update across views through `subscribeAutomationDefaults`, independently of document subscriptions.
 
 When local and source text both change, the editor shows Base, Local and Source text side by side. Overwrite source and Discard local require separate confirmation. `Ctrl+S` or `Cmd+S` requests an immediate save. A dirty close also requires confirmation.
 
@@ -87,7 +89,7 @@ Sources define canonical text, including line endings and terminal newlines. The
 <a id="recover-browser-drafts"></a>
 ## Recover browser drafts
 
-Each ready text document retains its exact Base and Local text in browser `localStorage`, keyed by the complete Session, source and resource identity. The existing version-1 draft format remains readable. Workbench layout persistence stores a JSON-safe descriptor and handler id; JSON-safe selection hints can persist, while opaque revisions and handler memory do not. A later restoration freshly reads Source and reconnects any number of views to the shared document.
+Each ready text document retains its exact Base and Local text and its automatic update/save choices in browser `localStorage`, keyed by the complete Session, source and resource identity. Version-1 drafts without automation choices remain readable and initialize those choices from current defaults. Workbench layout persistence stores a JSON-safe descriptor and handler id; JSON-safe selection hints can persist, while opaque revisions and handler memory do not. A later restoration freshly reads Source and reconnects any number of views to the shared document without resetting retained automation.
 
 A sidebar-committed instance close deletes its retained draft, while a vetoed or superseded close preserves the view and flushes its current edit. Storage parsing, access or quota failures do not replace the live editor text.
 

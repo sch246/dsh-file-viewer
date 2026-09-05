@@ -4,6 +4,7 @@ import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/cli
 import type { FileViewerEditorModule } from './editor-module.ts'
 import type {
   FileViewerFailure,
+  FileViewerAutomationPreferences,
   FileViewerInstanceSnapshot,
 } from './service.ts'
 import { isFileViewerDirty } from './service.ts'
@@ -19,10 +20,12 @@ export interface FileViewerPanelInjected {
   refresh(instanceId: string): void
   overwriteSource(instanceId: string): void
   discardLocal(instanceId: string): void
-  setAutoUpdate(instanceId: string, enabled: boolean | undefined): void
-  setAutoSave(instanceId: string, enabled: boolean | undefined): void
-  setGlobalAutoUpdate?(enabled: boolean): void
-  setGlobalAutoSave?(enabled: boolean): void
+  setAutoUpdate(instanceId: string, enabled: boolean): void
+  setAutoSave(instanceId: string, enabled: boolean): void
+  automationDefaults(): FileViewerAutomationPreferences
+  subscribeAutomationDefaults(listener: () => void): () => void
+  setGlobalAutoUpdate(enabled: boolean): void
+  setGlobalAutoSave(enabled: boolean): void
   confirm(message: string): boolean
   loadEditor(): Promise<FileViewerEditorModule>
   getViewState?(instanceId: string): unknown
@@ -139,7 +142,7 @@ function Differences({ state, t }: { readonly state: ReadySnapshot; readonly t: 
 
 function ReadyPanel({
   state, edit, save, refresh, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
-  setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
+  automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
   viewState, onViewStateChange, t,
 }: {
   readonly state: ReadySnapshot
@@ -148,10 +151,11 @@ function ReadyPanel({
   readonly refresh: () => void
   readonly overwriteSource: () => void
   readonly discardLocal: () => void
-  readonly setAutoUpdate: (enabled: boolean | undefined) => void
-  readonly setAutoSave: (enabled: boolean | undefined) => void
-  readonly setGlobalAutoUpdate?: (enabled: boolean) => void
-  readonly setGlobalAutoSave?: (enabled: boolean) => void
+  readonly setAutoUpdate: (enabled: boolean) => void
+  readonly setAutoSave: (enabled: boolean) => void
+  readonly automationDefaults: FileViewerAutomationPreferences
+  readonly setGlobalAutoUpdate: (enabled: boolean) => void
+  readonly setGlobalAutoSave: (enabled: boolean) => void
   readonly confirm: (message: string) => boolean
   readonly loadEditor: () => Promise<FileViewerEditorModule>
   readonly viewState?: unknown
@@ -216,32 +220,24 @@ function ReadyPanel({
         </div>
         <details className="dsh-file-viewer-defaults">
           <summary>{t('automationDefaults')}</summary>
-          <label>
-            <input
-              type="checkbox"
-              checked={state.automationInheritance.global.autoUpdate}
-              onChange={event => { setGlobalAutoUpdate?.(event.currentTarget.checked) }}
-            />
-            {t('globalAutoUpdate')}
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={state.automationInheritance.global.autoSave}
-              onChange={event => { setGlobalAutoSave?.(event.currentTarget.checked) }}
-            />
-            {t('globalAutoSave')}
-          </label>
-          <button
-            type="button"
-            disabled={state.automationInheritance.resource.autoUpdate === undefined}
-            onClick={() => { setAutoUpdate(undefined) }}
-          >{t('resetAutoUpdate')}</button>
-          <button
-            type="button"
-            disabled={state.automationInheritance.resource.autoSave === undefined}
-            onClick={() => { setAutoSave(undefined) }}
-          >{t('resetAutoSave')}</button>
+          <div className="dsh-file-viewer-defaults-options">
+            <label>
+              <input
+                type="checkbox"
+                checked={automationDefaults.autoUpdate}
+                onChange={event => { setGlobalAutoUpdate(event.currentTarget.checked) }}
+              />
+              {t('globalAutoUpdate')}
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={automationDefaults.autoSave}
+                onChange={event => { setGlobalAutoSave(event.currentTarget.checked) }}
+              />
+              {t('globalAutoSave')}
+            </label>
+          </div>
         </details>
       </header>
       {state.automationPaused && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
@@ -276,6 +272,11 @@ function ReadyPanel({
 
 /** Render loading, failure, and ready states for one editor instance. */
 export function FileViewerPanel(props: FileViewerPanelProps) {
+  const automationDefaults = useSyncExternalStore(
+    props.subscribeAutomationDefaults,
+    props.automationDefaults,
+    props.automationDefaults,
+  )
   const state = useSyncExternalStore(
     listener => props.subscribe(props.instanceId, listener),
     () => props.snapshot(props.instanceId),
@@ -300,8 +301,9 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
       discardLocal={() => { props.discardLocal(props.instanceId) }}
       setAutoUpdate={enabled => { props.setAutoUpdate(props.instanceId, enabled) }}
       setAutoSave={enabled => { props.setAutoSave(props.instanceId, enabled) }}
-      {...(props.setGlobalAutoUpdate === undefined ? {} : { setGlobalAutoUpdate: props.setGlobalAutoUpdate })}
-      {...(props.setGlobalAutoSave === undefined ? {} : { setGlobalAutoSave: props.setGlobalAutoSave })}
+      automationDefaults={automationDefaults}
+      setGlobalAutoUpdate={props.setGlobalAutoUpdate}
+      setGlobalAutoSave={props.setGlobalAutoSave}
       confirm={props.confirm}
       loadEditor={props.loadEditor}
       viewState={props.getViewState?.(props.instanceId)}

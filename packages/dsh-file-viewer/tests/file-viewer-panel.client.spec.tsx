@@ -8,6 +8,7 @@ import { en } from '../src/client/locales.ts'
 
 const sourceId = FileViewerSourceId('memory')
 const instanceId = 'text-editor-1'
+const defaults = { autoUpdate: false, autoSave: false }
 
 function ready(
   overrides: Partial<Extract<FileViewerInstanceSnapshot, { status: 'ready' }>> = {},
@@ -31,11 +32,6 @@ function ready(
     watchSupported: true,
     externalOpenSupported: false,
     automation: { autoUpdate: false, autoSave: false },
-    automationInheritance: {
-      global: { autoUpdate: false, autoSave: false },
-      source: {},
-      resource: {},
-    },
     automationPaused: true,
     location: {
       label: 'Memory',
@@ -58,6 +54,10 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     discardLocal: vi.fn(),
     setAutoUpdate: vi.fn(),
     setAutoSave: vi.fn(),
+    automationDefaults: () => defaults,
+    subscribeAutomationDefaults: () => () => {},
+    setGlobalAutoUpdate: vi.fn(),
+    setGlobalAutoSave: vi.fn(),
     confirm: vi.fn(() => true),
     loadEditor: async () => ({
       createFileViewerEditor: ({ parent }) => {

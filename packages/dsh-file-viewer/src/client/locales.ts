@@ -16,7 +16,7 @@ export type FileViewerLocaleKey =
   | 'openWith' | 'chooseHandler' | 'rememberHandler' | 'rememberHandlerHelp'
   | 'unsupportedResource' | 'handlerFailed' | 'textHandler' | 'imageHandler'
   | 'handlerLoading'
-  | 'automationDefaults' | 'globalAutoUpdate' | 'globalAutoSave' | 'resetAutoUpdate' | 'resetAutoSave'
+  | 'automationDefaults' | 'globalAutoUpdate' | 'globalAutoSave'
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
 
@@ -85,8 +85,6 @@ export const en: Record<FileViewerLocaleKey, string> = {
   automationDefaults: 'Synchronization defaults',
   globalAutoUpdate: 'Default automatic update',
   globalAutoSave: 'Default automatic save',
-  resetAutoUpdate: 'Inherit update',
-  resetAutoSave: 'Inherit save',
   imageDecodeFailed: 'The image data could not be decoded.',
   confirmHandlerSwitch: 'Keep the unsaved text draft and pause its automation while opening another viewer?',
 }
@@ -149,8 +147,6 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   automationDefaults: '同步默认设置',
   globalAutoUpdate: '默认自动更新',
   globalAutoSave: '默认自动保存',
-  resetAutoUpdate: '继承更新设置',
-  resetAutoSave: '继承保存设置',
   imageDecodeFailed: '无法解码图片数据。',
   confirmHandlerSwitch: '保留未保存的文本草稿并暂停自动同步，然后改用其它查看器吗？',
 }

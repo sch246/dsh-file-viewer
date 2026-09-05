@@ -238,11 +238,13 @@ export interface ResourceWorkbenchClientService {
   overwriteSourceText(viewId: string): Promise<void>
   /** @param viewId Text resource view. Replaces local text with the last observed source. */
   discardLocalText(viewId: string): void
-  /** @param viewId Text resource view. @param name Automation preference. @param enabled Explicit value, or undefined to inherit. */
-  setTextAutomation(viewId: string, name: keyof ResourceAutomationPreferences, enabled: boolean | undefined): void
-  /** @returns Persisted global text-automation defaults. */
+  /** @param viewId Text resource view. @param name Shared document automation choice. @param enabled Value retained with the document until its last view closes. */
+  setTextAutomation(viewId: string, name: keyof ResourceAutomationPreferences, enabled: boolean): void
+  /** @returns Stable persisted global defaults used only to initialize newly opened documents, below source defaults. */
   automationDefaults(): ResourceAutomationPreferences
-  /** @param name Automation preference. @param enabled New persisted global default. */
+  /** @param listener Global-default change listener, independent of document notifications. @returns Subscription disposer. */
+  subscribeAutomationDefaults(listener: () => void): () => void
+  /** @param name Automation preference. @param enabled New persisted global default; existing documents retain their choices. */
   setGlobalAutomation(name: keyof ResourceAutomationPreferences, enabled: boolean): void
   /** @param viewId Resource view. @param handlerId State owner. @returns Memory-only state for that handler. */
   getViewState(viewId: string, handlerId: ResourceHandlerId): unknown

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ResourceWorkbenchPanel } from '../src/client/ResourceWorkbenchPanel.tsx'
 import { createImageResourceView } from '../src/client/image-handler.tsx'
 import { createTextResourceView } from '../src/client/text-handler.tsx'
+import { createResourceWorkbenchClientService } from '../src/client/face.ts'
 import type { FileViewerEditorModule } from '../src/client/editor-module.ts'
 import {
   ResourceHandlerId,
@@ -62,6 +63,86 @@ function snapshot(): ResourceViewSnapshot {
 }
 
 describe('resource workbench presentation', () => {
+  it('updates default controls across views without changing shared or independent document choices', async () => {
+    const inputs = new Map<string, Parameters<ResourceViewHost['open']>[1]>()
+    const host: ResourceViewHost = {
+      open: async (_session, input) => { inputs.set(input.id, input); return 'group' },
+      activate: () => {}, update: () => {}, pin: () => {}, group: () => 'group',
+      resolveTarget: () => 'group', launch: async () => {}, registerRestorer: () => () => {},
+      close: async (_session, id) => {
+        const input = inputs.get(id)
+        if (input?.onClose !== undefined && !await input.onClose()) return
+        inputs.delete(id)
+        input?.onClosed?.()
+      },
+    }
+    const storage = new Map<string, string>()
+    const runtime = new ResourceWorkbenchRuntime({
+      host, hashText: async value => value,
+      storage: {
+        getItem: key => storage.get(key) ?? null,
+        setItem: (key, value) => { storage.set(key, value) },
+        removeItem: key => { storage.delete(key) },
+      },
+    })
+    const service = createResourceWorkbenchClientService(runtime)
+    const TextView = createTextResourceView({
+      loadEditor: async () => ({ createFileViewerEditor: () => ({
+        setText: () => {}, captureViewState: () => undefined, destroy: () => {},
+      }) }),
+      confirm: () => true, t: key => en[key],
+    })
+    service.registerHandler({ id: textId, label: 'Text', match: () => ({ role: 'default' }), load: async () => ({ View: TextView }) })
+    service.registerSource({
+      id: descriptor.ref.sourceId, readText: async () => ({ text: 'base' }),
+      saveText: async () => ({}), supportsConditionalTextSave: true, watchText: () => () => {},
+    })
+    try {
+      const first = await service.open(descriptor)
+      const second = await service.open(descriptor, { sideBySide: true })
+      const independent = await service.open({ ...descriptor, ref: { ...descriptor.ref, resourceId: 'two' } })
+      const renderViews = () => <>
+        {[first, second, independent].map(viewId => <div key={viewId} data-testid={viewId}>
+          <TextView viewId={viewId} handlerId={textId} service={service} />
+        </div>)}
+      </>
+      const rendered = render(renderViews())
+      await waitFor(() => { expect(screen.queryByText(en.editorLoading)).toBeNull() })
+      const firstView = within(screen.getByTestId(first))
+      const secondView = within(screen.getByTestId(second))
+      const thirdView = within(screen.getByTestId(independent))
+      const before = service.textSnapshot(first)
+      const documentNotified = vi.fn()
+      const unsubscribe = service.subscribeText(first, documentNotified)
+      fireEvent.click(firstView.getByRole('checkbox', { name: en.globalAutoUpdate }))
+      fireEvent.click(firstView.getByRole('checkbox', { name: en.globalAutoSave }))
+      expect(service.textSnapshot(first)).toBe(before)
+      expect(documentNotified).not.toHaveBeenCalled()
+      for (const view of [firstView, secondView, thirdView]) {
+        expect((view.getByRole('checkbox', { name: en.globalAutoUpdate }) as HTMLInputElement).checked).toBe(true)
+        expect((view.getByRole('checkbox', { name: en.globalAutoSave }) as HTMLInputElement).checked).toBe(true)
+        expect(view.getAllByRole('checkbox', { name: en.automatic }).every(input => !(input as HTMLInputElement).checked)).toBe(true)
+        expect(view.queryByRole('button', { name: /Inherit/ })).toBeNull()
+      }
+      fireEvent.click(firstView.getAllByRole('checkbox', { name: en.automatic })[0]!)
+      expect((secondView.getAllByRole('checkbox', { name: en.automatic })[0] as HTMLInputElement).checked).toBe(true)
+      expect((thirdView.getAllByRole('checkbox', { name: en.automatic })[0] as HTMLInputElement).checked).toBe(false)
+      unsubscribe()
+      rendered.unmount()
+      render(renderViews())
+      expect(service.textSnapshot(second).automation).toEqual({ autoUpdate: true, autoSave: false })
+      cleanup()
+      await service.close(first)
+      expect(service.textSnapshot(second).automation).toEqual({ autoUpdate: true, autoSave: false })
+      await service.close(second)
+      const reopened = await service.open(descriptor)
+      expect(service.textSnapshot(reopened).automation).toEqual({ autoUpdate: true, autoSave: true })
+    } finally {
+      cleanup()
+      runtime.dispose()
+    }
+  })
+
   it('keeps an asynchronous text resource in its loading shell until the document is attached', async () => {
     let resolveText: ((value: { text: string }) => void) | undefined
     const text = new Promise<{ text: string }>(resolve => { resolveText = resolve })

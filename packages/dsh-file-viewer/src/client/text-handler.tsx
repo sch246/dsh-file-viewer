@@ -25,6 +25,8 @@ export function createTextResourceView(dependencies: TextResourceHandlerDependen
         discardLocal={() => { service.discardLocalText(viewId) }}
         setAutoUpdate={(_id, enabled) => { service.setTextAutomation(viewId, 'autoUpdate', enabled) }}
         setAutoSave={(_id, enabled) => { service.setTextAutomation(viewId, 'autoSave', enabled) }}
+        automationDefaults={() => service.automationDefaults()}
+        subscribeAutomationDefaults={listener => service.subscribeAutomationDefaults(listener)}
         setGlobalAutoUpdate={enabled => { service.setGlobalAutomation('autoUpdate', enabled) }}
         setGlobalAutoSave={enabled => { service.setGlobalAutomation('autoSave', enabled) }}
         confirm={dependencies.confirm}

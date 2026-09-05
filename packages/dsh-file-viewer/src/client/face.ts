@@ -65,10 +65,11 @@ export function createResourceWorkbenchClientService(
     refreshText: (viewId: string) => runtime.refreshText(viewId),
     overwriteSourceText: (viewId: string) => runtime.overwriteSourceText(viewId),
     discardLocalText: (viewId: string) => { runtime.discardLocalText(viewId) },
-    setTextAutomation: (viewId: string, name: 'autoUpdate' | 'autoSave', enabled: boolean | undefined) => {
+    setTextAutomation: (viewId: string, name: 'autoUpdate' | 'autoSave', enabled: boolean) => {
       runtime.setTextAutomation(viewId, name, enabled)
     },
     automationDefaults: () => runtime.automationDefaults(),
+    subscribeAutomationDefaults: (listener: () => void) => runtime.subscribeAutomationDefaults(listener),
     setGlobalAutomation: (name: keyof ResourceAutomationPreferences, enabled: boolean) => {
       runtime.setGlobalAutomation(name, enabled)
     },

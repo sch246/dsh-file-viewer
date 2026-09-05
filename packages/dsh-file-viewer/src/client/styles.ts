@@ -16,7 +16,7 @@ export const FILE_VIEWER_CSS = `
 .dsh-file-viewer-location>span,.dsh-file-viewer-location-segment{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .dsh-file-viewer-location button{border:0;background:transparent;color:inherit;padding:0;text-decoration:underline;cursor:pointer}
 .dsh-file-viewer-toolbar{flex-wrap:wrap}
-.dsh-file-viewer-defaults{font-size:12px;color:var(--dsw-alias-label-secondary)}.dsh-file-viewer-defaults summary{cursor:pointer}.dsh-file-viewer-defaults[open]{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.dsh-file-viewer-defaults label{display:flex;align-items:center;gap:4px}.dsh-file-viewer-defaults button{border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:inherit;padding:3px 6px}
+.dsh-file-viewer-defaults{font-size:12px;color:var(--dsw-alias-label-secondary)}.dsh-file-viewer-defaults summary{cursor:pointer}.dsh-file-viewer-defaults-options{display:flex;align-items:center;gap:12px;margin-top:4px}.dsh-file-viewer-defaults label{display:flex;align-items:center;gap:4px}
 .dsh-file-viewer-action-group{border:1px solid var(--dsw-alias-border-l2);border-radius:6px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
 .dsh-file-viewer-action-group>button{border:0;border-right:1px solid var(--dsw-alias-border-l2);border-radius:0}
 .dsh-file-viewer-action-group>label{display:flex;align-items:center;gap:3px;padding:0 6px;font-size:11px;color:var(--dsw-alias-label-secondary)}

@@ -37,6 +37,8 @@ The Bundle inserts the browser `@dsh-external/dsh-file-viewer` row and the indep
 
 The Bundle registers no file source or right-sidebar launcher. A provider independently supplies text or bytes, optional guarded writes and watches, opaque revisions, and optional source-location selection. The file-manager plugin owns the user filesystem provider, external-opening policy and Files launcher.
 
+Synchronization defaults initialize newly opened text documents; changes leave existing document choices intact. Exact document references share automation across views, while separate documents own independent choices. Draft restoration retains those choices. See [synchronization](../../README.md#synchronize-a-document) for source defaults, capability requirements and global-default subscriptions.
+
 -----
 
 <a id="understand-the-implementation"></a>

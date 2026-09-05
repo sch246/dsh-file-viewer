@@ -65,7 +65,7 @@ export type FileViewerSyncStatus = 'synced' | 'local-ahead' | 'source-ahead' | '
 /** Independently reported work in progress. */
 export type FileViewerOperation = 'idle' | 'loading' | 'refreshing' | 'saving' | 'opening-external'
 
-/** Per-resource automation preferences. */
+/** Concrete automation choices owned by one shared document. */
 export interface FileViewerAutomationPreferences { readonly autoUpdate: boolean; readonly autoSave: boolean }
 
 interface CommonSnapshot {
@@ -74,6 +74,7 @@ interface CommonSnapshot {
   readonly title: string
   readonly operation: FileViewerOperation
   readonly failure?: FileViewerFailure
+  readonly automation: FileViewerAutomationPreferences
 }
 
 /** Immutable state for one editor instance. */
@@ -96,12 +97,6 @@ export type FileViewerInstanceSnapshot =
     readonly watchSupported: boolean
     readonly externalOpenSupported: boolean
     readonly location?: FileViewerLocation
-    readonly automation: FileViewerAutomationPreferences
-    readonly automationInheritance: {
-      readonly global: FileViewerAutomationPreferences
-      readonly source: Partial<FileViewerAutomationPreferences>
-      readonly resource: Partial<FileViewerAutomationPreferences>
-    }
     readonly automationPaused: boolean
   })
 
@@ -115,7 +110,7 @@ export class FileViewerOpenError extends Error {
   }
 }
 
-/** Browser persistence used for resource preferences and recoverable editor drafts. */
+/** Browser persistence used for global defaults and recoverable editor drafts. */
 export interface FileViewerBrowserStorage {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
@@ -165,7 +160,6 @@ export interface FileViewerServiceOptions {
 }
 
 const DEFAULT_AUTOMATION = Object.freeze({ autoUpdate: false, autoSave: false })
-const AUTOMATION_FORMAT_VERSION = 2
 const GLOBAL_AUTOMATION_KEY = 'dsh-resource-workbench:automation-defaults:1'
 const DRAFT_FORMAT_VERSION = 1
 
@@ -173,6 +167,7 @@ interface PersistedDraft {
   readonly format: typeof DRAFT_FORMAT_VERSION
   readonly baseText: string
   readonly localText: string
+  readonly automation?: FileViewerAutomationPreferences
 }
 
 interface RestoredDraft extends PersistedDraft {
@@ -210,10 +205,6 @@ function keyOf(ref: FileViewerDocumentRef): string {
   return JSON.stringify([ref.sessionId, ref.sourceId, ref.resourceId])
 }
 
-function preferenceKey(ref: FileViewerDocumentRef): string {
-  return `dsh-file-viewer:automation:${JSON.stringify([ref.sourceId, ref.resourceId])}`
-}
-
 function draftKey(ref: FileViewerDocumentRef): string {
   return `dsh-file-viewer:draft:${keyOf(ref)}`
 }
@@ -225,11 +216,21 @@ function parseDraft(raw: string): PersistedDraft | undefined {
   if (candidate.format !== DRAFT_FORMAT_VERSION
     || typeof candidate.baseText !== 'string'
     || typeof candidate.localText !== 'string') return undefined
+  const automation = parseAutomation(candidate.automation)
   return {
     format: DRAFT_FORMAT_VERSION,
     baseText: candidate.baseText,
     localText: candidate.localText,
+    ...(automation === undefined ? {} : { automation }),
   }
+}
+
+function parseAutomation(value: unknown): FileViewerAutomationPreferences | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const candidate = value as Record<string, unknown>
+  return typeof candidate.autoUpdate === 'boolean' && typeof candidate.autoSave === 'boolean'
+    ? { autoUpdate: candidate.autoUpdate, autoSave: candidate.autoSave }
+    : undefined
 }
 
 function defaultBrowserStorage(): FileViewerBrowserStorage | undefined {
@@ -299,6 +300,7 @@ export class FileViewerService {
   private readonly confirmDiscard: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   private readonly hashText: (text: string) => Promise<string>
   private globalAutomation: FileViewerAutomationPreferences
+  private readonly automationDefaultListeners = new Set<() => void>()
   private nextInstance = 0
   private disposed = false
 
@@ -368,7 +370,13 @@ export class FileViewerService {
 
     const instanceId = `text-editor-${++this.nextInstance}`
     const record: InstanceRecord = {
-      snapshot: { instanceId, ref, title: ref.resourceId, status: 'loading', operation: 'loading' },
+      snapshot: {
+        instanceId, ref, title: ref.resourceId, status: 'loading', operation: 'loading',
+        automation: this.readDraft(ref)?.automation ?? {
+          ...this.globalAutomation,
+          ...this.sources.get(ref.sourceId)?.defaults,
+        },
+      },
       listeners: new Set(),
       read: { generation: 0, controller: undefined, kind: undefined },
       save: { generation: 0, controller: undefined, kind: undefined },
@@ -466,61 +474,49 @@ export class FileViewerService {
     this.pullLatest(this.record(instanceId))
   }
 
-  /** Change or reset one resource automation override. */
-  setAutomation(instanceId: string, name: keyof FileViewerAutomationPreferences, enabled: boolean | undefined): void {
+  /** Change one shared document's automation choice until its last view closes. */
+  setAutomation(instanceId: string, name: keyof FileViewerAutomationPreferences, enabled: boolean): void {
     const record = this.record(instanceId)
     if (record.snapshot.status !== 'ready') return
-    const resource = { ...record.snapshot.automationInheritance.resource }
-    if (enabled === undefined) delete resource[name]
-    else resource[name] = enabled
-    const source = this.sources.get(record.snapshot.ref.sourceId)
-    const automation = this.resolveAutomation(source?.defaults, resource)
+    const automation = { ...record.snapshot.automation, [name]: enabled }
     record.snapshot = {
       ...record.snapshot,
       automation,
-      automationInheritance: { global: this.globalAutomation, source: source?.defaults ?? {}, resource },
     }
-    try {
-      this.storage?.setItem(preferenceKey(record.snapshot.ref), JSON.stringify({
-        format: AUTOMATION_FORMAT_VERSION,
-        ...resource,
-      }))
-    } catch {
-      // The validated in-memory preference remains effective when browser persistence is unavailable.
-    }
+    this.scheduleDraftPersistence(record)
     if (automation[name] !== true) this.clearTimer(record, name)
     this.notify(record)
     this.scheduleAutomation(record, true)
   }
 
-  /** Read the global automation defaults used before source and resource overrides. */
+  /** Read stable global defaults used only when a new document opens. */
   automationDefaults(): FileViewerAutomationPreferences {
     return this.globalAutomation
   }
 
-  /** Change one global default and re-resolve every open document without rewriting overrides. */
+  /** @param listener Global-default change listener. @returns Subscription disposer. */
+  subscribeAutomationDefaults(listener: () => void): () => void {
+    this.assertLive()
+    this.automationDefaultListeners.add(listener)
+    return () => { this.automationDefaultListeners.delete(listener) }
+  }
+
+  /** Change a persisted global default without notifying or rescheduling existing documents. */
   setGlobalAutomation(name: keyof FileViewerAutomationPreferences, enabled: boolean): void {
+    this.assertLive()
+    if (this.globalAutomation[name] === enabled) return
     this.globalAutomation = { ...this.globalAutomation, [name]: enabled }
     try {
       this.storage?.setItem(GLOBAL_AUTOMATION_KEY, JSON.stringify(this.globalAutomation))
     } catch {
       // The in-memory global defaults remain effective when persistence is unavailable.
     }
-    for (const record of this.instances.values()) {
-      if (record.snapshot.status !== 'ready') continue
-      const source = this.sources.get(record.snapshot.ref.sourceId)
-      const resource = record.snapshot.automationInheritance.resource
-      record.snapshot = {
-        ...record.snapshot,
-        automation: this.resolveAutomation(source?.defaults, resource),
-        automationInheritance: {
-          global: this.globalAutomation,
-          source: source?.defaults ?? {},
-          resource,
-        },
+    for (const listener of this.automationDefaultListeners) {
+      try {
+        listener()
+      } catch {
+        // A defaults subscriber cannot starve later subscribers.
       }
-      this.notify(record)
-      this.scheduleAutomation(record, true)
     }
   }
 
@@ -612,6 +608,7 @@ export class FileViewerService {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.automationDefaultListeners.clear()
     for (const [id, record] of this.instances) {
       this.flushDraft(record)
       this.remove(id, record, new Error('file viewer disposed'))
@@ -711,12 +708,6 @@ export class FileViewerService {
     restored?: RestoredDraft,
   ): void {
     const previous = record.snapshot
-    const preference = previous.status === 'ready'
-      ? {
-        automation: this.resolveAutomation(source.defaults, previous.automationInheritance.resource),
-        resource: previous.automationInheritance.resource,
-      }
-      : this.readPreferences(previous.ref, source)
     let next: ReadySnapshot
     if (previous.status !== 'ready') {
       next = deriveSync({
@@ -740,24 +731,13 @@ export class FileViewerService {
         watchSupported: source.watch !== undefined,
         externalOpenSupported: source.openExternal !== undefined,
         ...(loaded.location === undefined ? {} : { location: loaded.location }),
-        automation: preference.automation,
-        automationInheritance: {
-          global: this.globalAutomation,
-          source: source.defaults ?? {},
-          resource: preference.resource,
-        },
+        automation: previous.automation,
         automationPaused: false,
       })
     } else {
       const pull = mode === 'manual' && !isFileViewerDirty(previous)
       next = replaceLatestSource({
         ...clearFailure(previous),
-        automation: preference.automation,
-        automationInheritance: {
-          global: this.globalAutomation,
-          source: source.defaults ?? {},
-          resource: preference.resource,
-        },
         title: loaded.title ?? previous.ref.resourceId,
         operation: this.visibleOperation(record),
         sourceStale: false,
@@ -972,33 +952,6 @@ export class FileViewerService {
     this.scheduleAutomation(record, true)
   }
 
-  private readPreferences(
-    ref: FileViewerDocumentRef,
-    source: FileViewerSource,
-  ): { automation: FileViewerAutomationPreferences; resource: Partial<FileViewerAutomationPreferences> } {
-    let stored: Record<string, unknown> = {}
-    try {
-      const raw = this.storage?.getItem(preferenceKey(ref))
-      if (raw !== null && raw !== undefined) stored = JSON.parse(raw) as Record<string, unknown>
-    } catch {
-      // Malformed or unavailable browser persistence uses the documented defaults.
-    }
-    const resource: { autoUpdate?: boolean; autoSave?: boolean } = {}
-    if (typeof stored.autoUpdate === 'boolean') resource.autoUpdate = stored.autoUpdate
-    if (typeof stored.autoSave === 'boolean') resource.autoSave = stored.autoSave
-    return { automation: this.resolveAutomation(source.defaults, resource), resource }
-  }
-
-  private resolveAutomation(
-    source: Partial<FileViewerAutomationPreferences> | undefined,
-    resource: Partial<FileViewerAutomationPreferences>,
-  ): FileViewerAutomationPreferences {
-    return {
-      autoUpdate: resource.autoUpdate ?? source?.autoUpdate ?? this.globalAutomation.autoUpdate,
-      autoSave: resource.autoSave ?? source?.autoSave ?? this.globalAutomation.autoSave,
-    }
-  }
-
   private readGlobalAutomation(
     configured: Partial<FileViewerAutomationPreferences> | undefined,
   ): FileViewerAutomationPreferences {
@@ -1044,6 +997,7 @@ export class FileViewerService {
       format: DRAFT_FORMAT_VERSION,
       baseText: record.snapshot.baseText,
       localText: record.snapshot.text,
+      automation: record.snapshot.automation,
     }
     try {
       this.storage.setItem(draftKey(record.snapshot.ref), JSON.stringify(value))

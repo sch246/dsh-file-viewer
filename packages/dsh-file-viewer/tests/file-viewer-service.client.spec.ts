@@ -239,6 +239,23 @@ afterEach(() => {
 })
 
 describe('FileViewerService', () => {
+  it('changes defaults without changing existing document automation', async () => {
+    const service = new FileViewerService({ hashText: identityHash })
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    service.registerSource(source)
+    try {
+      const id = await service.open(ref(sid('session'), source, 'one'))
+      const before = service.snapshot(id)
+      service.setGlobalAutomation('autoUpdate', true)
+      service.setGlobalAutomation('autoSave', true)
+      expect(service.snapshot(id)).toBe(before)
+      expect(ready(service, id).automation).toEqual({ autoUpdate: false, autoSave: false })
+    } finally {
+      service.dispose()
+    }
+  })
+
   it('hashes the exact canonical text without newline normalization', async () => {
     await expect(hashFileViewerText('a\n')).resolves.toBe(
       '87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7',
@@ -444,41 +461,39 @@ describe('FileViewerService', () => {
     expect(source.document('save').text).toBe('base')
   })
 
-  it('retains inherited automation preferences while capabilities gate execution', async () => {
+  it('ignores obsolete resource preferences while capabilities gate initialized automation', async () => {
+    vi.useFakeTimers()
     const storage = new MemoryStorage()
     storage.values.set('dsh-file-viewer:automation:["limited","one"]', JSON.stringify({
-      autoUpdate: true,
-      autoSave: true,
+      autoUpdate: false,
+      autoSave: false,
     }))
     const limited = new MemorySource('limited', { conditional: false, watch: false })
     limited.put('one', 'one')
     limited.put('two', 'two')
-    const service = new FileViewerService({ storage, hashText: identityHash })
+    const service = new FileViewerService({
+      storage, hashText: identityHash,
+      globalAutomationDefaults: { autoUpdate: true, autoSave: true },
+    })
     service.registerSource(limited)
     const one = await service.open(ref(sid('session'), limited, 'one'))
     const two = await service.open(ref(sid('session'), limited, 'two'))
 
     expect(ready(service, one).automation).toEqual({ autoUpdate: true, autoSave: true })
-    expect(ready(service, two).automation).toEqual({ autoUpdate: false, autoSave: false })
-    service.setAutomation(one, 'autoUpdate', undefined)
-    service.setGlobalAutomation('autoUpdate', true)
+    expect(ready(service, two).automation).toEqual({ autoUpdate: true, autoSave: true })
+    service.setGlobalAutomation('autoUpdate', false)
     expect(ready(service, one).automation.autoUpdate).toBe(true)
     expect(ready(service, one).watchSupported).toBe(false)
 
-    const capable = new MemorySource('capable')
-    capable.put('one', 'one')
-    const firstService = new FileViewerService({ storage, hashText: identityHash })
-    firstService.registerSource(capable)
-    const first = await firstService.open(ref(sid('first'), capable, 'one'))
-    firstService.setAutomation(first, 'autoUpdate', true)
-    firstService.setAutomation(first, 'autoSave', true)
-    const secondService = new FileViewerService({ storage, hashText: identityHash })
-    secondService.registerSource(capable)
-    const restored = await secondService.open(ref(sid('second'), capable, 'one'))
-    expect(ready(secondService, restored).automation).toEqual({ autoUpdate: true, autoSave: true })
+    service.edit(one, 'local')
+    await vi.runAllTimersAsync()
+    expect(limited.saveCalls).toHaveLength(0)
+    expect(ready(service, one).text).toBe('local')
+    expect(storage.setCalls.some(call => call.key.startsWith('dsh-file-viewer:automation:'))).toBe(false)
+    service.dispose()
   })
 
-  it('resolves global, source and resource automation layers and resets to inheritance', async () => {
+  it('initializes from source defaults once and uses current defaults after committed close', async () => {
     const source: FileViewerSource = {
       id: FileViewerSourceId('inherited'),
       defaults: { autoUpdate: true, autoSave: false },
@@ -497,10 +512,165 @@ describe('FileViewerService', () => {
     expect(ready(service, id).automation).toEqual({ autoUpdate: false, autoSave: true })
     service.setGlobalAutomation('autoUpdate', true)
     expect(ready(service, id).automation.autoUpdate).toBe(false)
-    service.setAutomation(id, 'autoUpdate', undefined)
-    service.setAutomation(id, 'autoSave', undefined)
-    expect(ready(service, id).automation).toEqual({ autoUpdate: true, autoSave: false })
-    expect(ready(service, id).automationInheritance.resource).toEqual({})
+    await service.refresh(id)
+    expect(ready(service, id).automation).toEqual({ autoUpdate: false, autoSave: true })
+    service.discard(id)
+    const reopened = await service.open({ sessionId: sid('session'), sourceId: source.id, resourceId: 'one' })
+    expect(ready(service, reopened).automation).toEqual({ autoUpdate: true, autoSave: false })
+    service.dispose()
+  })
+
+  it('retains choices through observations, failed refresh, source reconnect and Session reuse', async () => {
+    vi.useFakeTimers()
+    const service = new FileViewerService({ hashText: identityHash })
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const unregister = service.registerSource(source)
+    const documentRef = ref(sid('session'), source, 'one')
+    const id = await service.open(documentRef)
+    service.setGlobalAutomation('autoUpdate', true)
+    service.setGlobalAutomation('autoSave', true)
+    source.emit(documentRef, { kind: 'snapshot', snapshot: { text: 'remote' } })
+    await vi.runAllTimersAsync()
+    expect(ready(service, id).text).toBe('base')
+    source.put('one', 'remote')
+    source.emit(documentRef, { kind: 'invalidate' })
+    await vi.runAllTimersAsync()
+    expect(ready(service, id).text).toBe('base')
+    await service.refresh(id)
+    expect(ready(service, id).text).toBe('remote')
+    service.edit(id, 'local')
+    await vi.runAllTimersAsync()
+    expect(source.saveCalls).toHaveLength(0)
+    source.queueLoad(Promise.reject(new Error('offline')))
+    await service.refresh(id)
+    expect(ready(service, id).failure?.code).toBe('load-failed')
+    unregister()
+    const replacement: FileViewerSource = {
+      id: source.id, defaults: { autoUpdate: true, autoSave: true },
+      load: async () => ({ text: 'remote' }),
+    }
+    service.registerSource(replacement)
+    await service.refresh(id)
+    const anotherSession = await service.open(ref(sid('other'), source, 'one'))
+    expect(ready(service, anotherSession).automation).toEqual({ autoUpdate: true, autoSave: true })
+    expect(await service.open(documentRef)).toBe(id)
+    expect(ready(service, id)).toMatchObject({ text: 'local', automation: { autoUpdate: false, autoSave: false } })
+    service.dispose()
+  })
+
+  it('captures defaults before an initial load completes or retries', async () => {
+    const source = new MemorySource('memory')
+    const gate = deferred<FileViewerLoadedText>()
+    source.queueLoad(gate.promise)
+    source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const documentRef = ref(sid('session'), source, 'one')
+    const opening = service.open(documentRef)
+    service.setGlobalAutomation('autoSave', true)
+    gate.reject(new Error('offline'))
+    await expect(opening).rejects.toBeInstanceOf(FileViewerOpenError)
+    const id = await service.open(documentRef)
+    expect(ready(service, id).automation.autoSave).toBe(false)
+    service.discard(id)
+    const reopened = await service.open(documentRef)
+    expect(ready(service, reopened).automation.autoSave).toBe(true)
+    service.dispose()
+  })
+
+  it('notifies defaults independently and releases subscriptions', async () => {
+    const storage = new MemoryStorage()
+    const service = new FileViewerService({ storage, hashText: identityHash })
+    const observed = vi.fn()
+    service.subscribeAutomationDefaults(() => { throw new Error('subscriber failed') })
+    const unsubscribe = service.subscribeAutomationDefaults(observed)
+    const initial = service.automationDefaults()
+    service.setGlobalAutomation('autoSave', false)
+    expect(service.automationDefaults()).toBe(initial)
+    expect(observed).not.toHaveBeenCalled()
+    service.setGlobalAutomation('autoSave', true)
+    expect(observed).toHaveBeenCalledTimes(1)
+    unsubscribe()
+    service.setGlobalAutomation('autoUpdate', true)
+    expect(observed).toHaveBeenCalledTimes(1)
+    const restored = new FileViewerService({ storage })
+    expect(restored.automationDefaults()).toEqual({ autoUpdate: true, autoSave: true })
+    restored.dispose()
+    service.dispose()
+    expect(() => service.setGlobalAutomation('autoUpdate', false)).toThrow('service is disposed')
+  })
+
+  it('restores draft automation independently of newer defaults and resets after discard', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const documentRef = ref(sid('session'), source, 'one')
+    const first = new FileViewerService({ storage, hashText: identityHash })
+    first.registerSource(source)
+    const id = await first.open(documentRef)
+    first.setAutomation(id, 'autoUpdate', true)
+    first.edit(id, 'local')
+    first.setGlobalAutomation('autoSave', true)
+    first.dispose()
+    const second = new FileViewerService({ storage, hashText: identityHash })
+    second.registerSource(source)
+    const restored = await second.open(documentRef)
+    await vi.runAllTimersAsync()
+    expect(ready(second, restored)).toMatchObject({ text: 'local', automation: { autoUpdate: true, autoSave: false } })
+    expect(source.saveCalls).toHaveLength(0)
+    second.discard(restored)
+    const reopened = await second.open(documentRef)
+    expect(ready(second, reopened)).toMatchObject({ text: 'base', automation: { autoUpdate: false, autoSave: true } })
+    second.dispose()
+  })
+
+  it.each([undefined, { autoUpdate: 'invalid', autoSave: true }])(
+    'retains draft text without valid recorded automation: %j',
+    async automation => {
+      const storage = new MemoryStorage()
+      const source = new MemorySource('memory')
+      source.put('one', 'base')
+      const documentRef = ref(sid('session'), source, 'one')
+      storage.values.set(draftKey(documentRef), JSON.stringify({
+        format: 1, baseText: 'base', localText: 'local', automation,
+      }))
+      const service = new FileViewerService({
+        storage, hashText: identityHash, globalAutomationDefaults: { autoUpdate: true },
+      })
+      service.registerSource(source)
+      try {
+        const id = await service.open(documentRef)
+        expect(ready(service, id)).toMatchObject({
+          text: 'local', baseText: 'base', automation: { autoUpdate: true, autoSave: false },
+        })
+      } finally {
+        service.dispose()
+      }
+    },
+  )
+
+  it('keeps pending document automation on its original deadline when defaults change', async () => {
+    vi.useFakeTimers()
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const service = new FileViewerService({
+      hashText: identityHash, automationDebounceMs: 20,
+      globalAutomationDefaults: { autoSave: true },
+    })
+    service.registerSource(source)
+    try {
+      const id = await service.open(ref(sid('session'), source, 'one'))
+      service.edit(id, 'local')
+      await vi.advanceTimersByTimeAsync(10)
+      service.setGlobalAutomation('autoSave', false)
+      await vi.advanceTimersByTimeAsync(10)
+      expect(source.document('one').text).toBe('local')
+      expect(ready(service, id).automation.autoSave).toBe(true)
+    } finally {
+      service.dispose()
+    }
   })
 
   it('debounces full-ref drafts and restores local-ahead content against a fresh source read', async () => {
@@ -528,6 +698,7 @@ describe('FileViewerService', () => {
       format: 1,
       baseText: 'base',
       localText: 'local',
+      automation: { autoUpdate: false, autoSave: false },
     })
     expect(storage.setCalls.filter(call => call.key === draftKey(documentRef))).toHaveLength(1)
     firstService.dispose()
@@ -717,6 +888,7 @@ describe('FileViewerService', () => {
       format: 1,
       baseText: 'base',
       localText: 'local',
+      automation: { autoUpdate: false, autoSave: false },
     })
 
     const secondService = new FileViewerService({ storage, hashText: identityHash })

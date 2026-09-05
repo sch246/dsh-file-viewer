@@ -716,14 +716,19 @@ export class ResourceWorkbenchRuntime {
     this.documents.discardLocal(this.#documentId(viewId))
   }
 
-  /** Change one resource-level text automation preference. */
-  setTextAutomation(viewId: string, name: 'autoUpdate' | 'autoSave', enabled: boolean | undefined): void {
+  /** Change one shared document's text automation choice. */
+  setTextAutomation(viewId: string, name: 'autoUpdate' | 'autoSave', enabled: boolean): void {
     this.documents.setAutomation(this.#documentId(viewId), name, enabled)
   }
 
   /** Read persisted global automation defaults. */
   automationDefaults() {
     return this.documents.automationDefaults()
+  }
+
+  /** @param listener Global-default change listener. @returns Subscription disposer. */
+  subscribeAutomationDefaults(listener: () => void): () => void {
+    return this.documents.subscribeAutomationDefaults(listener)
   }
 
   /** Change one global automation default. */
