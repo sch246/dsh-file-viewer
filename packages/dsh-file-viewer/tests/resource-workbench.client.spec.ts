@@ -118,6 +118,32 @@ describe('ResourceWorkbenchRuntime', () => {
     runtime.dispose()
   })
 
+  it('retains a shared document but pauses it when only a non-text view remains', async () => {
+    const host = hostFixture()
+    const runtime = new ResourceWorkbenchRuntime({ host, hashText: async text => text })
+    runtime.registerHandler(handler(TEXT_RESOURCE_HANDLER_ID, 'default'))
+    runtime.registerHandler(handler(IMAGE_RESOURCE_HANDLER_ID, 'available'))
+    const sourceId = ResourceSourceId('shared-hidden')
+    runtime.registerSource({
+      id: sourceId,
+      readText: async () => ({ text: 'base' }),
+      readBytes: async () => ({ bytes: new Uint8Array([1]) }),
+    })
+    const resource = descriptor(sourceId)
+    const textView = await runtime.open(resource, { target: { groupId: 'left' } })
+    const imageView = await runtime.open(resource, { target: { groupId: 'right' }, sideBySide: true })
+    const documentId = runtime.textDocumentId(textView)!
+    await runtime.switchHandler(imageView, IMAGE_RESOURCE_HANDLER_ID)
+
+    await runtime.close(textView)
+
+    expect(runtime.textDocumentId(imageView)).toBe(documentId)
+    expect(runtime.textSnapshot(imageView)).toMatchObject({ status: 'ready', automationPaused: true })
+    await runtime.close(imageView)
+    expect(() => runtime.documents.snapshot(documentId)).toThrow('unknown instance')
+    runtime.dispose()
+  })
+
   it('does not deduplicate into the wrong group when an explicit relative target is unresolved', async () => {
     const host = hostFixture()
     const runtime = new ResourceWorkbenchRuntime({ host, hashText: async text => text })
