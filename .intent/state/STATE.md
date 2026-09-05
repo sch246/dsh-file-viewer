@@ -1,6 +1,6 @@
 # Resource workbench current intended state
 
-Status: revision 0.3.4 activated under [the aligned comparison decision and deployment evidence](../logs/2026-09-06-aligned-comparison.md), with no accepted realization lock or user visual acceptance. [The previous deployment log](../logs/2026-09-06-inline-differences-activation.md) records revision 0.3.3 activation.
+Status: revision 0.3.5 candidate under [the deleted fragment decision](../logs/2026-09-06-deleted-fragments.md). Revision 0.3.4 activation remains recorded in [the aligned comparison evidence](../logs/2026-09-06-aligned-comparison.md). No accepted realization lock or user visual acceptance is recorded.
 
 ## Intent
 
@@ -29,6 +29,8 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 - The separate file-manager plugin owns authenticated user filesystem access, filesystem sources, navigation and its Files launcher. The independent resource-links plugin owns Chat path recognition and opening policy. User filesystem UI does not inherit agent sandbox or approval restrictions.
 
 ## Acceptance criteria
+
+- `VIEWER-011`: Exact deleted character fragments have darker red backgrounds inside pale red baseline deletion rows. Highlight ranges follow live edits even when the baseline row text is unchanged; deletion spans remain display-only.
 
 - `VIEWER-001`: One Session can retain multiple views of one exact text resource with shared edits and independent editor state; restoration retains Base and Local text against a fresh Source observation.
 - `VIEWER-002`: Client fixtures can register in-memory text and byte sources, read and guarded-write without binary decoding, watch external changes, dispose a source and retain explicit source-unavailable state without receiving store setters.

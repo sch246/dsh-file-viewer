@@ -1,0 +1,5 @@
+# Deleted character backgrounds
+
+The user requested red backgrounds on the exact deleted fragments, matching the existing green inserted-fragment treatment. Baseline deletion rows retain pale red backgrounds; CodeMirror's baseline character ranges identify darker red spans. These display-only spans remain unselectable and do not enter clipboard text or writes. Widget equality includes character ranges so changing the edit updates the highlight even when baseline text remains unchanged.
+
+This low-risk Client-only presentation change leaves public APIs, profile membership and Host source unchanged. One focused CodeMirror DOM test passed, verifying exact removed text, live highlight-range changes with an unchanged baseline row, preserved document text and noneditable deletion widgets. Editor TypeScript and bundle checks passed. The user explicitly authorized installation and Web restart. Activation is pending; no full suite or separate private Home was needed for this localized presentation change.

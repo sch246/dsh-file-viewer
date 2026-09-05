@@ -12,6 +12,22 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it('highlights deleted characters and refreshes their ranges inside an unchanged baseline row', () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  const parent = document.createElement('div')
+  document.body.appendChild(parent)
+  const baseText = 'before OLD after'
+  handle = createFileViewerEditor({ parent, text: 'before NEW after', readOnly: false, onChange() {},
+    comparison: { baseText, labels: { local: 'Local', source: 'Source', noDifferences: 'Equal' } } })
+  const removed = () => [...parent.querySelectorAll('.cm-deletedText')].map(node => node.textContent).join('')
+  expect(removed()).toBe('OLD')
+  expect(parent.querySelector('.cm-deletedChunk')?.textContent).toBe(baseText)
+  handle.setText('before OLD changed')
+  expect(removed()).toBe('after')
+  expect(parent.querySelector('.cm-comparison-visual')?.getAttribute('contenteditable')).toBe('false')
+  expect(EditorView.findFromDOM(parent.querySelector('.cm-editor')!)!.state.doc.toString()).toBe('before OLD changed')
+})
+
 it('edits the retained local view, updates source, toggles numbering and omits equal sides without writing', () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   const parent = document.createElement('div')

@@ -95,6 +95,11 @@ class VisualRows extends WidgetType {
       return row.height === otherRow.height && row.index === otherRow.index
         && row.cell.text === otherRow.cell.text && row.cell.baseLine === otherRow.cell.baseLine
         && row.cell.deleted === otherRow.cell.deleted
+        && (row.cell.deletedRanges?.length ?? 0) === (otherRow.cell.deletedRanges?.length ?? 0)
+        && (row.cell.deletedRanges ?? []).every((range, position) => {
+          const otherRange = otherRow.cell.deletedRanges![position]!
+          return range.from === otherRange.from && range.to === otherRange.to
+        })
     })
   }
   get estimatedHeight(): number { return this.rows.reduce((height, row) => height + row.height, 0) }
@@ -108,7 +113,16 @@ class VisualRows extends WidgetType {
       line.className = row.cell.deleted ? 'cm-deletedChunk' : 'cm-alignment-blank'
       line.dataset.comparisonRow = String(row.index)
       line.style.height = `${row.height}px`
-      line.textContent = row.cell.text || '\u200b'
+      let offset = 0
+      for (const range of row.cell.deletedRanges ?? []) {
+        line.appendChild(document.createTextNode(row.cell.text.slice(offset, range.from)))
+        const changed = document.createElement('span')
+        changed.className = 'cm-deletedText'
+        changed.textContent = row.cell.text.slice(range.from, range.to)
+        line.appendChild(changed)
+        offset = range.to
+      }
+      line.appendChild(document.createTextNode(row.cell.text.slice(offset) || (row.cell.text ? '' : '\u200b')))
       wrapper.appendChild(line)
     }
     return wrapper
@@ -187,6 +201,7 @@ const theme = EditorView.theme({
   '.cm-comparison-visual': { userSelect: 'none', pointerEvents: 'none' },
   '.cm-comparison-visual > div': { boxSizing: 'border-box', padding: '0 2px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', overflow: 'hidden' },
   '.cm-deletedChunk': { backgroundColor: 'rgba(220, 65, 65, .16)' },
+  '.cm-deletedText': { backgroundColor: 'rgba(200, 40, 40, .36)' },
   '.cm-changedLine': { backgroundColor: 'rgba(45, 170, 85, .12)' },
   '.cm-insertedText': { backgroundColor: 'rgba(20, 135, 60, .36)' },
   '&.cm-focused': { outline: 'none' },

@@ -8,6 +8,8 @@ export interface ComparisonCell {
   readonly baseLine?: number
   readonly text: string
   readonly deleted?: boolean
+  /** Deleted character intervals relative to this baseline line, excluding its newline. */
+  readonly deletedRanges?: readonly { readonly from: number; readonly to: number }[]
   readonly inserted?: boolean
 }
 
@@ -48,7 +50,12 @@ function project(base: Text, text: string): ComparisonSide {
     const endA = lineIndex(base, chunk.toA)
     const endB = lineIndex(doc, chunk.toB)
     while (a < endA) {
-      baseline.set(a, { baseLine: a + 1, text: base.line(a + 1).text, deleted: true })
+      const line = base.line(a + 1)
+      const deletedRanges = chunk.changes.map(change => ({
+        from: Math.max(line.from, chunk.fromA + change.fromA) - line.from,
+        to: Math.min(line.to, chunk.fromA + change.toA) - line.from,
+      })).filter(range => range.from < range.to)
+      baseline.set(a, { baseLine: a + 1, text: line.text, deleted: true, deletedRanges })
       a++
     }
     const added: ComparisonCell[] = []
