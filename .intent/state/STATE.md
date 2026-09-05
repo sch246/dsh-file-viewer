@@ -1,6 +1,6 @@
 # Resource workbench current intended state
 
-Status: revision 0.3.3 candidate under [the inline differences decision](../logs/2026-09-06-inline-differences.md), not installed or activated, with no accepted realization lock. [The deployment log](../logs/2026-09-06-compact-ui-activation.md) records revision 0.3.2 activation.
+Status: revision 0.3.3 installed and activated under [the deployment log](../logs/2026-09-06-inline-differences-activation.md), with no accepted realization lock or user visual acceptance. [The inline differences decision](../logs/2026-09-06-inline-differences.md) records implementation evidence.
 
 ## Intent
 
@@ -53,4 +53,4 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 
 ## Evidence status
 
-The [inline differences decision](../logs/2026-09-06-inline-differences.md) records this candidate's focused validation. The [compact controls decision](../logs/2026-09-06-compact-resource-controls.md) and [deployment log](../logs/2026-09-06-compact-ui-activation.md) describe revision 0.3.2. No accepted realization lock, activation or user visual acceptance is recorded for this candidate.
+The [inline differences decision](../logs/2026-09-06-inline-differences.md) records focused validation, and [the deployment log](../logs/2026-09-06-inline-differences-activation.md) records managed activation. The [compact controls decision](../logs/2026-09-06-compact-resource-controls.md) and [earlier deployment log](../logs/2026-09-06-compact-ui-activation.md) describe revision 0.3.2. No accepted realization lock or user visual acceptance is recorded.
