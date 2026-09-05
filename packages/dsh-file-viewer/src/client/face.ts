@@ -10,7 +10,6 @@ import type {
   ResourceWorkbenchClientService,
 } from './resource.ts'
 import {
-  RESOURCE_WORKBENCH_VIEW_ID,
   ResourceWorkbenchRuntime,
   type ResourceViewHost,
 } from './workbench.ts'
@@ -21,10 +20,7 @@ export function createResourceViewHost(rightSidebar: RightSidebarService): Resou
     open: (sessionId, input, options) => rightSidebar.openInstance(sessionId, input, options),
     activate: (sessionId, viewId) => { rightSidebar.activateInstance(sessionId, viewId) },
     update: (sessionId, viewId, update) => {
-      rightSidebar.switchInstanceView(sessionId, viewId, {
-        viewId: RESOURCE_WORKBENCH_VIEW_ID,
-        ...update,
-      })
+      rightSidebar.updateInstance(sessionId, viewId, update)
     },
     pin: (sessionId, viewId) => { rightSidebar.pinInstance(sessionId, viewId) },
     group: (sessionId, viewId) => rightSidebar.getInstanceGroup(sessionId, viewId),

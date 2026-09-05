@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { Context } from '@deepseek-ai/cordis'
-import { LocaleRuntime } from '../../../harness/packages/client/locale/src/client/index.ts'
-import { SlotRegistry } from '../../../harness/packages/client/ui-renderer/src/client/registry.ts'
+import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
+import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { RightSidebarService } from '@dsh-external/dsh-right-sidebar/client'
 import { describe, expect, it, vi } from 'vitest'
 import { apply, inject } from '../src/client/index.ts'

@@ -59,9 +59,11 @@ export interface ResourceViewHost {
       void | {
         readonly onClose?: () => boolean | Promise<boolean>
         readonly onClosed?: () => void
+        readonly onRestored?: () => void
       } | Promise<void | {
         readonly onClose?: () => boolean | Promise<boolean>
         readonly onClosed?: () => void
+        readonly onRestored?: () => void
       }>,
   ): () => void
   close(sessionId: SessionId, viewId: string): Promise<void>
@@ -86,6 +88,7 @@ interface ViewRecord {
   textSubscription: (() => void) | undefined
   transitionGeneration: number
   textAttachRequest: Promise<void> | undefined
+  checkpointSuppressed: boolean
 }
 
 interface PersistedResourceView {
@@ -418,6 +421,7 @@ export class ResourceWorkbenchRuntime {
       textSubscription: undefined,
       transitionGeneration: 0,
       textAttachRequest: undefined,
+      checkpointSuppressed: false,
     }
     this.#views.set(viewId, view)
     try {
@@ -857,6 +861,7 @@ export class ResourceWorkbenchRuntime {
         textSubscription: undefined,
         transitionGeneration: 0,
         textAttachRequest: undefined,
+        checkpointSuppressed: true,
       }
       this.#views.set(context.instanceId, view)
       if (persisted.handlerId === TEXT_RESOURCE_HANDLER_ID && this.#sources.has(descriptor.ref.sourceId)) {
@@ -865,6 +870,7 @@ export class ResourceWorkbenchRuntime {
       return {
         onClose: () => this.#canClose(context.instanceId),
         onClosed: () => { this.#finalizeClose(context.instanceId) },
+        onRestored: () => { this.#checkpointRestoredView(context.instanceId, view) },
       }
     })
   }
@@ -1001,12 +1007,30 @@ export class ResourceWorkbenchRuntime {
   ): void {
     if (this.#views.get(viewId) !== view) return
     const descriptor = { ...view.descriptor, ...update, ref: view.descriptor.ref }
+    if (view.checkpointSuppressed) {
+      view.descriptor = descriptor
+      this.#notify(view)
+      return
+    }
     this.#host.update(descriptor.ref.sessionId, viewId, {
       title: descriptor.name,
       restoreDescriptor: persistedDescriptor(descriptor, view.handlerId),
     })
     view.descriptor = descriptor
     this.#notify(view)
+  }
+
+  #checkpointRestoredView(viewId: string, view: ViewRecord): void {
+    if (this.#views.get(viewId) !== view) return
+    view.checkpointSuppressed = false
+    try {
+      this.#host.update(view.descriptor.ref.sessionId, viewId, {
+        title: view.descriptor.name,
+        restoreDescriptor: persistedDescriptor(view.descriptor, view.handlerId),
+      })
+    } catch (error: unknown) {
+      this.#publishActionFailure(view, failureMessage(error))
+    }
   }
 
   #syncTextDescriptor(viewId: string, view: ViewRecord): void {
