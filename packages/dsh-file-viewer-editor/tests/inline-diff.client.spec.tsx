@@ -34,6 +34,12 @@ it('edits the retained local view, updates source, toggles numbering and omits e
   expect(parent.querySelector('.cm-insertedText')?.textContent).toBe('local')
   expect(parent.querySelector('.cm-comparison-visual')?.getAttribute('contenteditable')).toBe('false')
   expect(parent.querySelectorAll('.cm-comparison-gutter')).toHaveLength(2)
+  handle.setLineNumbers(false)
+  expect(parent.querySelectorAll('.cm-comparison-gutter')).toHaveLength(0)
+  handle.setComparison(comparison)
+  expect(parent.querySelectorAll('.cm-comparison-gutter')).toHaveLength(0)
+  handle.setLineNumbers(true)
+  expect(parent.querySelectorAll('.cm-comparison-gutter')).toHaveLength(2)
   expect(onChange).not.toHaveBeenCalled()
 
   local.dispatch({ changes: { from: 5, insert: ' edit' } })
@@ -55,6 +61,10 @@ it('edits the retained local view, updates source, toggles numbering and omits e
 
   handle.setComparison(comparison)
   expect((parent.querySelector('.dsh-file-viewer-local-pane') as HTMLElement).hidden).toBe(true)
+  handle.setLineNumbers(false)
+  handle.setComparison(undefined)
+  handle.setComparison(comparison)
+  expect(parent.querySelectorAll('.cm-comparison-gutter')).toHaveLength(0)
   handle.setText('source\n')
   expect(parent.querySelectorAll('.cm-editor')).toHaveLength(1)
   expect((parent.querySelector('.dsh-file-viewer-local-pane') as HTMLElement).hidden).toBe(false)

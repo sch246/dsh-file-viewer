@@ -29,7 +29,7 @@ export interface FileViewerEditorOptions {
 export interface FileViewerEditorHandle {
   /** Replace source text without recording an undo step or invoking onChange. */
   setText(text: string): void
-  /** Change ordinary-editor numbering; comparisons always have baseline/current columns. */
+  /** Toggle ordinary line numbers or both baseline/current columns in every comparison pane. */
   setLineNumbers(enabled: boolean): void
   /** Toggle or update comparison without replacing the local view, selection or undo history. */
   setComparison(comparison: FileViewerComparison | undefined): void
@@ -350,13 +350,14 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
     localPane.element.hidden = onlySource
     localPane.element.style.display = onlySource ? 'none' : 'flex'
     setTitle(localPane, localText === comparison.baseText ? comparison.labels.noDifferences : comparison.labels.local)
-    view.dispatch({ effects: numbering.reconfigure(comparisonGutter) })
+    view.dispatch({ effects: numbering.reconfigure(numbersEnabled ? comparisonGutter : []) })
     if (hasSource) {
       if (!sourceView) {
         sourcePane = pane('source')
         sourceView = new EditorView({ parent: sourcePane.host, state: EditorState.create({
           doc: Text.of(comparison.sourceText!.split('\n')),
-          extensions: [theme, EditorView.lineWrapping, EditorState.readOnly.of(true), presentation, comparisonGutter],
+          extensions: [theme, EditorView.lineWrapping, EditorState.readOnly.of(true), presentation,
+            numbering.of(numbersEnabled ? comparisonGutter : [])],
         }) })
         sourceView.scrollDOM.addEventListener('scroll', sourceScroll)
         observer.observe(sourceView.contentDOM)
@@ -386,7 +387,12 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
       binding.applying = true
       try { view.dispatch(replaceText(view.state, text)) } finally { binding.applying = false }
     },
-    setLineNumbers: enabled => { numbersEnabled = enabled; if (!comparison) view.dispatch({ effects: numbering.reconfigure(enabled ? lineNumbers() : []) }) },
+    setLineNumbers: enabled => {
+      numbersEnabled = enabled
+      view.dispatch({ effects: numbering.reconfigure(enabled ? comparison ? comparisonGutter : lineNumbers() : []) })
+      sourceView?.dispatch({ effects: numbering.reconfigure(enabled ? comparisonGutter : []) })
+      scheduleGeometry()
+    },
     setComparison: value => { comparison = value; refresh() },
     captureViewState: () => captureViewState(view),
     destroy: () => {
