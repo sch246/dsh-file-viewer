@@ -1,6 +1,6 @@
 # Resource workbench current intended state
 
-Status: candidate revision 0.3.1 under [the document automation initialization decision](../logs/2026-09-05-document-automation-initialization.md); not installed or activated; no accepted realization lock.
+Status: candidate revision 0.3.1 under [the document automation initialization decision](../logs/2026-09-05-document-automation-initialization.md); privately validated, not installed or activated in the managed Web service; no accepted realization lock.
 
 ## Intent
 
@@ -21,7 +21,7 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 - The right-sidebar workbench owns groups, tabs, preview replacement, pin state, activation and close gestures. The viewer registers one static `resource-workbench` renderer. First edit pins a preview; close and handler switch honor document and handler vetoes. Close confirmation does not release a view or document; cleanup runs only after the sidebar commits removal of that exact instance.
 - Optional source locations remain opaque. A location can display a label and segments; its selector id launches another right-sidebar feature with an optional source-owned selection hint.
 - `@dsh-external/dsh-file-viewer-editor` owns CodeMirror dependencies and editor construction. Source state updates reuse the mounted view, preserve bounded cursor positions and do not enter undo history.
-- The separate file-manager plugin owns authenticated user filesystem access, filesystem sources, navigation, its Files launcher and Chat filesystem routing. User filesystem UI does not inherit agent sandbox or approval restrictions.
+- The separate file-manager plugin owns authenticated user filesystem access, filesystem sources, navigation and its Files launcher. The independent resource-links plugin owns Chat path recognition and opening policy. User filesystem UI does not inherit agent sandbox or approval restrictions.
 
 ## Acceptance criteria
 
@@ -47,4 +47,4 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 
 ## Evidence status
 
-The candidate worktree defines this revision. Its [decision log](../logs/2026-09-05-document-automation-initialization.md) records regression and verification evidence. This revision is not installed or activated and has no accepted realization lock or user visual acceptance. [The generic deployment log](../logs/2026-09-05-generic-workbench-deployment.md) records deployment evidence for revision 0.3.0 only.
+The candidate worktree defines this revision. Its [decision log](../logs/2026-09-05-document-automation-initialization.md) records regression and verification evidence; the [private browser log](../logs/2026-09-05-private-repair-acceptance.md) records integrated UI observations. This revision is not installed or activated in the managed Web service and has no accepted realization lock or user visual acceptance. [The generic deployment log](../logs/2026-09-05-generic-workbench-deployment.md) records deployment evidence for revision 0.3.0 only.
