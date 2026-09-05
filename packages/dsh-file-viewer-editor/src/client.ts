@@ -178,6 +178,7 @@ const theme = EditorView.theme({
   '&': { height: '100%', color: 'var(--dsw-alias-label-primary)', backgroundColor: 'var(--dsw-alias-bg-layer-1)' },
   '.cm-scroller': { overflow: 'auto' },
   '.cm-content': { caretColor: 'var(--dsw-alias-brand-primary)', fontFamily: 'monospace' },
+  '.cm-line': { padding: '0 2px' },
   '.cm-cursor': { borderLeftColor: 'var(--dsw-alias-brand-primary)' },
   '.cm-gutters': { backgroundColor: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)', border: 'none' },
   '.cm-comparison-gutter .cm-gutterElement': { padding: '0', lineHeight: 'inherit' },
@@ -283,7 +284,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   // A single layout measures missing texts. Unchanged rows reuse heights until width or font metrics change.
   function heights(target: EditorView, cells: readonly ComparisonCell[], measure: boolean): number[] {
     const style = getComputedStyle(target.contentDOM)
-    const width = target.contentDOM.clientWidth
+    const width = target.contentDOM.getBoundingClientRect().width
     const metrics = [width, style.font, style.lineHeight, style.letterSpacing, style.tabSize].join('|')
     let cache = measurements.get(target)
     if (!cache || cache.metrics !== metrics) {

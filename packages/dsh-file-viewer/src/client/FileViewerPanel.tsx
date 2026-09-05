@@ -115,7 +115,7 @@ export function EditorHost({
         parent: parentRef.current,
         text: textRef.current,
         readOnly,
-        comparison: comparisonRef.current,
+        ...(comparisonRef.current === undefined ? {} : { comparison: comparisonRef.current }),
         lineNumbers: lineNumbersRef.current,
         onChange: value => { onChangeRef.current(value) },
         viewState: viewStateRef.current,
@@ -208,7 +208,7 @@ function ReadyPanel({
   const showDifferences = presentation.differences
   const comparison = useMemo(() => showDifferences ? {
     baseText: state.baseText,
-    sourceText: state.latestSourceText,
+    ...(state.latestSourceText === undefined ? {} : { sourceText: state.latestSourceText }),
     labels: { local: t('local'), source: t('source'), noDifferences: t('noDifferences') },
   } : undefined, [showDifferences, state.baseText, state.latestSourceText, t])
   const lineNumberDefault = useSyncExternalStore(subscribeLineNumberDefault, defaultLineNumbers, defaultLineNumbers)
