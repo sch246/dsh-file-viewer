@@ -8,6 +8,7 @@ import type {
   FileViewerInstanceSnapshot,
 } from './service.ts'
 import { isFileViewerDirty } from './service.ts'
+import { usePendingDots } from './pending-dots.ts'
 
 type ReadySnapshot = Extract<FileViewerInstanceSnapshot, { status: 'ready' }>
 
@@ -163,6 +164,33 @@ function ReadyPanel({
   readonly t: FileViewerPanelProps['t']
 }) {
   const [showDifferences, setShowDifferences] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+  const [more, setMore] = useState(false)
+  const controlsRef = useRef<HTMLDivElement>(null)
+  const statusRef = useRef<HTMLButtonElement>(null)
+  const expanded = !dismissed && (hovered || focused || pinned)
+  const { updating, saving } = state.activities
+  const updateDots = usePendingDots(updating)
+  const saveDots = usePendingDots(saving)
+  const collapse = () => {
+    setPinned(false)
+    setMore(false)
+    setDismissed(true)
+  }
+  useEffect(() => {
+    const outside = (event: PointerEvent) => {
+      if (!controlsRef.current?.contains(event.target as Node)) {
+        setPinned(false)
+        setMore(false)
+        setDismissed(true)
+      }
+    }
+    document.addEventListener('pointerdown', outside)
+    return () => { document.removeEventListener('pointerdown', outside) }
+  }, [])
   const dirty = isFileViewerDirty(state)
   const busy = state.operation !== 'idle'
   const canSave = state.saveSupported && dirty && !busy
@@ -185,42 +213,67 @@ function ReadyPanel({
 
   return (
     <section className="dsh-file-viewer-root" onKeyDown={onKeyDown}>
-      <header className="dsh-file-viewer-header">
-        <div className="dsh-file-viewer-heading">
-          {state.location === undefined && <div className="dsh-file-viewer-title" title={state.title}>{state.title}</div>}
-          <span className={`dsh-file-viewer-status is-${state.syncStatus}`}>{t(state.syncStatus)}</span>
-          {!state.saveSupported && <span className="dsh-file-viewer-readonly">{t('readOnly')}</span>}
-          {dirty && <span className="dsh-file-viewer-dirty">{t('dirty')}</span>}
-        </div>
+      <div className="dsh-file-viewer-float" ref={controlsRef}
+        onMouseEnter={() => { setHovered(true); setDismissed(false) }}
+        onMouseLeave={() => { setHovered(false) }}
+        onFocus={() => { setFocused(true); setDismissed(false) }}
+        onBlur={event => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            setFocused(false)
+            setMore(false)
+          }
+        }}
+        onKeyDown={event => {
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            statusRef.current?.focus()
+            collapse()
+          }
+        }}>
+        <button type="button" ref={statusRef}
+          className={`dsh-file-viewer-status is-${state.failure !== undefined ? 'error' : state.syncStatus}`}
+          aria-expanded={expanded} title={t('synchronization')}
+          onClick={() => {
+            if (pinned) collapse()
+            else { setPinned(true); setDismissed(false) }
+          }}>
+          <span role="status">{t(state.syncStatus)}</span>
+          {updating && <span className="dsh-file-viewer-activity" role="status">
+            {t('updating')}<span className="dsh-file-viewer-pending-dots" aria-hidden="true">{updateDots}</span>
+          </span>}
+          {saving && <span className="dsh-file-viewer-activity" role="status">
+            {t('saving')}<span className="dsh-file-viewer-pending-dots" aria-hidden="true">{saveDots}</span>
+          </span>}
+          {!state.saveSupported && <span> · {t('readOnly')}</span>}
+        </button>
         <div className="dsh-file-viewer-toolbar">
-          <div className="dsh-file-viewer-action-group">
-            <button type="button" onClick={refresh} disabled={busy}>{state.operation === 'refreshing' ? t('updating') : t('update')}</button>
+          <div className="dsh-file-viewer-action-group" hidden={!expanded}>
             <label title={state.watchSupported ? t('autoUpdate') : t('autoUpdateUnsupported')}>
               <input
                 type="checkbox"
+                aria-label={t('autoUpdate')}
                 checked={state.automation.autoUpdate}
                 disabled={!state.watchSupported}
                 onChange={event => { setAutoUpdate(event.currentTarget.checked) }}
               />
-              {t('automatic')}
             </label>
+            <button type="button" onClick={refresh} disabled={busy}>{t('update')}</button>
           </div>
-          {state.saveSupported && <div className="dsh-file-viewer-action-group">
-            <button type="button" onClick={requestSave} disabled={!canSave}>{state.operation === 'saving' ? t('saving') : t('save')}</button>
+          {state.saveSupported && <div className="dsh-file-viewer-action-group" hidden={!expanded}>
             <label title={state.conditionalSaveSupported ? t('autoSave') : t('autoSaveUnsupported')}>
               <input
                 type="checkbox"
+                aria-label={t('autoSave')}
                 checked={state.automation.autoSave}
                 disabled={!state.saveSupported || !state.conditionalSaveSupported}
                 onChange={event => { setAutoSave(event.currentTarget.checked) }}
               />
-              {t('automatic')}
             </label>
+            <button type="button" onClick={requestSave} disabled={!canSave}>{t('save')}</button>
           </div>}
-        </div>
-        <details className="dsh-file-viewer-defaults">
-          <summary>{t('automationDefaults')}</summary>
-          <div className="dsh-file-viewer-defaults-options">
+          <button type="button" hidden={!expanded} aria-expanded={more}
+            onClick={() => { setMore(value => !value) }}>{t('more')}</button>
+          <div className="dsh-file-viewer-defaults-options" hidden={!expanded || !more}>
             <label>
               <input
                 type="checkbox"
@@ -237,9 +290,10 @@ function ReadyPanel({
               />
               {t('globalAutoSave')}
             </label>
+            <button type="button" onClick={() => { statusRef.current?.focus(); collapse() }}>{t('collapse')}</button>
           </div>
-        </details>
-      </header>
+        </div>
+      </div>
       {state.automationPaused && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
       {state.sourceStale && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
       {state.failure !== undefined && <div className="dsh-file-viewer-failure" role="alert">{t(failureKey(state.failure))}</div>}

@@ -62,8 +62,16 @@ export interface FileViewerFailure { readonly code: FileViewerErrorCode; readonl
 /** Three-way synchronization relationship. */
 export type FileViewerSyncStatus = 'synced' | 'local-ahead' | 'source-ahead' | 'diverged' | 'unknown'
 
-/** Independently reported work in progress. */
+/** Primary work in progress, ordered saving, reading, then external opening. */
 export type FileViewerOperation = 'idle' | 'loading' | 'refreshing' | 'saving' | 'opening-external'
+
+/** Concurrent update and save activity projected from the document's live operation controllers. */
+export interface FileViewerActivities {
+  /** True during a refresh read and its comparison; initial loading is separate. */
+  readonly updating: boolean
+  /** True during save preparation and the source write, including explicit overwrites. */
+  readonly saving: boolean
+}
 
 /** Concrete automation choices owned by one shared document. */
 export interface FileViewerAutomationPreferences { readonly autoUpdate: boolean; readonly autoSave: boolean }
@@ -73,6 +81,7 @@ interface CommonSnapshot {
   readonly ref: FileViewerDocumentRef
   readonly title: string
   readonly operation: FileViewerOperation
+  readonly activities: FileViewerActivities
   readonly failure?: FileViewerFailure
   readonly automation: FileViewerAutomationPreferences
 }
@@ -331,7 +340,6 @@ export class FileViewerService {
           record.pauseReason = 'failure'
           record.snapshot = {
             ...record.snapshot,
-            operation: 'idle',
             sourceStale: true,
             syncStatus: 'unknown',
             saveSupported: false,
@@ -345,7 +353,6 @@ export class FileViewerService {
           record.snapshot = {
             ...record.snapshot,
             status: 'failed',
-            operation: 'idle',
             failure: { code: 'source-unavailable' },
           }
         }
@@ -372,6 +379,7 @@ export class FileViewerService {
     const record: InstanceRecord = {
       snapshot: {
         instanceId, ref, title: ref.resourceId, status: 'loading', operation: 'loading',
+        activities: { updating: false, saving: false },
         automation: this.readDraft(ref)?.automation ?? {
           ...this.globalAutomation,
           ...this.sources.get(ref.sourceId)?.defaults,
@@ -547,17 +555,16 @@ export class FileViewerService {
       return
     }
     const operation = this.begin(record.external, 'opening-external')
-    this.publishOperation(record)
+    this.notify(record)
     try {
       await source.openExternal(value.ref, operation.controller.signal)
       if (!this.complete(record.external, operation) || record.snapshot.status !== 'ready') return
-      record.snapshot = { ...clearFailure(record.snapshot), operation: this.visibleOperation(record) }
+      record.snapshot = clearFailure(record.snapshot)
       this.notify(record)
     } catch (error: unknown) {
       if (!this.complete(record.external, operation) || record.snapshot.status !== 'ready') return
       record.snapshot = {
         ...record.snapshot,
-        operation: this.visibleOperation(record),
         failure: toFailure('external-open-failed', error),
       }
       this.notify(record)
@@ -623,7 +630,7 @@ export class FileViewerService {
   ): Promise<FileViewerFailure | undefined> {
     const source = this.sources.get(record.snapshot.ref.sourceId)
     const operation = this.begin(record.read, operationName)
-    this.publishOperation(record)
+    this.notify(record)
     if (source === undefined) {
       const failure = { code: 'source-unavailable' } as const
       if (this.complete(record.read, operation)) this.publishReadFailure(record, failure)
@@ -683,7 +690,6 @@ export class FileViewerService {
     record.snapshot = record.snapshot.status === 'ready'
       ? {
         ...record.snapshot,
-        operation: this.visibleOperation(record),
         sourceStale: true,
         syncStatus: 'unknown',
         automationPaused: true,
@@ -692,7 +698,6 @@ export class FileViewerService {
       : {
         ...record.snapshot,
         status: 'failed',
-        operation: this.visibleOperation(record),
         failure,
       }
     this.notify(record)
@@ -715,7 +720,8 @@ export class FileViewerService {
         ref: previous.ref,
         status: 'ready',
         title: loaded.title ?? previous.ref.resourceId,
-        operation: this.visibleOperation(record),
+        operation: previous.operation,
+        activities: previous.activities,
         text: restored?.localText ?? loaded.text,
         localHash: restored?.localHash ?? hash,
         baseText: restored?.baseText ?? loaded.text,
@@ -739,7 +745,6 @@ export class FileViewerService {
       next = replaceLatestSource({
         ...clearFailure(previous),
         title: loaded.title ?? previous.ref.resourceId,
-        operation: this.visibleOperation(record),
         sourceStale: false,
         saveSupported: source.save !== undefined,
         conditionalSaveSupported: source.save !== undefined && source.supportsConditionalSave === true,
@@ -807,6 +812,7 @@ export class FileViewerService {
 
     this.cancel(record.read, new Error('source snapshot superseded read'))
     const generation = record.read.generation
+    this.notify(record)
     let hash: string
     try {
       hash = await this.hashText(event.snapshot.text)
@@ -864,7 +870,7 @@ export class FileViewerService {
 
     const operation = this.begin(record.save, 'saving')
     this.clearTimer(record, 'autoSave')
-    this.publishOperation(record)
+    this.notify(record)
     const savedText = value.text
     let savedHash = value.localHash
     if (savedHash === undefined) {
@@ -875,7 +881,6 @@ export class FileViewerService {
         record.pauseReason = 'failure'
         record.snapshot = {
           ...record.snapshot,
-          operation: this.visibleOperation(record),
           automationPaused: true,
           failure: toFailure('hash-failed', error),
         }
@@ -901,7 +906,6 @@ export class FileViewerService {
       record.pauseReason = undefined
       let next = replaceLatestSource({
         ...clearFailure(record.snapshot),
-        operation: this.visibleOperation(record),
         sourceStale: false,
       }, { text: savedText, version: saved.version }, savedHash)
       next = replaceBase(next, savedText, savedHash, saved.version)
@@ -915,7 +919,6 @@ export class FileViewerService {
       record.pauseReason = 'failure'
       record.snapshot = {
         ...record.snapshot,
-        operation: this.visibleOperation(record),
         automationPaused: true,
         failure: toFailure('save-failed', error),
       }
@@ -1155,11 +1158,6 @@ export class FileViewerService {
     return record.save.kind ?? record.read.kind ?? record.external.kind ?? 'idle'
   }
 
-  private publishOperation(record: InstanceRecord): void {
-    record.snapshot = { ...record.snapshot, operation: this.visibleOperation(record) }
-    this.notify(record)
-  }
-
   private hashCurrent(
     instanceId: string,
     record: InstanceRecord,
@@ -1180,6 +1178,14 @@ export class FileViewerService {
   }
 
   private notify(record: InstanceRecord): void {
+    record.snapshot = {
+      ...record.snapshot,
+      operation: this.visibleOperation(record),
+      activities: {
+        updating: record.read.kind === 'refreshing',
+        saving: record.save.kind === 'saving',
+      },
+    }
     for (const listener of record.listeners) {
       try {
         listener()

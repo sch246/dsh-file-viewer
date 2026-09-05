@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
 import type {
   ResourceHandlerId,
@@ -16,7 +16,9 @@ function ResourceLocation({
   readonly label: string
 }) {
   const location = service.snapshot(viewId).descriptor.location
-  if (location === undefined || (location.label === undefined && location.segments === undefined)) return null
+  if (location === undefined || (location.label === undefined && location.segments === undefined)) {
+    return <nav className="dsh-file-viewer-location" aria-label={label}>{service.snapshot(viewId).descriptor.name}</nav>
+  }
   const selectable = location.selectorId !== undefined
   return (
     <nav className="dsh-file-viewer-location" aria-label={label}>
@@ -85,39 +87,59 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
     () => service.snapshot(instanceId),
     () => service.snapshot(instanceId),
   )
-  const selected = state.handlerId ?? ''
-  const associated = state.handlerId !== undefined
-    && state.openWith.some(choice => choice.id === state.handlerId && choice.associated)
-  const switchHandler = (handlerId: string) => {
-    if (handlerId !== '') void service.switchHandler(instanceId, handlerId as ResourceHandlerId)
-  }
-  const toggleAssociation = () => {
-    service.setAssociation(state.descriptor, associated ? undefined : state.handlerId)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!menuOpen) return
+    const outside = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', outside)
+    return () => { document.removeEventListener('pointerdown', outside) }
+  }, [menuOpen])
+  const switchHandler = (handlerId: ResourceHandlerId) => {
+    void service.switchHandler(instanceId, handlerId)
+    setMenuOpen(false)
+    triggerRef.current?.focus()
   }
   return (
     <section className="dsh-resource-workbench-root">
       <header className="dsh-resource-workbench-bar">
         <ResourceLocation viewId={instanceId} service={service} label={t('location')} />
-        <label>
-          <span>{t('openWith')}</span>
-          <select
+        <div className="dsh-resource-handler-picker" ref={menuRef}
+          onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false) }}
+          onKeyDown={event => {
+            if (event.key === 'Escape') {
+              event.stopPropagation()
+              setMenuOpen(false)
+              triggerRef.current?.focus()
+            }
+          }}>
+          <button type="button" ref={triggerRef}
             aria-label={t('openWith')}
-            value={selected}
-            onChange={event => { switchHandler(event.currentTarget.value) }}
+            aria-expanded={menuOpen}
+            onClick={() => { setMenuOpen(value => !value) }}
           >
-            {selected === '' && <option value="">{t('chooseHandler')}</option>}
-            {state.openWith.map(choice => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
-          </select>
-        </label>
-        {state.handlerId !== undefined && (
-          <label title={t('rememberHandlerHelp')}>
-            <input type="checkbox" checked={associated} onChange={toggleAssociation} />
-            {t('rememberHandler')}
-          </label>
-        )}
-        {state.externalOpenSupported && (
-          <button type="button" onClick={() => { void service.openExternal(instanceId) }}>{t('openExternal')}</button>
-        )}
+            {state.openWith.find(choice => choice.id === state.handlerId)?.label ?? t('chooseHandler')} <span aria-hidden="true">⌄</span>
+          </button>
+          {menuOpen && <div className="dsh-resource-handler-menu" role="group" aria-label={t('openWith')}>
+            {state.openWith.map(choice => <div className="dsh-resource-handler-row" key={choice.id}>
+              <button type="button" className="dsh-resource-handler-default"
+                title={t('rememberHandler')} aria-label={`${t('rememberHandler')}: ${choice.label}`}
+                aria-pressed={choice.associated}
+                onClick={() => { service.setAssociation(state.descriptor, choice.associated ? undefined : choice.id) }}>
+                <span aria-hidden="true">{choice.associated ? '●' : '○'}</span>
+              </button>
+              <button type="button" className="dsh-resource-handler-name" aria-pressed={choice.selected}
+                onClick={() => { switchHandler(choice.id) }}>{choice.label}</button>
+            </div>)}
+            {state.externalOpenSupported && <button type="button" onClick={() => {
+              void service.openExternal(instanceId)
+              setMenuOpen(false)
+            }}>{t('openExternal')}</button>}
+          </div>}
+        </div>
       </header>
       <div className="dsh-resource-workbench-content">
         {state.failure !== undefined && state.handlerStatus !== 'failed' && (

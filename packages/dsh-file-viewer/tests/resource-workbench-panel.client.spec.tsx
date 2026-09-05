@@ -111,6 +111,10 @@ describe('resource workbench presentation', () => {
       const firstView = within(screen.getByTestId(first))
       const secondView = within(screen.getByTestId(second))
       const thirdView = within(screen.getByTestId(independent))
+      for (const view of [firstView, secondView, thirdView]) {
+        fireEvent.mouseEnter(view.getByTitle(en.synchronization).parentElement!)
+        fireEvent.click(view.getByRole('button', { name: en.more }))
+      }
       const before = service.textSnapshot(first)
       const documentNotified = vi.fn()
       const unsubscribe = service.subscribeText(first, documentNotified)
@@ -121,12 +125,13 @@ describe('resource workbench presentation', () => {
       for (const view of [firstView, secondView, thirdView]) {
         expect((view.getByRole('checkbox', { name: en.globalAutoUpdate }) as HTMLInputElement).checked).toBe(true)
         expect((view.getByRole('checkbox', { name: en.globalAutoSave }) as HTMLInputElement).checked).toBe(true)
-        expect(view.getAllByRole('checkbox', { name: en.automatic }).every(input => !(input as HTMLInputElement).checked)).toBe(true)
+        expect((view.getByRole('checkbox', { name: en.autoUpdate }) as HTMLInputElement).checked).toBe(false)
+        expect((view.getByRole('checkbox', { name: en.autoSave }) as HTMLInputElement).checked).toBe(false)
         expect(view.queryByRole('button', { name: /Inherit/ })).toBeNull()
       }
-      fireEvent.click(firstView.getAllByRole('checkbox', { name: en.automatic })[0]!)
-      expect((secondView.getAllByRole('checkbox', { name: en.automatic })[0] as HTMLInputElement).checked).toBe(true)
-      expect((thirdView.getAllByRole('checkbox', { name: en.automatic })[0] as HTMLInputElement).checked).toBe(false)
+      fireEvent.click(firstView.getByRole('checkbox', { name: en.autoUpdate }))
+      expect((secondView.getByRole('checkbox', { name: en.autoUpdate }) as HTMLInputElement).checked).toBe(true)
+      expect((thirdView.getByRole('checkbox', { name: en.autoUpdate }) as HTMLInputElement).checked).toBe(false)
       unsubscribe()
       rendered.unmount()
       render(renderViews())
@@ -253,7 +258,7 @@ describe('resource workbench presentation', () => {
     const switchHandler = vi.fn(async () => {})
     const setAssociation = vi.fn()
     const selectLocation = vi.fn(async () => {})
-    const current = snapshot()
+    let current = snapshot()
     const service = {
       snapshot: () => current,
       subscribe: () => () => {},
@@ -262,12 +267,30 @@ describe('resource workbench presentation', () => {
       selectLocation,
       loadHandler: async () => ({ View: () => <div>image body</div> }),
     } as unknown as ResourceWorkbenchClientService
-    render(<ResourceWorkbenchPanel instanceId="view" service={service} t={key => en[key]} />)
+    const rendered = render(<ResourceWorkbenchPanel instanceId="view" service={service} t={key => en[key]} />)
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Open with' }), { target: { value: textId } })
+    expect(screen.queryByRole('combobox')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.openWith }))
+    fireEvent.click(screen.getByRole('button', { name: `${en.rememberHandler}: Text editor` }))
+    expect(setAssociation).toHaveBeenCalledWith(descriptor, textId)
+    expect(switchHandler).not.toHaveBeenCalled()
+    current = { ...current, openWith: current.openWith.map(choice => ({ ...choice, associated: choice.id === textId })) }
+    rendered.rerender(<ResourceWorkbenchPanel instanceId="view" service={service} t={key => en[key]} />)
+    const marker = screen.getByRole('button', { name: `${en.rememberHandler}: Text editor` })
+    expect(marker.getAttribute('aria-pressed')).toBe('true')
+    expect(marker.title).toBe(en.rememberHandler)
+    fireEvent.click(marker)
+    expect(setAssociation).toHaveBeenLastCalledWith(descriptor, undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'Text editor' }))
     expect(switchHandler).toHaveBeenCalledWith('view', textId)
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Use by default' }))
-    expect(setAssociation).toHaveBeenCalledWith(descriptor, imageId)
+    expect(setAssociation).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('group', { name: en.openWith })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.openWith }))
+    fireEvent.keyDown(screen.getByRole('button', { name: en.openWith }), { key: 'Escape' })
+    expect(screen.queryByRole('group', { name: en.openWith })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.openWith }))
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('group', { name: en.openWith })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'one.svg' }))
     expect(selectLocation).toHaveBeenCalledWith('view', { resourceId: 'one.svg' })
   })

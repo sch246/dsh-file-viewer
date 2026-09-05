@@ -39,6 +39,8 @@ The Bundle registers no file source or right-sidebar launcher. A provider indepe
 
 Synchronization defaults initialize newly opened text documents; changes leave existing document choices intact. Exact document references share automation across views, while separate documents own independent choices. Draft restoration retains those choices. See [synchronization](../../README.md#synchronize-a-document) for source defaults, capability requirements and global-default subscriptions.
 
+The [handler dropdown](../../README.md#choose-a-handler) separates current-view selection from default associations. The text editor keeps synchronization and independent concurrent activities visible while its action stack expands on hover, focus or touch.
+
 -----
 
 <a id="understand-the-implementation"></a>

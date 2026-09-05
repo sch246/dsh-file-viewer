@@ -69,6 +69,8 @@ await ctx.resourceWorkbench.open(descriptor, {
 
 Selection order is an explicit handler, a saved MIME or extension association, a unique highest-priority default, then a safe source-provided text fallback. Equal defaults show the open-with choice instead of using registration order. Switching handlers retains the tab and group. Handler-owned close guards also apply to switching, and the first edit permanently pins a preview.
 
+The workbench bar displays source breadcrumbs and the selected handler dropdown. In the dropdown, selecting a handler name switches the current view; its circular default toggle sets or cancels the association without switching views. A supported external-open action is also available there. Tab reaches each independent control; Escape and outside clicks close the dropdown.
+
 The image handler is the default for `image/*`; SVG also offers the text handler. It creates an object URL from `Uint8Array` and renders an `img` element, never native HTML. Custom byte editors use `readBytes`, `writeBytes`, `watchBytes`, `markEdited` and a retained `registerCloseGuard` controller without inheriting text hashing or normalization.
 
 -----
@@ -77,6 +79,10 @@ The image handler is the default for `image/*`; SVG also offers the text handler
 ## Synchronize a document
 
 Each exact text document compares hashes of the common base, local editor text and latest observed source text. Update observes the source while retaining local edits. Save uses the common base revision when the source supports conditional writes; a writable source without conditional writes requires explicit overwrite confirmation. Source failures or conflicts pause automation without deleting the local text.
+
+Synchronization status stays visible in the editor's upper-right corner. Actual updates and saves add independent activity text there; both can appear together. The text cycles through zero to three dots without shifting its width. Reduced-motion preferences disable that animation, and screen readers receive static activity names. Source changes or a synchronized relationship do not mean a save took place.
+
+Hover, focus or tap the status to reveal a vertical Update, Save and More stack. The checkbox to the left of each action controls that document's automation policy; the button performs the manual action. More reveals the two default-policy checkboxes and Collapse. Escape and outside clicks also dismiss the controls. Operation activity does not open the controls, while failures, paused automation and conflict-resolution actions stay accessible.
 
 The two synchronization defaults initialize newly opened documents, with optional source defaults taking precedence. Changing a default leaves every existing document's automatic update/save choices unchanged, including during loading, refresh, source reconnection and Session switching. Views of the same exact document share these choices. Closing its last view and reopening initializes from the latest defaults. Capabilities gate execution: automatic update requires watching and automatic save requires conditional writes. The default controls update across views through `subscribeAutomationDefaults`, independently of document subscriptions.
 

@@ -5,20 +5,21 @@ export const NS = 'file-viewer'
 export type FileViewerLocaleKey =
   | 'loading' | 'editorLoading' | 'editorFailed'
   | 'save' | 'saving' | 'saveUnsupported' | 'update' | 'updating'
-  | 'automatic' | 'autoUpdate' | 'autoUpdateUnsupported' | 'autoSave' | 'autoSaveUnsupported'
-  | 'openExternal' | 'openExternalUnsupported' | 'dirty' | 'readOnly' | 'location'
+  | 'autoUpdate' | 'autoUpdateUnsupported' | 'autoSave' | 'autoSaveUnsupported'
+  | 'openExternal' | 'openExternalUnsupported' | 'readOnly' | 'location'
   | 'sourceUnavailable' | 'loadFailed' | 'saveFailed' | 'saveConflict' | 'hashFailed'
   | 'watchFailed' | 'externalOpenFailed' | 'operationFailed'
   | 'synced' | 'local-ahead' | 'source-ahead' | 'diverged' | 'unknown'
   | 'automationPaused' | 'sourceStale' | 'conflict' | 'conflictHelp' | 'differences'
   | 'base' | 'local' | 'source' | 'sourceUnknown' | 'overwriteSource' | 'discardLocal'
   | 'confirmOverwrite' | 'confirmDiscard' | 'confirmClose'
-  | 'openWith' | 'chooseHandler' | 'rememberHandler' | 'rememberHandlerHelp'
+  | 'openWith' | 'chooseHandler' | 'rememberHandler'
   | 'unsupportedResource' | 'handlerFailed' | 'textHandler' | 'imageHandler'
   | 'handlerLoading'
-  | 'automationDefaults' | 'globalAutoUpdate' | 'globalAutoSave'
+  | 'globalAutoUpdate' | 'globalAutoSave'
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
+  | 'more' | 'collapse' | 'synchronization'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -32,18 +33,19 @@ export const en: Record<FileViewerLocaleKey, string> = {
   editorLoading: 'Loading editor…',
   editorFailed: 'The editor could not be loaded.',
   save: 'Save',
-  saving: 'Saving…',
+  saving: 'Saving',
   saveUnsupported: 'This source is read-only.',
   update: 'Update',
-  updating: 'Updating…',
-  automatic: 'Auto',
+  updating: 'Updating',
+  more: 'More',
+  collapse: 'Collapse',
+  synchronization: 'Synchronization controls',
   autoUpdate: 'Update automatically after source changes.',
   autoUpdateUnsupported: 'Automatic update requires source watching.',
   autoSave: 'Save automatically with revision protection.',
   autoSaveUnsupported: 'Automatic save requires conditional writes.',
   openExternal: 'Open',
   openExternalUnsupported: 'External opening is unavailable for this source.',
-  dirty: 'Edited',
   readOnly: 'Read only',
   location: 'Source location',
   sourceUnavailable: 'This document source is unavailable. Local text is retained.',
@@ -76,13 +78,11 @@ export const en: Record<FileViewerLocaleKey, string> = {
   openWith: 'Open with',
   chooseHandler: 'Choose a viewer',
   rememberHandler: 'Use by default',
-  rememberHandlerHelp: 'Remember this viewer for resources with the same type.',
   unsupportedResource: 'No installed viewer supports this resource.',
   handlerFailed: 'The selected viewer could not be loaded.',
   handlerLoading: 'Loading viewer…',
   textHandler: 'Text editor',
   imageHandler: 'Image viewer',
-  automationDefaults: 'Synchronization defaults',
   globalAutoUpdate: 'Default automatic update',
   globalAutoSave: 'Default automatic save',
   imageDecodeFailed: 'The image data could not be decoded.',
@@ -94,18 +94,19 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   editorLoading: '正在加载编辑器…',
   editorFailed: '无法加载编辑器。',
   save: '保存',
-  saving: '正在保存…',
+  saving: '保存中',
   saveUnsupported: '该来源为只读。',
   update: '更新',
-  updating: '正在更新…',
-  automatic: '自动',
+  updating: '更新中',
+  more: '更多',
+  collapse: '收起',
+  synchronization: '同步操作',
   autoUpdate: '来源变化后自动更新。',
   autoUpdateUnsupported: '自动更新需要来源支持监听变化。',
   autoSave: '使用版本保护自动保存。',
   autoSaveUnsupported: '自动保存需要来源支持条件写入。',
   openExternal: '打开',
   openExternalUnsupported: '该来源不支持外部打开。',
-  dirty: '已编辑',
   readOnly: '只读',
   location: '来源位置',
   sourceUnavailable: '文档来源当前不可用，已保留本地文本。',
@@ -138,13 +139,11 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   openWith: '打开方式',
   chooseHandler: '选择查看器',
   rememberHandler: '设为默认',
-  rememberHandlerHelp: '为相同类型的资源记住此查看器。',
   unsupportedResource: '没有已安装的查看器支持此资源。',
   handlerFailed: '无法加载所选查看器。',
   handlerLoading: '正在加载查看器…',
   textHandler: '文本编辑器',
   imageHandler: '图片查看器',
-  automationDefaults: '同步默认设置',
   globalAutoUpdate: '默认自动更新',
   globalAutoSave: '默认自动保存',
   imageDecodeFailed: '无法解码图片数据。',

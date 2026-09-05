@@ -57,6 +57,7 @@ export {
 
 /** Text synchronization types used by handlers and source providers. */
 export type {
+  FileViewerActivities as TextDocumentActivities,
   FileViewerFailure as TextDocumentFailure,
   FileViewerErrorCode as TextDocumentErrorCode,
   FileViewerInstanceSnapshot as TextDocumentSnapshot,
