@@ -20,7 +20,7 @@
     "@deepseek-ai/dsh-invariants": "0.1.2-rc.1",
     "@deepseek-ai/dsh-scope": "0.1.2-rc.1",
     "@deepseek-ai/dsh-session": "0.1.2-alpha.2",
-    "@dsh-external/dsh-right-sidebar": "file:../dsh-right-sidebar",
+    "@dsh-external/dsh-right-sidebar": "link:../dsh-right-sidebar",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^24.3.0",
