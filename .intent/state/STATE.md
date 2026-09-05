@@ -1,6 +1,6 @@
 # Resource workbench current intended state
 
-Status: revision 0.3.4 candidate under [the aligned comparison decision](../logs/2026-09-06-aligned-comparison.md), not activated and with no accepted realization lock. [The deployment log](../logs/2026-09-06-inline-differences-activation.md) records revision 0.3.3 activation.
+Status: revision 0.3.4 activated under [the aligned comparison decision and deployment evidence](../logs/2026-09-06-aligned-comparison.md), with no accepted realization lock or user visual acceptance. [The previous deployment log](../logs/2026-09-06-inline-differences-activation.md) records revision 0.3.3 activation.
 
 ## Intent
 
