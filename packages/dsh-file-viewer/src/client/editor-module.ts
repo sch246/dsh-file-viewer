@@ -5,10 +5,14 @@ export interface FileViewerEditorModule {
     readonly text: string
     readonly readOnly: boolean
     readonly onChange: (text: string) => void
+    /** Baseline for an inline comparison, omitted for normal editing. */
+    readonly originalText?: string
     readonly viewState?: unknown
     readonly onViewStateChange?: (state: unknown) => void
   }): {
     setText(text: string): void
+    /** Update only the baseline of a comparison created with originalText. */
+    setOriginalText(text: string): void
     captureViewState(): unknown
     destroy(): void
   }

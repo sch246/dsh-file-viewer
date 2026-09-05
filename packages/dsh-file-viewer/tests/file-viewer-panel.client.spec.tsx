@@ -63,7 +63,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     loadEditor: async () => ({
       createFileViewerEditor: ({ parent }) => {
         parent.dataset.editor = 'mounted'
-        return { setText: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+        return { setText: vi.fn(), setOriginalText: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
       },
     }),
     t: key => en[key],
@@ -83,9 +83,9 @@ describe('FileViewerPanel', () => {
     expect(screen.getByText('Automatic synchronization is paused until this state is resolved.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Differences' }))
     const differences = screen.getByRole('region', { name: 'Differences' })
-    expect(within(differences).getByText('base')).toBeTruthy()
-    expect(within(differences).getByText('local')).toBeTruthy()
-    expect(within(differences).getByText('source')).toBeTruthy()
+    expect(within(differences).getByRole('region', { name: en.local })).toBeTruthy()
+    expect(within(differences).getByRole('region', { name: en.source })).toBeTruthy()
+    expect(differences.querySelector('pre')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Overwrite source' }))
     fireEvent.click(screen.getByRole('button', { name: 'Discard local' }))
@@ -142,8 +142,8 @@ describe('FileViewerPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: en.more }))
     expect(screen.getByRole('checkbox', { name: en.globalAutoUpdate })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.collapse }))
-    expect(screen.queryByRole('button', { name: en.update })).toBeNull()
-    fireEvent.click(status)
+    expect(screen.getByRole('button', { name: en.more })).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: en.globalAutoUpdate })).toBeNull()
     fireEvent.pointerDown(container.querySelector('.dsh-file-viewer-editor-shell')!)
     expect(screen.queryByRole('button', { name: en.update })).toBeNull()
     expect(within(status).getByRole('status').textContent).toBe(en.synced)

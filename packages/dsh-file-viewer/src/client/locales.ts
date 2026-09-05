@@ -11,7 +11,7 @@ export type FileViewerLocaleKey =
   | 'watchFailed' | 'externalOpenFailed' | 'operationFailed'
   | 'synced' | 'local-ahead' | 'source-ahead' | 'diverged' | 'unknown'
   | 'automationPaused' | 'sourceStale' | 'conflict' | 'conflictHelp' | 'differences'
-  | 'base' | 'local' | 'source' | 'sourceUnknown' | 'overwriteSource' | 'discardLocal'
+  | 'local' | 'source' | 'noDifferences' | 'backToEditor' | 'overwriteSource' | 'discardLocal'
   | 'confirmOverwrite' | 'confirmDiscard' | 'confirmClose'
   | 'openWith' | 'chooseHandler' | 'rememberHandler'
   | 'unsupportedResource' | 'handlerFailed' | 'textHandler' | 'imageHandler'
@@ -64,12 +64,12 @@ export const en: Record<FileViewerLocaleKey, string> = {
   automationPaused: 'Automatic synchronization is paused until this state is resolved.',
   sourceStale: 'The source reported a change. Update to compare the latest text.',
   conflict: 'Both versions changed.',
-  conflictHelp: 'Compare all three versions, then explicitly choose which version to keep.',
+  conflictHelp: 'Compare local and source changes, then choose which version to keep.',
   differences: 'Differences',
-  base: 'Base',
+  backToEditor: 'Back to editor',
+  noDifferences: 'No differences',
   local: 'Local',
   source: 'Source',
-  sourceUnknown: 'Latest source text is unavailable.',
   overwriteSource: 'Overwrite source',
   discardLocal: 'Discard local',
   confirmOverwrite: 'Overwrite the source with the local text? This cannot be undone here.',
@@ -125,12 +125,12 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   automationPaused: '自动同步已暂停，请先处理当前状态。',
   sourceStale: '来源报告了变化，请更新以比较最新文本。',
   conflict: '本地与来源均有修改。',
-  conflictHelp: '比较三个版本，然后明确选择要保留的版本。',
+  conflictHelp: '比较本地与来源的修改，然后选择要保留的版本。',
   differences: '查看差异',
-  base: '基准',
+  backToEditor: '返回编辑',
+  noDifferences: '无差异',
   local: '本地',
   source: '来源',
-  sourceUnknown: '无法取得最新来源文本。',
   overwriteSource: '覆盖来源',
   discardLocal: '放弃本地修改',
   confirmOverwrite: '用本地文本覆盖来源吗？此操作无法在这里撤销。',

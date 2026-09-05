@@ -68,6 +68,7 @@ function failureKey(failure: FileViewerFailure): FailureLocaleKey {
 interface EditorHostProps {
   readonly text: string
   readonly readOnly: boolean
+  readonly originalText?: string
   readonly loadEditor: () => Promise<FileViewerEditorModule>
   readonly onChange: (text: string) => void
   readonly viewState?: unknown
@@ -78,16 +79,18 @@ interface EditorHostProps {
 
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
-  text, readOnly, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
+  text, readOnly, originalText, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<FileViewerEditorModule['createFileViewerEditor']>>()
   const textRef = useRef(text)
+  const originalTextRef = useRef(originalText)
   const viewStateRef = useRef(viewState)
   const onChangeRef = useRef(onChange)
   const onViewStateChangeRef = useRef(onViewStateChange)
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
   textRef.current = text
+  originalTextRef.current = originalText
   viewStateRef.current = viewState
   onChangeRef.current = onChange
   onViewStateChangeRef.current = onViewStateChange
@@ -100,6 +103,7 @@ export function EditorHost({
         parent: parentRef.current,
         text: textRef.current,
         readOnly,
+        ...(originalTextRef.current === undefined ? {} : { originalText: originalTextRef.current }),
         onChange: value => { onChangeRef.current(value) },
         viewState: viewStateRef.current,
         onViewStateChange: value => { onViewStateChangeRef.current?.(value) },
@@ -121,6 +125,9 @@ export function EditorHost({
   }, [loadEditor, readOnly])
 
   useEffect(() => { handleRef.current?.setText(text) }, [text])
+  useEffect(() => {
+    if (originalText !== undefined) handleRef.current?.setOriginalText(originalText)
+  }, [originalText])
 
   return (
     <div className="dsh-file-viewer-editor-shell">
@@ -131,12 +138,24 @@ export function EditorHost({
   )
 }
 
-function Differences({ state, t }: { readonly state: ReadySnapshot; readonly t: FileViewerPanelProps['t'] }) {
+function Differences({ state, loadEditor, t }: {
+  readonly state: ReadySnapshot
+  readonly loadEditor: FileViewerPanelProps['loadEditor']
+  readonly t: FileViewerPanelProps['t']
+}) {
+  const panes: { id: string; label: string; text: string }[] = []
+  if (state.text !== state.baseText) panes.push({ id: 'local', label: t('local'), text: state.text })
+  if (state.latestSourceText !== undefined && state.latestSourceText !== state.baseText && state.latestSourceText !== state.text) {
+    panes.push({ id: 'source', label: t('source'), text: state.latestSourceText })
+  }
+  if (panes.length === 0) panes.push({ id: 'current', label: t('noDifferences'), text: state.text })
   return (
     <section className="dsh-file-viewer-differences" aria-label={t('differences')}>
-      <div><strong>{t('base')}</strong><pre>{state.baseText}</pre></div>
-      <div><strong>{t('local')}</strong><pre>{state.text}</pre></div>
-      <div><strong>{t('source')}</strong><pre>{state.latestSourceText ?? t('sourceUnknown')}</pre></div>
+      {panes.map(pane => <section className="dsh-file-viewer-diff-pane" key={pane.id} aria-label={pane.label}>
+        <strong>{pane.label}</strong>
+        <EditorHost text={pane.text} originalText={state.baseText} readOnly loadEditor={loadEditor}
+          onChange={() => {}} loadingLabel={t('editorLoading')} failureLabel={t('editorFailed')} />
+      </section>)}
     </section>
   )
 }
@@ -195,8 +214,6 @@ function ReadyPanel({
   const busy = state.operation !== 'idle'
   const canSave = state.saveSupported && dirty && !busy
     && state.syncStatus !== 'diverged' && state.syncStatus !== 'source-ahead'
-  const differencesAvailable = state.latestSourceText !== undefined
-    && state.syncStatus !== 'synced'
   const confirmOverwrite = () => {
     if (confirm(t('confirmOverwrite'))) overwriteSource()
   }
@@ -271,8 +288,10 @@ function ReadyPanel({
             </label>
             <button type="button" onClick={requestSave} disabled={!canSave}>{t('save')}</button>
           </div>}
+          <button type="button" hidden={!expanded} aria-pressed={showDifferences}
+            onClick={() => { setShowDifferences(value => !value) }}>{t(showDifferences ? 'backToEditor' : 'differences')}</button>
           <button type="button" hidden={!expanded} aria-expanded={more}
-            onClick={() => { setMore(value => !value) }}>{t('more')}</button>
+            onClick={() => { setMore(value => !value) }}>{t(more ? 'collapse' : 'more')}</button>
           <div className="dsh-file-viewer-defaults-options" hidden={!expanded || !more}>
             <label>
               <input
@@ -290,7 +309,6 @@ function ReadyPanel({
               />
               {t('globalAutoSave')}
             </label>
-            <button type="button" onClick={() => { statusRef.current?.focus(); collapse() }}>{t('collapse')}</button>
           </div>
         </div>
       </div>
@@ -301,25 +319,23 @@ function ReadyPanel({
         <div className="dsh-file-viewer-conflict" role="alert">
           <strong>{t('conflict')}</strong>
           <span>{t('conflictHelp')}</span>
-          <button className="is-primary" type="button" onClick={() => { setShowDifferences(value => !value) }}>{t('differences')}</button>
           {state.saveSupported && <button type="button" onClick={confirmOverwrite}>{t('overwriteSource')}</button>}
           <button type="button" onClick={confirmDiscard} disabled={state.latestSourceText === undefined}>{t('discardLocal')}</button>
         </div>
       )}
-      {state.syncStatus !== 'diverged' && differencesAvailable && (
-        <button className="dsh-file-viewer-differences-toggle" type="button" onClick={() => { setShowDifferences(value => !value) }}>{t('differences')}</button>
-      )}
-      {showDifferences && differencesAvailable && <Differences state={state} t={t} />}
-      <EditorHost
-        text={state.text}
-        readOnly={!state.saveSupported}
-        loadEditor={loadEditor}
-        onChange={edit}
-        viewState={viewState}
-        {...(onViewStateChange === undefined ? {} : { onViewStateChange })}
-        loadingLabel={t('editorLoading')}
-        failureLabel={t('editorFailed')}
-      />
+      {showDifferences && <Differences state={state} loadEditor={loadEditor} t={t} />}
+      <div className="dsh-file-viewer-primary-editor" hidden={showDifferences}>
+        <EditorHost
+          text={state.text}
+          readOnly={!state.saveSupported}
+          loadEditor={loadEditor}
+          onChange={edit}
+          viewState={viewState}
+          {...(onViewStateChange === undefined ? {} : { onViewStateChange })}
+          loadingLabel={t('editorLoading')}
+          failureLabel={t('editorFailed')}
+        />
+      </div>
     </section>
   )
 }
