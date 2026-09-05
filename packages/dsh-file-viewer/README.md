@@ -74,7 +74,7 @@ None. This Bundle changes human browser presentation and adds no model-visible i
 - The editor presents complete plain text. Sources own size limits, partial-loading policy and canonical line representation.
 - Workbench descriptors and text drafts survive Client recreation; selection, scroll, undo and custom handler state are memory-only.
 - The image handler displays bytes but does not edit images. Custom byte handlers own their draft and revision model through the generic byte and close-guard APIs.
-- Inline differences are read-only comparisons of changed Local and Source text against Base; return to the retained editor to change text. The separate editor package owns the diff algorithm and rendering.
+- Inline comparisons retain the editable Local document and show Source read-only, using common Base-aligned rows, paired line numbers and linked scrolling. Deleted baseline text and visual padding never enter the document or clipboard. The separate editor package owns alignment and rendering; providers own source-observation latency.
 
 <a id="dev-note"></a>
 ## Dev Note

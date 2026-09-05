@@ -19,11 +19,14 @@ export const FILE_VIEWER_CSS = `
 .dsh-file-viewer-location>span,.dsh-file-viewer-location-segment{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .dsh-file-viewer-location button{border:0;background:transparent;color:inherit;padding:0;text-decoration:underline;cursor:pointer}
 .dsh-file-viewer-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding-top:4px;max-width:100%;font-size:12px;pointer-events:auto}
-.dsh-file-viewer-defaults-options{display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:7px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px}.dsh-file-viewer-defaults-options label{display:flex;align-items:center;gap:4px}
 .dsh-file-viewer-toolbar [hidden]{display:none}
-.dsh-file-viewer-action-group{border:1px solid var(--dsw-alias-border-l2);border-radius:6px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
+.dsh-file-viewer-action-group{position:relative;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2)}
 .dsh-file-viewer-toolbar .dsh-file-viewer-action-group>button{flex:1;border:0;border-left:1px solid var(--dsw-alias-border-l2);border-radius:0;text-align:left}
-.dsh-file-viewer-action-group>label{display:flex;align-items:center;gap:3px;padding:0 6px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsh-file-viewer-preference-pair{position:relative;display:flex;align-self:stretch;align-items:center}
+.dsh-file-viewer-preference-pair label{display:flex;align-items:center;justify-content:center;padding:0 6px;min-height:100%;color:var(--dsw-alias-label-secondary)}
+.dsh-file-viewer-preference-pair .dsh-file-viewer-default-toggle{position:absolute;right:100%;top:-1px;bottom:-1px;opacity:0;pointer-events:none;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px 0 0 6px}
+.dsh-file-viewer-preference-pair:hover .dsh-file-viewer-default-toggle,.dsh-file-viewer-preference-pair:focus-within .dsh-file-viewer-default-toggle{opacity:1;pointer-events:auto}
+@media(hover:none){.dsh-file-viewer-preference-pair .dsh-file-viewer-default-toggle{opacity:1;pointer-events:auto}}
 .dsh-file-viewer-toolbar button,.dsh-file-viewer-conflict button{border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:inherit;padding:4px 8px;cursor:pointer}
 .dsh-file-viewer-toolbar button:disabled,.dsh-file-viewer-conflict button:disabled{cursor:not-allowed;opacity:.5}
 .dsh-file-viewer-state{padding:16px;color:var(--dsw-alias-label-secondary)}
@@ -32,10 +35,6 @@ export const FILE_VIEWER_CSS = `
 .dsh-file-viewer-notice{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2)}
 .dsh-file-viewer-conflict{align-items:flex-start;flex-wrap:wrap;padding:8px 10px;background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 8%,transparent)}
 .dsh-file-viewer-conflict span{flex:1 1 220px;color:var(--dsw-alias-label-secondary);font-size:12px}
-.dsh-file-viewer-primary-editor{display:flex;flex:1;min-height:0}.dsh-file-viewer-primary-editor[hidden]{display:none}
-.dsh-file-viewer-differences{display:flex;flex:1;min-height:0;gap:1px;background:var(--dsw-alias-border-l2)}
-.dsh-file-viewer-diff-pane{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;background:var(--dsw-alias-bg-layer-1)}
-.dsh-file-viewer-diff-pane>strong{padding:5px 8px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsh-file-viewer-primary-editor{display:flex;flex:1;min-height:0;min-width:0}
 .dsh-file-viewer-editor-shell,.dsh-file-viewer-editor{min-height:0;flex:1;height:100%}
-@media(max-width:700px){.dsh-file-viewer-differences{flex-direction:column}}
 `

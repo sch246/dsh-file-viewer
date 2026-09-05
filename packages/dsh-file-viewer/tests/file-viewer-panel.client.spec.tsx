@@ -63,7 +63,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     loadEditor: async () => ({
       createFileViewerEditor: ({ parent }) => {
         parent.dataset.editor = 'mounted'
-        return { setText: vi.fn(), setOriginalText: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+        return { setText: vi.fn(), setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
       },
     }),
     t: key => en[key],
@@ -77,15 +77,12 @@ describe('FileViewerPanel', () => {
     const input = props(ready())
     const { container } = render(<FileViewerPanel {...input} />)
     fireEvent.focus(screen.getByTitle(en.synchronization))
-    fireEvent.click(screen.getByRole('button', { name: en.more }))
 
     expect(screen.getByText('Conflict')).toBeTruthy()
     expect(screen.getByText('Automatic synchronization is paused until this state is resolved.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Differences' }))
-    const differences = screen.getByRole('region', { name: 'Differences' })
-    expect(within(differences).getByRole('region', { name: en.local })).toBeTruthy()
-    expect(within(differences).getByRole('region', { name: en.source })).toBeTruthy()
-    expect(differences.querySelector('pre')).toBeNull()
+    expect(screen.getByRole('button', { name: en.backToEditor })).toBeTruthy()
+    expect(container.querySelector('pre')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Overwrite source' }))
     fireEvent.click(screen.getByRole('button', { name: 'Discard local' }))
@@ -99,10 +96,8 @@ describe('FileViewerPanel', () => {
     const input = props(ready({ watchSupported: false, syncStatus: 'local-ahead', latestSourceText: 'base', latestSourceHash: 'base-hash' }))
     const { container } = render(<FileViewerPanel {...input} />)
     fireEvent.focus(screen.getByTitle(en.synchronization))
-    const checkboxes = screen.getAllByRole('checkbox')
-    expect(checkboxes).toHaveLength(2)
-    expect((checkboxes[0] as HTMLInputElement).disabled).toBe(true)
-    expect((checkboxes[1] as HTMLInputElement).disabled).toBe(false)
+    expect((screen.getByRole('checkbox', { name: en.autoUpdateUnsupported }) as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByRole('checkbox', { name: en.autoSave }) as HTMLInputElement).disabled).toBe(false)
 
     fireEvent.keyDown(container.firstElementChild!, { key: 's', ctrlKey: true })
     expect(input.save).toHaveBeenCalledWith(instanceId)
@@ -117,8 +112,7 @@ describe('FileViewerPanel', () => {
     }))
     render(<FileViewerPanel {...input} />)
     fireEvent.focus(screen.getByTitle(en.synchronization))
-    const checkboxes = screen.getAllByRole('checkbox')
-    expect((checkboxes[1] as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByRole('checkbox', { name: en.autoSaveUnsupported }) as HTMLInputElement).disabled).toBe(true)
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(input.confirm).toHaveBeenCalledWith(en.confirmOverwrite)
@@ -133,20 +127,45 @@ describe('FileViewerPanel', () => {
     expect(screen.queryByRole('button', { name: en.update })).toBeNull()
     fireEvent.mouseEnter(status.parentElement!)
     expect(screen.getByRole('button', { name: en.update })).toBeTruthy()
-    fireEvent.focus(status)
     fireEvent.mouseLeave(status.parentElement!)
     expect(screen.getByRole('button', { name: en.update })).toBeTruthy()
     fireEvent.keyDown(status, { key: 'Escape' })
     expect(screen.queryByRole('button', { name: en.update })).toBeNull()
     fireEvent.click(status)
-    fireEvent.click(screen.getByRole('button', { name: en.more }))
     expect(screen.getByRole('checkbox', { name: en.globalAutoUpdate })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: en.collapse }))
-    expect(screen.getByRole('button', { name: en.more })).toBeTruthy()
-    expect(screen.queryByRole('checkbox', { name: en.globalAutoUpdate })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'More' })).toBeNull()
+    const numbers = screen.getByRole('checkbox', { name: en.lineNumbers }) as HTMLInputElement
+    const initial = numbers.checked
+    fireEvent.click(screen.getByRole('button', { name: en.lineNumbers }))
+    expect(numbers.checked).toBe(!initial)
+    fireEvent.click(numbers)
+    expect(numbers.checked).toBe(initial)
     fireEvent.pointerDown(container.querySelector('.dsh-file-viewer-editor-shell')!)
     expect(screen.queryByRole('button', { name: en.update })).toBeNull()
     expect(within(status).getByRole('status').textContent).toBe(en.synced)
+  })
+
+  it('keeps current line numbers and toolbar expansion across remounts while defaults affect only new views', async () => {
+    let retained: unknown
+    const input = { ...props(ready()), getViewState: () => retained, setViewState: (_id: string, value: unknown) => { retained = value } }
+    let rendered = render(<FileViewerPanel {...input} />)
+    fireEvent.mouseEnter(screen.getByTitle(en.synchronization).parentElement!)
+    const defaultBox = screen.getByRole('checkbox', { name: en.defaultLineNumbers }) as HTMLInputElement
+    const initialDefault = defaultBox.checked
+    const current = screen.getByRole('checkbox', { name: en.lineNumbers }) as HTMLInputElement
+    fireEvent.click(defaultBox)
+    expect(current.checked).toBe(initialDefault)
+    fireEvent.click(screen.getByRole('button', { name: en.lineNumbers }))
+    rendered.unmount()
+    rendered = render(<FileViewerPanel {...input} />)
+    expect((screen.getByRole('checkbox', { name: en.lineNumbers }) as HTMLInputElement).checked).toBe(!initialDefault)
+    expect(screen.getByRole('button', { name: en.update })).toBeTruthy()
+    rendered.unmount()
+    const fresh = render(<FileViewerPanel {...props(ready())} />)
+    fireEvent.mouseEnter(screen.getByTitle(en.synchronization).parentElement!)
+    expect((screen.getByRole('checkbox', { name: en.lineNumbers }) as HTMLInputElement).checked).toBe(!initialDefault)
+    fireEvent.click(screen.getByRole('checkbox', { name: en.defaultLineNumbers }))
+    fresh.unmount()
   })
 
   it('animates concurrent activities only in the permanent status and cleans timers on completion and unmount', async () => {

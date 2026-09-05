@@ -88,7 +88,7 @@ describe('resource workbench presentation', () => {
     const service = createResourceWorkbenchClientService(runtime)
     const TextView = createTextResourceView({
       loadEditor: async () => ({ createFileViewerEditor: () => ({
-        setText: () => {}, setOriginalText: () => {}, captureViewState: () => undefined, destroy: () => {},
+        setText: () => {}, setComparison: () => {}, setLineNumbers: () => {}, captureViewState: () => undefined, destroy: () => {},
       }) }),
       confirm: () => true, t: key => en[key],
     })
@@ -113,7 +113,6 @@ describe('resource workbench presentation', () => {
       const thirdView = within(screen.getByTestId(independent))
       for (const view of [firstView, secondView, thirdView]) {
         fireEvent.mouseEnter(view.getByTitle(en.synchronization).parentElement!)
-        fireEvent.click(view.getByRole('button', { name: en.more }))
       }
       const before = service.textSnapshot(first)
       const documentNotified = vi.fn()
@@ -216,7 +215,8 @@ describe('resource workbench presentation', () => {
       const destroy = vi.fn()
       const createEditor = vi.fn((options: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]) => ({
         setText: () => {},
-        setOriginalText: () => {},
+        setComparison: () => {},
+        setLineNumbers: () => {},
         captureViewState: () => ({ selection: 1 }),
         destroy: () => {
           destroy()

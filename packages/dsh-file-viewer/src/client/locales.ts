@@ -19,7 +19,7 @@ export type FileViewerLocaleKey =
   | 'globalAutoUpdate' | 'globalAutoSave'
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
-  | 'more' | 'collapse' | 'synchronization'
+  | 'lineNumbers' | 'defaultLineNumbers' | 'synchronization'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -37,8 +37,8 @@ export const en: Record<FileViewerLocaleKey, string> = {
   saveUnsupported: 'This source is read-only.',
   update: 'Update',
   updating: 'Updating',
-  more: 'More',
-  collapse: 'Collapse',
+  lineNumbers: 'Line numbers',
+  defaultLineNumbers: 'Show line numbers in new views by default',
   synchronization: 'Synchronization controls',
   autoUpdate: 'Update automatically after source changes.',
   autoUpdateUnsupported: 'Automatic update requires source watching.',
@@ -98,8 +98,8 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   saveUnsupported: '该来源为只读。',
   update: '更新',
   updating: '更新中',
-  more: '更多',
-  collapse: '收起',
+  lineNumbers: '行号',
+  defaultLineNumbers: '新开视图默认显示行号',
   synchronization: '同步操作',
   autoUpdate: '来源变化后自动更新。',
   autoUpdateUnsupported: '自动更新需要来源支持监听变化。',

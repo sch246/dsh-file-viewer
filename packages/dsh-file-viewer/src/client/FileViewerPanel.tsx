@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
 import type { FileViewerEditorModule } from './editor-module.ts'
@@ -9,8 +9,17 @@ import type {
 } from './service.ts'
 import { isFileViewerDirty } from './service.ts'
 import { usePendingDots } from './pending-dots.ts'
+import { defaultLineNumbers, setDefaultLineNumbers, subscribeLineNumberDefault } from './line-number-default.ts'
 
 type ReadySnapshot = Extract<FileViewerInstanceSnapshot, { status: 'ready' }>
+
+/** Presentation retained by the resource view, independently of shared document synchronization. */
+class TextPresentation {
+  lineNumbers = defaultLineNumbers()
+  expanded = false
+  differences = false
+  constructor(public editorState?: unknown) {}
+}
 
 /** Callbacks injected for one right-sidebar editor instance. */
 export interface FileViewerPanelInjected {
@@ -68,7 +77,8 @@ function failureKey(failure: FileViewerFailure): FailureLocaleKey {
 interface EditorHostProps {
   readonly text: string
   readonly readOnly: boolean
-  readonly originalText?: string
+  readonly comparison?: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]['comparison']
+  readonly lineNumbers: boolean
   readonly loadEditor: () => Promise<FileViewerEditorModule>
   readonly onChange: (text: string) => void
   readonly viewState?: unknown
@@ -79,18 +89,20 @@ interface EditorHostProps {
 
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
-  text, readOnly, originalText, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
+  text, readOnly, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<FileViewerEditorModule['createFileViewerEditor']>>()
   const textRef = useRef(text)
-  const originalTextRef = useRef(originalText)
+  const comparisonRef = useRef(comparison)
+  const lineNumbersRef = useRef(lineNumbers)
   const viewStateRef = useRef(viewState)
   const onChangeRef = useRef(onChange)
   const onViewStateChangeRef = useRef(onViewStateChange)
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
   textRef.current = text
-  originalTextRef.current = originalText
+  comparisonRef.current = comparison
+  lineNumbersRef.current = lineNumbers
   viewStateRef.current = viewState
   onChangeRef.current = onChange
   onViewStateChangeRef.current = onViewStateChange
@@ -103,7 +115,8 @@ export function EditorHost({
         parent: parentRef.current,
         text: textRef.current,
         readOnly,
-        ...(originalTextRef.current === undefined ? {} : { originalText: originalTextRef.current }),
+        comparison: comparisonRef.current,
+        lineNumbers: lineNumbersRef.current,
         onChange: value => { onChangeRef.current(value) },
         viewState: viewStateRef.current,
         onViewStateChange: value => { onViewStateChangeRef.current?.(value) },
@@ -126,8 +139,9 @@ export function EditorHost({
 
   useEffect(() => { handleRef.current?.setText(text) }, [text])
   useEffect(() => {
-    if (originalText !== undefined) handleRef.current?.setOriginalText(originalText)
-  }, [originalText])
+    handleRef.current?.setComparison(comparison)
+  }, [comparison])
+  useEffect(() => { handleRef.current?.setLineNumbers(lineNumbers) }, [lineNumbers])
 
   return (
     <div className="dsh-file-viewer-editor-shell">
@@ -138,32 +152,34 @@ export function EditorHost({
   )
 }
 
-function Differences({ state, loadEditor, t }: {
-  readonly state: ReadySnapshot
-  readonly loadEditor: FileViewerPanelProps['loadEditor']
-  readonly t: FileViewerPanelProps['t']
+function PreferenceAction({ label, currentLabel, defaultLabel, checked, defaultChecked, disabled, actionDisabled,
+  onChange, onDefaultChange, onAction, hidden,
+}: {
+  readonly label: string; readonly currentLabel: string; readonly defaultLabel: string
+  readonly checked: boolean; readonly defaultChecked: boolean; readonly disabled?: boolean
+  readonly actionDisabled?: boolean; readonly hidden: boolean
+  readonly onChange: (enabled: boolean) => void; readonly onDefaultChange: (enabled: boolean) => void
+  readonly onAction: () => void
 }) {
-  const panes: { id: string; label: string; text: string }[] = []
-  if (state.text !== state.baseText) panes.push({ id: 'local', label: t('local'), text: state.text })
-  if (state.latestSourceText !== undefined && state.latestSourceText !== state.baseText && state.latestSourceText !== state.text) {
-    panes.push({ id: 'source', label: t('source'), text: state.latestSourceText })
-  }
-  if (panes.length === 0) panes.push({ id: 'current', label: t('noDifferences'), text: state.text })
-  return (
-    <section className="dsh-file-viewer-differences" aria-label={t('differences')}>
-      {panes.map(pane => <section className="dsh-file-viewer-diff-pane" key={pane.id} aria-label={pane.label}>
-        <strong>{pane.label}</strong>
-        <EditorHost text={pane.text} originalText={state.baseText} readOnly loadEditor={loadEditor}
-          onChange={() => {}} loadingLabel={t('editorLoading')} failureLabel={t('editorFailed')} />
-      </section>)}
-    </section>
-  )
+  return <div className="dsh-file-viewer-action-group" hidden={hidden}>
+    <span className="dsh-file-viewer-preference-pair">
+      <label className="dsh-file-viewer-default-toggle" title={defaultLabel}>
+        <input type="checkbox" aria-label={defaultLabel} checked={defaultChecked}
+          onChange={event => { onDefaultChange(event.currentTarget.checked) }} />
+      </label>
+      <label title={currentLabel}>
+        <input type="checkbox" aria-label={currentLabel} checked={checked} disabled={disabled}
+          onChange={event => { onChange(event.currentTarget.checked) }} />
+      </label>
+    </span>
+    <button type="button" onClick={onAction} disabled={actionDisabled}>{label}</button>
+  </div>
 }
 
 function ReadyPanel({
   state, edit, save, refresh, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
   automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
-  viewState, onViewStateChange, t,
+  presentation, retainPresentation, onViewStateChange, t,
 }: {
   readonly state: ReadySnapshot
   readonly edit: (text: string) => void
@@ -178,38 +194,40 @@ function ReadyPanel({
   readonly setGlobalAutoSave: (enabled: boolean) => void
   readonly confirm: (message: string) => boolean
   readonly loadEditor: () => Promise<FileViewerEditorModule>
-  readonly viewState?: unknown
+  readonly presentation: TextPresentation
+  readonly retainPresentation: () => void
   readonly onViewStateChange?: (state: unknown) => void
   readonly t: FileViewerPanelProps['t']
 }) {
-  const [showDifferences, setShowDifferences] = useState(false)
-  const [hovered, setHovered] = useState(false)
-  const [focused, setFocused] = useState(false)
-  const [pinned, setPinned] = useState(false)
-  const [dismissed, setDismissed] = useState(false)
-  const [more, setMore] = useState(false)
+  const [, redraw] = useState(0)
+  const changePresentation = (change: Partial<TextPresentation>) => {
+    Object.assign(presentation, change)
+    retainPresentation()
+    redraw(value => value + 1)
+  }
+  const showDifferences = presentation.differences
+  const comparison = useMemo(() => showDifferences ? {
+    baseText: state.baseText,
+    sourceText: state.latestSourceText,
+    labels: { local: t('local'), source: t('source'), noDifferences: t('noDifferences') },
+  } : undefined, [showDifferences, state.baseText, state.latestSourceText, t])
+  const lineNumberDefault = useSyncExternalStore(subscribeLineNumberDefault, defaultLineNumbers, defaultLineNumbers)
   const controlsRef = useRef<HTMLDivElement>(null)
   const statusRef = useRef<HTMLButtonElement>(null)
-  const expanded = !dismissed && (hovered || focused || pinned)
+  const expanded = presentation.expanded
   const { updating, saving } = state.activities
   const updateDots = usePendingDots(updating)
   const saveDots = usePendingDots(saving)
-  const collapse = () => {
-    setPinned(false)
-    setMore(false)
-    setDismissed(true)
-  }
+  const collapse = () => { changePresentation({ expanded: false }) }
   useEffect(() => {
     const outside = (event: PointerEvent) => {
       if (!controlsRef.current?.contains(event.target as Node)) {
-        setPinned(false)
-        setMore(false)
-        setDismissed(true)
+        changePresentation({ expanded: false })
       }
     }
     document.addEventListener('pointerdown', outside)
     return () => { document.removeEventListener('pointerdown', outside) }
-  }, [])
+  }, [presentation, retainPresentation])
   const dirty = isFileViewerDirty(state)
   const busy = state.operation !== 'idle'
   const canSave = state.saveSupported && dirty && !busy
@@ -231,15 +249,8 @@ function ReadyPanel({
   return (
     <section className="dsh-file-viewer-root" onKeyDown={onKeyDown}>
       <div className="dsh-file-viewer-float" ref={controlsRef}
-        onMouseEnter={() => { setHovered(true); setDismissed(false) }}
-        onMouseLeave={() => { setHovered(false) }}
-        onFocus={() => { setFocused(true); setDismissed(false) }}
-        onBlur={event => {
-          if (!event.currentTarget.contains(event.relatedTarget)) {
-            setFocused(false)
-            setMore(false)
-          }
-        }}
+        onMouseEnter={() => { changePresentation({ expanded: true }) }}
+        onFocus={() => { changePresentation({ expanded: true }) }}
         onKeyDown={event => {
           if (event.key === 'Escape') {
             event.stopPropagation()
@@ -251,8 +262,7 @@ function ReadyPanel({
           className={`dsh-file-viewer-status is-${state.failure !== undefined ? 'error' : state.syncStatus}`}
           aria-expanded={expanded} title={t('synchronization')}
           onClick={() => {
-            if (pinned) collapse()
-            else { setPinned(true); setDismissed(false) }
+            changePresentation({ expanded: !expanded })
           }}>
           <span role="status">{t(state.syncStatus)}</span>
           {updating && <span className="dsh-file-viewer-activity" role="status">
@@ -264,52 +274,22 @@ function ReadyPanel({
           {!state.saveSupported && <span> · {t('readOnly')}</span>}
         </button>
         <div className="dsh-file-viewer-toolbar">
-          <div className="dsh-file-viewer-action-group" hidden={!expanded}>
-            <label title={state.watchSupported ? t('autoUpdate') : t('autoUpdateUnsupported')}>
-              <input
-                type="checkbox"
-                aria-label={t('autoUpdate')}
-                checked={state.automation.autoUpdate}
-                disabled={!state.watchSupported}
-                onChange={event => { setAutoUpdate(event.currentTarget.checked) }}
-              />
-            </label>
-            <button type="button" onClick={refresh} disabled={busy}>{t('update')}</button>
-          </div>
-          {state.saveSupported && <div className="dsh-file-viewer-action-group" hidden={!expanded}>
-            <label title={state.conditionalSaveSupported ? t('autoSave') : t('autoSaveUnsupported')}>
-              <input
-                type="checkbox"
-                aria-label={t('autoSave')}
-                checked={state.automation.autoSave}
-                disabled={!state.saveSupported || !state.conditionalSaveSupported}
-                onChange={event => { setAutoSave(event.currentTarget.checked) }}
-              />
-            </label>
-            <button type="button" onClick={requestSave} disabled={!canSave}>{t('save')}</button>
-          </div>}
+          <PreferenceAction hidden={!expanded} label={t('update')}
+            currentLabel={state.watchSupported ? t('autoUpdate') : t('autoUpdateUnsupported')}
+            defaultLabel={t('globalAutoUpdate')} checked={state.automation.autoUpdate}
+            defaultChecked={automationDefaults.autoUpdate} disabled={!state.watchSupported} actionDisabled={busy}
+            onChange={setAutoUpdate} onDefaultChange={setGlobalAutoUpdate} onAction={refresh} />
+          {state.saveSupported && <PreferenceAction hidden={!expanded} label={t('save')}
+            currentLabel={state.conditionalSaveSupported ? t('autoSave') : t('autoSaveUnsupported')}
+            defaultLabel={t('globalAutoSave')} checked={state.automation.autoSave}
+            defaultChecked={automationDefaults.autoSave} disabled={!state.conditionalSaveSupported} actionDisabled={!canSave}
+            onChange={setAutoSave} onDefaultChange={setGlobalAutoSave} onAction={requestSave} />}
+          <PreferenceAction hidden={!expanded} label={t('lineNumbers')} currentLabel={t('lineNumbers')}
+            defaultLabel={t('defaultLineNumbers')} checked={presentation.lineNumbers} defaultChecked={lineNumberDefault}
+            onChange={lineNumbers => { changePresentation({ lineNumbers }) }} onDefaultChange={setDefaultLineNumbers}
+            onAction={() => { changePresentation({ lineNumbers: !presentation.lineNumbers }) }} />
           <button type="button" hidden={!expanded} aria-pressed={showDifferences}
-            onClick={() => { setShowDifferences(value => !value) }}>{t(showDifferences ? 'backToEditor' : 'differences')}</button>
-          <button type="button" hidden={!expanded} aria-expanded={more}
-            onClick={() => { setMore(value => !value) }}>{t(more ? 'collapse' : 'more')}</button>
-          <div className="dsh-file-viewer-defaults-options" hidden={!expanded || !more}>
-            <label>
-              <input
-                type="checkbox"
-                checked={automationDefaults.autoUpdate}
-                onChange={event => { setGlobalAutoUpdate(event.currentTarget.checked) }}
-              />
-              {t('globalAutoUpdate')}
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={automationDefaults.autoSave}
-                onChange={event => { setGlobalAutoSave(event.currentTarget.checked) }}
-              />
-              {t('globalAutoSave')}
-            </label>
-          </div>
+            onClick={() => { changePresentation({ differences: !showDifferences }) }}>{t(showDifferences ? 'backToEditor' : 'differences')}</button>
         </div>
       </div>
       {state.automationPaused && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
@@ -323,14 +303,15 @@ function ReadyPanel({
           <button type="button" onClick={confirmDiscard} disabled={state.latestSourceText === undefined}>{t('discardLocal')}</button>
         </div>
       )}
-      {showDifferences && <Differences state={state} loadEditor={loadEditor} t={t} />}
-      <div className="dsh-file-viewer-primary-editor" hidden={showDifferences}>
+      <div className="dsh-file-viewer-primary-editor">
         <EditorHost
           text={state.text}
           readOnly={!state.saveSupported}
           loadEditor={loadEditor}
           onChange={edit}
-          viewState={viewState}
+          lineNumbers={presentation.lineNumbers}
+          comparison={comparison}
+          viewState={presentation.editorState}
           {...(onViewStateChange === undefined ? {} : { onViewStateChange })}
           loadingLabel={t('editorLoading')}
           failureLabel={t('editorFailed')}
@@ -342,6 +323,14 @@ function ReadyPanel({
 
 /** Render loading, failure, and ready states for one editor instance. */
 export function FileViewerPanel(props: FileViewerPanelProps) {
+  const retained = useRef<TextPresentation>()
+  if (retained.current === undefined) {
+    const previous = props.getViewState?.(props.instanceId)
+    retained.current = previous instanceof TextPresentation ? previous : new TextPresentation(previous)
+  }
+  const presentation = retained.current
+  const retainPresentation = () => { props.setViewState?.(props.instanceId, presentation) }
+  useEffect(retainPresentation, [props.instanceId])
   const automationDefaults = useSyncExternalStore(
     props.subscribeAutomationDefaults,
     props.automationDefaults,
@@ -376,8 +365,9 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
       setGlobalAutoSave={props.setGlobalAutoSave}
       confirm={props.confirm}
       loadEditor={props.loadEditor}
-      viewState={props.getViewState?.(props.instanceId)}
-      onViewStateChange={value => { props.setViewState?.(props.instanceId, value) }}
+      presentation={presentation}
+      retainPresentation={retainPresentation}
+      onViewStateChange={value => { presentation.editorState = value; retainPresentation() }}
       t={props.t}
     />
   )
