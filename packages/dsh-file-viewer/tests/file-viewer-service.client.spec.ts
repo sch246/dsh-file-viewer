@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  FileViewerService,
   FileViewerOpenError,
+  FileViewerService,
   FileViewerSourceId,
+  hashFileViewerText,
   isFileViewerDirty,
   type FileViewerDocumentRef,
+  type FileViewerInstanceHost,
+  type FileViewerInstanceSnapshot,
   type FileViewerLoadedText,
+  type FileViewerLocation,
   type FileViewerSavedText,
-  type FileViewerSessionSnapshot,
   type FileViewerSource,
+  type FileViewerWatchEvent,
 } from '../src/client/service.ts'
 
 interface Deferred<T> {
@@ -30,11 +34,25 @@ function deferred<T>(): Deferred<T> {
 interface MemoryDocument {
   text: string
   title?: string
-  version: object
+  location?: FileViewerLocation
+  version?: unknown
+}
+
+interface MemorySourceOptions {
+  readonly save?: boolean
+  readonly conditional?: boolean
+  readonly watch?: boolean
+  readonly external?: boolean
+  readonly watchOnSubscribe?: FileViewerWatchEvent
+  readonly watchError?: Error
 }
 
 class MemorySource implements FileViewerSource {
   readonly id: ReturnType<typeof FileViewerSourceId>
+  readonly supportsConditionalSave: boolean
+  readonly save?: FileViewerSource['save']
+  readonly watch?: FileViewerSource['watch']
+  readonly openExternal?: FileViewerSource['openExternal']
   readonly loadCalls: Array<{ readonly ref: FileViewerDocumentRef; readonly signal: AbortSignal }> = []
   readonly saveCalls: Array<{
     readonly ref: FileViewerDocumentRef
@@ -43,20 +61,58 @@ class MemorySource implements FileViewerSource {
     readonly signal: AbortSignal
   }> = []
   readonly externalCalls: Array<{ readonly ref: FileViewerDocumentRef; readonly signal: AbortSignal }> = []
+  watchRegistrations = 0
+  watchDisposals = 0
+  returnVersionlessSave = false
   private readonly documents = new Map<string, MemoryDocument>()
   private readonly queuedLoads: Array<Promise<FileViewerLoadedText>> = []
-  private readonly queuedSaves: Array<Promise<void>> = []
-  private readonly queuedExternalOpens: Array<Promise<void>> = []
+  private readonly queuedSaveGates: Array<Promise<void>> = []
+  private readonly queuedExternalGates: Array<Promise<void>> = []
+  private readonly watchers = new Map<string, Set<(event: FileViewerWatchEvent) => void>>()
   private revision = 0
 
-  constructor(id: string) {
+  constructor(id: string, options: MemorySourceOptions = {}) {
     this.id = FileViewerSourceId(id)
+    this.supportsConditionalSave = options.conditional ?? true
+    if (options.save !== false) this.save = this.saveDocument.bind(this)
+    if (options.watch !== false) {
+      this.watch = (documentRef, listener) => {
+        if (options.watchError !== undefined) throw options.watchError
+        this.watchRegistrations += 1
+        const key = this.documentKey(documentRef)
+        const listeners = this.watchers.get(key) ?? new Set()
+        listeners.add(listener)
+        this.watchers.set(key, listeners)
+        if (options.watchOnSubscribe !== undefined) listener(options.watchOnSubscribe)
+        let active = true
+        return () => {
+          if (!active) return
+          active = false
+          this.watchDisposals += 1
+          listeners.delete(listener)
+        }
+      }
+    }
+    if (options.external !== false) this.openExternal = this.openDocumentExternally.bind(this)
   }
 
-  put(resourceId: string, text: string, title?: string): object {
+  put(resourceId: string, text: string, title?: string, location?: FileViewerLocation): unknown {
     const version = this.nextVersion()
-    this.documents.set(resourceId, { text, ...(title === undefined ? {} : { title }), version })
+    this.documents.set(resourceId, {
+      text,
+      version,
+      ...(title === undefined ? {} : { title }),
+      ...(location === undefined ? {} : { location }),
+    })
     return version
+  }
+
+  set(resourceId: string, text: string, version: unknown, title?: string): void {
+    this.documents.set(resourceId, {
+      text,
+      ...(version === undefined ? {} : { version }),
+      ...(title === undefined ? {} : { title }),
+    })
   }
 
   document(resourceId: string): MemoryDocument {
@@ -65,16 +121,20 @@ class MemorySource implements FileViewerSource {
     return document
   }
 
-  enqueueLoad(result: Promise<FileViewerLoadedText>): void {
+  queueLoad(result: Promise<FileViewerLoadedText>): void {
     this.queuedLoads.push(result)
   }
 
-  enqueueSave(gate: Promise<void>): void {
-    this.queuedSaves.push(gate)
+  queueSave(gate: Promise<void>): void {
+    this.queuedSaveGates.push(gate)
   }
 
-  enqueueExternalOpen(gate: Promise<void>): void {
-    this.queuedExternalOpens.push(gate)
+  queueExternal(gate: Promise<void>): void {
+    this.queuedExternalGates.push(gate)
+  }
+
+  emit(ref: FileViewerDocumentRef, event: FileViewerWatchEvent): void {
+    for (const listener of this.watchers.get(this.documentKey(ref)) ?? []) listener(event)
   }
 
   async load(ref: FileViewerDocumentRef, signal: AbortSignal): Promise<FileViewerLoadedText> {
@@ -82,15 +142,10 @@ class MemorySource implements FileViewerSource {
     signal.throwIfAborted()
     const queued = this.queuedLoads.shift()
     if (queued !== undefined) return queued
-    const document = this.document(ref.resourceId)
-    return {
-      text: document.text,
-      ...(document.title === undefined ? {} : { title: document.title }),
-      version: document.version,
-    }
+    return this.loaded(this.document(ref.resourceId))
   }
 
-  async save(
+  private async saveDocument(
     ref: FileViewerDocumentRef,
     text: string,
     version: unknown,
@@ -98,25 +153,79 @@ class MemorySource implements FileViewerSource {
   ): Promise<FileViewerSavedText> {
     this.saveCalls.push({ ref, text, version, signal })
     signal.throwIfAborted()
-    const gate = this.queuedSaves.shift()
+    const gate = this.queuedSaveGates.shift()
     if (gate !== undefined) await gate
     const document = this.document(ref.resourceId)
-    if (version !== document.version) throw new Error('stale memory version')
-    const nextVersion = this.nextVersion()
-    this.documents.set(ref.resourceId, { ...document, text, version: nextVersion })
-    return { version: nextVersion }
+    if (this.supportsConditionalSave && version !== document.version) throw new Error('stale memory version')
+    const nextVersion = this.returnVersionlessSave ? undefined : this.nextVersion()
+    this.documents.set(ref.resourceId, {
+      ...document,
+      text,
+      ...(nextVersion === undefined ? { version: undefined } : { version: nextVersion }),
+    })
+    return nextVersion === undefined ? {} : { version: nextVersion }
   }
 
-  async openExternal(ref: FileViewerDocumentRef, signal: AbortSignal): Promise<void> {
+  private async openDocumentExternally(ref: FileViewerDocumentRef, signal: AbortSignal): Promise<void> {
     this.externalCalls.push({ ref, signal })
     signal.throwIfAborted()
-    const gate = this.queuedExternalOpens.shift()
+    const gate = this.queuedExternalGates.shift()
     if (gate !== undefined) await gate
+  }
+
+  private loaded(document: MemoryDocument): FileViewerLoadedText {
+    return {
+      text: document.text,
+      ...(document.version === undefined ? {} : { version: document.version }),
+      ...(document.title === undefined ? {} : { title: document.title }),
+      ...(document.location === undefined ? {} : { location: document.location }),
+    }
+  }
+
+  private documentKey(ref: FileViewerDocumentRef): string {
+    return JSON.stringify([ref.sessionId, ref.resourceId])
   }
 
   private nextVersion(): object {
     this.revision += 1
     return Object.freeze({ source: this.id, revision: this.revision })
+  }
+}
+
+class MemoryStorage {
+  readonly values = new Map<string, string>()
+  getItem(key: string): string | null { return this.values.get(key) ?? null }
+  setItem(key: string, value: string): void { this.values.set(key, value) }
+}
+
+class MemoryHost implements FileViewerInstanceHost {
+  readonly opened: Array<{ id: string; ref: FileViewerDocumentRef; close: () => boolean | Promise<boolean> }> = []
+  readonly activated: Array<{ id: string; sessionId: FileViewerDocumentRef['sessionId'] }> = []
+  readonly updated: Array<{ id: string; title: string }> = []
+  readonly launched: Array<{ selectorId: string; selection?: unknown }> = []
+  openError?: Error
+  updateError?: Error
+
+  open(instanceId: string, ref: FileViewerDocumentRef, _title: string, onClose: () => boolean | Promise<boolean>): void {
+    if (this.openError !== undefined) throw this.openError
+    this.opened.push({ id: instanceId, ref, close: onClose })
+  }
+
+  activate(instanceId: string, sessionId: FileViewerDocumentRef['sessionId']): void {
+    this.activated.push({ id: instanceId, sessionId })
+  }
+
+  update(instanceId: string, _sessionId: FileViewerDocumentRef['sessionId'], title: string): void {
+    if (this.updateError !== undefined) throw this.updateError
+    this.updated.push({ id: instanceId, title })
+  }
+
+  async launch(
+    _sessionId: FileViewerDocumentRef['sessionId'],
+    selectorId: string,
+    selection?: unknown,
+  ): Promise<void> {
+    this.launched.push({ selectorId, ...(selection === undefined ? {} : { selection }) })
   }
 }
 
@@ -130,389 +239,697 @@ function ref(sessionId: SessionId, source: FileViewerSource, resourceId: string)
   return { sessionId, sourceId: source.id, resourceId }
 }
 
-function ready(service: FileViewerService, sessionId: SessionId): Extract<FileViewerSessionSnapshot, { status: 'ready' }> {
-  const snapshot = service.snapshot(sessionId)
+function ready(service: FileViewerService, instanceId: string): Extract<FileViewerInstanceSnapshot, { status: 'ready' }> {
+  const snapshot = service.snapshot(instanceId)
   if (snapshot.status !== 'ready') throw new Error(`expected ready snapshot, received ${snapshot.status}`)
   return snapshot
 }
 
+const identityHash = async (text: string): Promise<string> => text
+
+async function settle(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe('FileViewerService', () => {
-  it('registers one source id and gives its registration an idempotent disposer', async () => {
-    const service = new FileViewerService()
-    const source = new MemorySource('memory')
-    const replacement = new MemorySource('memory')
-    source.put('one', 'first')
-    replacement.put('one', 'replacement')
-    const dispose = service.registerSource(source)
-
-    expect(() => service.registerSource(replacement)).toThrow('duplicate source "memory"')
-    await service.open(ref(sid('session'), source, 'one'))
-    expect(ready(service, sid('session')).text).toBe('first')
-
-    dispose()
-    dispose()
-    service.registerSource(replacement)
-    await service.open(ref(sid('replacement-session'), replacement, 'one'))
-    expect(ready(service, sid('replacement-session')).text).toBe('replacement')
+  it('hashes the exact canonical text without newline normalization', async () => {
+    await expect(hashFileViewerText('a\n')).resolves.toBe(
+      '87428fc522803d31065e7bce3cf03fe475096631e5e07bbd7a0fde60c4cf25c7',
+    )
+    await expect(hashFileViewerText('a')).resolves.not.toBe(await hashFileViewerText('a\n'))
   })
 
-  it('isolates document state and notifications by Session', async () => {
-    const service = new FileViewerService()
+  it('owns independent instances and reactivates only an exact existing ref', async () => {
+    const host = new MemoryHost()
+    const service = new FileViewerService({ host, hashText: identityHash })
     const source = new MemorySource('memory')
     source.put('one', 'one')
     source.put('two', 'two')
     service.registerSource(source)
-    const first = sid('first')
-    const second = sid('second')
-    let firstNotifications = 0
-    let secondNotifications = 0
-    const unsubscribeFirst = service.subscribe(first, () => { firstNotifications += 1 })
-    service.subscribe(first, () => { throw new Error('subscriber failed') })
-    service.subscribe(first, () => { firstNotifications += 1 })
-    service.subscribe(second, () => { secondNotifications += 1 })
+    const first = await service.open(ref(sid('session'), source, 'one'))
+    const second = await service.open(ref(sid('session'), source, 'two'))
+    const otherSession = await service.open(ref(sid('other'), source, 'one'))
 
-    await Promise.all([
-      service.open(ref(first, source, 'one')),
-      service.open(ref(second, source, 'two')),
-    ])
     service.edit(first, 'first edit')
-    unsubscribeFirst()
-    service.edit(first, 'second edit')
-
-    expect(ready(service, first).text).toBe('second edit')
+    await settle()
+    expect(ready(service, first).text).toBe('first edit')
     expect(ready(service, second).text).toBe('two')
-    expect(firstNotifications).toBe(7)
-    expect(secondNotifications).toBe(2)
+    expect(ready(service, otherSession).text).toBe('one')
+    expect(await service.open(ref(sid('session'), source, 'one'))).toBe(first)
+    expect(host.opened).toHaveLength(3)
+    expect(host.activated).toEqual([{ id: first, sessionId: sid('session') }])
   })
 
-  it('lets the newest open win and does not report cancellation as a load failure', async () => {
-    const service = new FileViewerService()
+  it('contains subscriber failures and isolates notifications by instance', async () => {
+    const service = new FileViewerService({ hashText: identityHash })
     const source = new MemorySource('memory')
-    const olderResult = deferred<FileViewerLoadedText>()
-    const newerResult = deferred<FileViewerLoadedText>()
-    source.enqueueLoad(olderResult.promise)
-    source.enqueueLoad(newerResult.promise)
+    source.put('one', 'one')
+    source.put('two', 'two')
     service.registerSource(source)
-    const sessionId = sid('session')
+    const first = await service.open(ref(sid('session'), source, 'one'))
+    const second = await service.open(ref(sid('session'), source, 'two'))
+    let firstCalls = 0
+    let secondCalls = 0
+    service.subscribe(first, () => { throw new Error('listener failed') })
+    service.subscribe(first, () => { firstCalls += 1 })
+    service.subscribe(second, () => { secondCalls += 1 })
 
-    const older = service.open(ref(sessionId, source, 'older'))
-    const olderSignal = source.loadCalls[0]!.signal
-    const newer = service.open(ref(sessionId, source, 'newer'))
-    expect(olderSignal.aborted).toBe(true)
-    expect(olderSignal.reason).toEqual(new Error('superseded'))
-    expect(service.snapshot(sessionId)).toMatchObject({ status: 'loading', ref: { resourceId: 'newer' } })
-
-    const version = Object.freeze({ revision: 'newest' })
-    newerResult.resolve({ text: 'newest text', title: 'Newest', version })
-    await newer
-    olderResult.resolve({ text: 'obsolete text', title: 'Obsolete' })
-    await older
-    expect(service.snapshot(sessionId)).toMatchObject({
-      status: 'ready',
-      title: 'Newest',
-      text: 'newest text',
-      baseline: 'newest text',
-      version,
-      saving: false,
-    })
+    service.edit(first, 'changed')
+    await settle()
+    expect(firstCalls).toBe(2)
+    expect(secondCalls).toBe(0)
   })
 
-  it('reports a current load rejection, including an abort-shaped source failure', async () => {
-    const service = new FileViewerService()
+  it('retries failed initial loads through both open and refresh', async () => {
+    const service = new FileViewerService({ hashText: identityHash })
     const source = new MemorySource('memory')
+    source.put('one', 'recovered')
+    source.queueLoad(Promise.reject(new Error('temporarily unavailable')))
     service.registerSource(source)
-    const sessionId = sid('session')
-    source.enqueueLoad(Promise.reject(new DOMException('source aborted itself', 'AbortError')))
+    const documentRef = ref(sid('session'), source, 'one')
 
-    await expect(service.open(ref(sessionId, source, 'one'))).rejects.toMatchObject({
+    await expect(service.open(documentRef)).rejects.toMatchObject({
       name: 'FileViewerOpenError',
-      failure: { code: 'load-failed', message: 'source aborted itself' },
+      failure: { code: 'load-failed', message: 'temporarily unavailable' },
     })
+    const failedId = 'text-editor-1'
+    expect(service.snapshot(failedId)).toMatchObject({ status: 'failed', operation: 'idle' })
+    expect(await service.open(documentRef)).toBe(failedId)
+    expect(ready(service, failedId).text).toBe('recovered')
 
-    expect(service.snapshot(sessionId)).toEqual({
-      status: 'failed',
-      ref: ref(sessionId, source, 'one'),
-      failure: { code: 'load-failed', message: 'source aborted itself' },
+    const other = new MemorySource('other')
+    other.put('two', 'also recovered')
+    other.queueLoad(Promise.reject(new Error('first failure')))
+    service.registerSource(other)
+    await expect(service.open(ref(sid('session'), other, 'two'))).rejects.toBeInstanceOf(FileViewerOpenError)
+    await service.refresh('text-editor-2')
+    expect(ready(service, 'text-editor-2').text).toBe('also recovered')
+  })
+
+  it('retries a missing source after registration and rolls back a throwing host open', async () => {
+    const host = new MemoryHost()
+    const service = new FileViewerService({ host, hashText: identityHash })
+    const source = new MemorySource('late')
+    source.put('one', 'available')
+    const documentRef = ref(sid('session'), source, 'one')
+
+    await expect(service.open(documentRef)).rejects.toMatchObject({ failure: { code: 'source-unavailable' } })
+    service.registerSource(source)
+    expect(await service.open(documentRef)).toBe('text-editor-1')
+
+    const failingHost = new MemoryHost()
+    failingHost.openError = new Error('sidebar refused')
+    const otherService = new FileViewerService({ host: failingHost, hashText: identityHash })
+    const other = new MemorySource('other')
+    other.put('one', 'one')
+    otherService.registerSource(other)
+    await expect(otherService.open(ref(sid('session'), other, 'one'))).rejects.toThrow('sidebar refused')
+    failingHost.openError = undefined
+    expect(await otherService.open(ref(sid('session'), other, 'one'))).toBe('text-editor-2')
+    expect(other.loadCalls).toHaveLength(1)
+  })
+
+  it('observes watch snapshots without pulling clean local text or re-registering the watch', async () => {
+    const source = new MemorySource('memory')
+    const version = source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const documentRef = ref(sid('session'), source, 'one')
+    const instanceId = await service.open(documentRef)
+
+    const remoteVersion = { revision: 'remote' }
+    source.emit(documentRef, { kind: 'snapshot', snapshot: { text: 'remote', version: remoteVersion } })
+    await settle()
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'base',
+      baseText: 'base',
+      baseVersion: version,
+      latestSourceText: 'remote',
+      latestSourceVersion: remoteVersion,
+      syncStatus: 'source-ahead',
     })
-    expect(source.loadCalls[0]!.signal.aborted).toBe(false)
+    expect(source.watchRegistrations).toBe(1)
+
+    source.set('one', 'manual', { revision: 'manual' })
+    await service.refresh(instanceId)
+    expect(ready(service, instanceId).text).toBe('manual')
+    expect(source.watchRegistrations).toBe(1)
   })
 
-  it('fails an open whose source is unavailable', async () => {
-    const service = new FileViewerService()
-    const source = new MemorySource('missing')
-    const sessionId = sid('session')
+  it('loads after invalidation even while dirty and classifies without overwriting local text', async () => {
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const documentRef = ref(sid('session'), source, 'one')
+    const instanceId = await service.open(documentRef)
+    service.edit(instanceId, 'local')
+    await settle()
+    source.put('one', 'remote')
 
-    await expect(service.open(ref(sessionId, source, 'one'))).rejects.toBeInstanceOf(FileViewerOpenError)
-
-    expect(service.snapshot(sessionId)).toEqual({
-      status: 'failed',
-      ref: ref(sessionId, source, 'one'),
-      failure: { code: 'source-unavailable' },
+    source.emit(documentRef, { kind: 'invalidate' })
+    await settle()
+    expect(source.loadCalls).toHaveLength(2)
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'local',
+      latestSourceText: 'remote',
+      sourceStale: false,
+      syncStatus: 'diverged',
+      automationPaused: true,
     })
   })
 
-  it('derives dirty state only from editor text and the baseline', async () => {
-    const service = new FileViewerService()
-    const source = new MemorySource('memory')
-    source.put('one', 'original')
+  it('handles synchronous watch content without recursive registration', async () => {
+    const source = new MemorySource('memory', {
+      watchOnSubscribe: { kind: 'snapshot', snapshot: { text: 'observed', version: 'watch-version' } },
+    })
+    source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
     service.registerSource(source)
-    const sessionId = sid('session')
-    expect(isFileViewerDirty(service.snapshot(sessionId))).toBe(false)
-    await service.open(ref(sessionId, source, 'one'))
-    expect(isFileViewerDirty(ready(service, sessionId))).toBe(false)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    await settle()
 
-    service.edit(sessionId, 'changed')
-    expect(ready(service, sessionId)).toMatchObject({ text: 'changed', baseline: 'original' })
-    expect(isFileViewerDirty(ready(service, sessionId))).toBe(true)
-    service.edit(sessionId, 'original')
-    expect(isFileViewerDirty(ready(service, sessionId))).toBe(false)
+    expect(source.watchRegistrations).toBe(1)
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'base',
+      latestSourceText: 'observed',
+      syncStatus: 'source-ahead',
+    })
   })
 
-  it('publishes a successful save as the new baseline and opaque version', async () => {
-    const service = new FileViewerService()
+  it.each([
+    { autoUpdate: false, autoSave: false },
+    { autoUpdate: true, autoSave: false },
+    { autoUpdate: false, autoSave: true },
+    { autoUpdate: true, autoSave: true },
+  ])('runs the $autoUpdate/$autoSave automation mode independently', async automation => {
+    vi.useFakeTimers()
     const source = new MemorySource('memory')
-    const loadedVersion = source.put('one', 'original')
+    source.put('update', 'update-base')
+    source.put('save', 'save-base')
+    const service = new FileViewerService({ automationDebounceMs: 20, hashText: identityHash })
     service.registerSource(source)
-    const sessionId = sid('session')
-    await service.open(ref(sessionId, source, 'one'))
-    service.edit(sessionId, 'saved')
+    const updateRef = ref(sid('session'), source, 'update')
+    const saveRef = ref(sid('session'), source, 'save')
+    const updateId = await service.open(updateRef)
+    const saveId = await service.open(saveRef)
+    service.setAutomation(updateId, 'autoUpdate', automation.autoUpdate)
+    service.setAutomation(updateId, 'autoSave', automation.autoSave)
+    service.setAutomation(saveId, 'autoUpdate', automation.autoUpdate)
+    service.setAutomation(saveId, 'autoSave', automation.autoSave)
 
-    await service.save(sessionId)
+    source.emit(updateRef, { kind: 'snapshot', snapshot: { text: 'update-remote', version: 'remote-version' } })
+    service.edit(saveId, 'save-local')
+    await settle()
+    expect(ready(service, updateId).text).toBe('update-base')
+    await vi.advanceTimersByTimeAsync(20)
 
-    const snapshot = ready(service, sessionId)
-    expect(source.saveCalls[0]).toMatchObject({ text: 'saved', version: loadedVersion })
-    expect(snapshot).toMatchObject({ text: 'saved', baseline: 'saved', saving: false })
-    expect(snapshot.version).toBe(source.document('one').version)
-    expect(snapshot.version).not.toBe(loadedVersion)
-    expect(isFileViewerDirty(snapshot)).toBe(false)
+    expect(ready(service, updateId).text).toBe(automation.autoUpdate ? 'update-remote' : 'update-base')
+    expect(source.document('save').text).toBe(automation.autoSave ? 'save-local' : 'save-base')
   })
 
-  it('keeps edits made during save dirty against the text that actually saved', async () => {
-    const service = new FileViewerService()
+  it('rechecks disabled preferences when pending automation timers reach their callback', async () => {
+    vi.useFakeTimers()
     const source = new MemorySource('memory')
-    source.put('one', 'original')
-    const saveGate = deferred<void>()
-    source.enqueueSave(saveGate.promise)
+    source.put('update', 'base')
+    source.put('save', 'base')
+    const service = new FileViewerService({ automationDebounceMs: 10, hashText: identityHash })
     service.registerSource(source)
-    const sessionId = sid('session')
-    await service.open(ref(sessionId, source, 'one'))
-    service.edit(sessionId, 'submitted')
+    const updateRef = ref(sid('session'), source, 'update')
+    const updateId = await service.open(updateRef)
+    const saveId = await service.open(ref(sid('session'), source, 'save'))
+    service.setAutomation(updateId, 'autoUpdate', true)
+    service.setAutomation(saveId, 'autoSave', true)
+    source.emit(updateRef, { kind: 'snapshot', snapshot: { text: 'remote', version: 'remote' } })
+    service.edit(saveId, 'local')
+    await settle()
+    service.setAutomation(updateId, 'autoUpdate', false)
+    service.setAutomation(saveId, 'autoSave', false)
 
-    const save = service.save(sessionId)
-    expect(ready(service, sessionId).saving).toBe(true)
-    service.edit(sessionId, 'newer edit')
-    saveGate.resolve(undefined)
-    await save
-
-    const snapshot = ready(service, sessionId)
-    expect(source.document('one').text).toBe('submitted')
-    expect(snapshot).toMatchObject({ text: 'newer edit', baseline: 'submitted', saving: false })
-    expect(snapshot.version).toBe(source.document('one').version)
-    expect(isFileViewerDirty(snapshot)).toBe(true)
+    await vi.runAllTimersAsync()
+    expect(ready(service, updateId).text).toBe('base')
+    expect(source.document('save').text).toBe('base')
   })
 
-  it('retains the latest dirty text and baseline when save fails', async () => {
-    const service = new FileViewerService()
+  it('validates stored and requested automation against source capabilities per resource', async () => {
+    const storage = new MemoryStorage()
+    storage.values.set('dsh-file-viewer:automation:["limited","one"]', JSON.stringify({
+      autoUpdate: true,
+      autoSave: true,
+    }))
+    const limited = new MemorySource('limited', { conditional: false, watch: false })
+    limited.put('one', 'one')
+    limited.put('two', 'two')
+    const service = new FileViewerService({ storage, hashText: identityHash })
+    service.registerSource(limited)
+    const one = await service.open(ref(sid('session'), limited, 'one'))
+    const two = await service.open(ref(sid('session'), limited, 'two'))
+
+    expect(ready(service, one).automation).toEqual({ autoUpdate: false, autoSave: false })
+    expect(ready(service, two).automation).toEqual({ autoUpdate: false, autoSave: false })
+    expect(() => service.setAutomation(one, 'autoUpdate', true)).toThrow('requires source watch support')
+    expect(() => service.setAutomation(one, 'autoSave', true)).toThrow('requires conditional save support')
+
+    const capable = new MemorySource('capable')
+    capable.put('one', 'one')
+    const firstService = new FileViewerService({ storage, hashText: identityHash })
+    firstService.registerSource(capable)
+    const first = await firstService.open(ref(sid('first'), capable, 'one'))
+    firstService.setAutomation(first, 'autoUpdate', true)
+    firstService.setAutomation(first, 'autoSave', true)
+    const secondService = new FileViewerService({ storage, hashText: identityHash })
+    secondService.registerSource(capable)
+    const restored = await secondService.open(ref(sid('second'), capable, 'one'))
+    expect(ready(secondService, restored).automation).toEqual({ autoUpdate: true, autoSave: true })
+  })
+
+  it('blocks safe saves after observed source movement and resolves by explicit overwrite', async () => {
     const source = new MemorySource('memory')
-    const loadedVersion = source.put('one', 'original')
-    const saveGate = deferred<void>()
-    source.enqueueSave(saveGate.promise)
+    source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
     service.registerSource(source)
-    const sessionId = sid('session')
-    await service.open(ref(sessionId, source, 'one'))
-    service.edit(sessionId, 'submitted')
+    const documentRef = ref(sid('session'), source, 'one')
+    const instanceId = await service.open(documentRef)
+    service.edit(instanceId, 'local')
+    await settle()
+    const remoteVersion = source.put('one', 'remote')
+    source.emit(documentRef, {
+      kind: 'snapshot',
+      snapshot: { text: 'remote', version: remoteVersion },
+    })
+    await settle()
 
-    const save = service.save(sessionId)
-    service.edit(sessionId, 'newer edit')
-    saveGate.reject(new Error('write refused'))
-    await save
+    await service.save(instanceId)
+    expect(source.saveCalls).toHaveLength(0)
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'local',
+      syncStatus: 'diverged',
+      failure: { code: 'save-conflict' },
+      automationPaused: true,
+    })
+    await service.overwriteSource(instanceId)
+    expect(source.saveCalls[0]).toMatchObject({ text: 'local', version: remoteVersion })
+    expect(ready(service, instanceId)).toMatchObject({ syncStatus: 'synced', automationPaused: false })
+    expect(ready(service, instanceId).failure).toBeUndefined()
+  })
 
-    const snapshot = ready(service, sessionId)
-    expect(snapshot).toMatchObject({
-      text: 'newer edit',
-      baseline: 'original',
-      version: loadedVersion,
-      saving: false,
+  it('requires the explicit overwrite path when conditional save is unavailable', async () => {
+    const source = new MemorySource('memory', { conditional: false })
+    const loadedVersion = source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    service.edit(instanceId, 'local')
+    await settle()
+
+    await service.save(instanceId)
+    expect(source.saveCalls).toHaveLength(0)
+    expect(ready(service, instanceId).failure).toMatchObject({ code: 'save-conflict' })
+    await service.overwriteSource(instanceId)
+    expect(source.saveCalls[0]).toMatchObject({ text: 'local', version: loadedVersion })
+    expect(source.document('one').text).toBe('local')
+  })
+
+  it('discards either source-ahead or diverged local text and resumes automation', async () => {
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const documentRef = ref(sid('session'), source, 'one')
+    const instanceId = await service.open(documentRef)
+    service.edit(instanceId, 'local')
+    await settle()
+    source.emit(documentRef, { kind: 'snapshot', snapshot: { text: 'remote', version: 'remote' } })
+    await settle()
+    expect(ready(service, instanceId).syncStatus).toBe('diverged')
+
+    service.discardLocal(instanceId)
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'remote',
+      baseText: 'remote',
+      syncStatus: 'synced',
+      automationPaused: false,
+    })
+  })
+
+  it('keeps save errors orthogonal to sync and unpauses after a successful retry', async () => {
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    source.queueSave(Promise.reject(new Error('write refused')))
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    service.edit(instanceId, 'local')
+    await settle()
+
+    await service.save(instanceId)
+    expect(ready(service, instanceId)).toMatchObject({
+      syncStatus: 'local-ahead',
+      automationPaused: true,
       failure: { code: 'save-failed', message: 'write refused' },
     })
-    expect(source.document('one').text).toBe('original')
-    expect(isFileViewerDirty(snapshot)).toBe(true)
+    await service.save(instanceId)
+    expect(ready(service, instanceId)).toMatchObject({ syncStatus: 'synced', automationPaused: false })
+    expect(ready(service, instanceId).failure).toBeUndefined()
   })
 
-  it('reports save and external-open capabilities independently', async () => {
-    const service = new FileViewerService()
-    const memory = new MemorySource('readonly')
-    memory.put('one', 'original')
-    const readonlySource: FileViewerSource = {
-      id: memory.id,
-      load: (documentRef, signal) => memory.load(documentRef, signal),
-    }
-    service.registerSource(readonlySource)
-    const sessionId = sid('session')
-    await service.open(ref(sessionId, readonlySource, 'one'))
-    service.edit(sessionId, 'dirty')
-
-    await service.save(sessionId)
-    expect(ready(service, sessionId)).toMatchObject({
-      text: 'dirty',
-      baseline: 'original',
-      failure: { code: 'save-unsupported' },
-    })
-    await service.openExternal(sessionId)
-    expect(ready(service, sessionId)).toMatchObject({ failure: { code: 'external-open-unsupported' } })
-  })
-
-  it('refuses a dirty refresh and reloads a clean document', async () => {
-    const service = new FileViewerService()
+  it('advances and clears opaque versions when observed canonical text has the same hash', async () => {
     const source = new MemorySource('memory')
-    source.put('one', 'original')
+    const firstVersion = source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
     service.registerSource(source)
-    const sessionId = sid('session')
-    await service.open(ref(sessionId, source, 'one'))
-    service.edit(sessionId, 'dirty')
-
-    await service.refresh(sessionId)
-    expect(source.loadCalls).toHaveLength(1)
-    expect(ready(service, sessionId)).toMatchObject({
-      text: 'dirty',
-      baseline: 'original',
-      failure: { code: 'refresh-dirty' },
+    const documentRef = ref(sid('session'), source, 'one')
+    const instanceId = await service.open(documentRef)
+    service.edit(instanceId, 'local')
+    await settle()
+    const secondVersion = { revision: 2 }
+    source.emit(documentRef, { kind: 'snapshot', snapshot: { text: 'base', version: secondVersion } })
+    await settle()
+    expect(firstVersion).not.toBe(secondVersion)
+    expect(ready(service, instanceId)).toMatchObject({
+      syncStatus: 'local-ahead',
+      baseVersion: secondVersion,
+      latestSourceVersion: secondVersion,
     })
 
-    service.edit(sessionId, 'original')
-    const refreshedVersion = source.put('one', 'from source', 'Refreshed')
-    await service.refresh(sessionId)
-    expect(source.loadCalls).toHaveLength(2)
-    expect(ready(service, sessionId)).toMatchObject({
-      title: 'Refreshed',
-      text: 'from source',
-      baseline: 'from source',
-      version: refreshedVersion,
+    source.emit(documentRef, { kind: 'snapshot', snapshot: { text: 'base' } })
+    await settle()
+    expect(ready(service, instanceId)).not.toHaveProperty('baseVersion')
+    expect(ready(service, instanceId)).not.toHaveProperty('latestSourceVersion')
+  })
+
+  it('accepts only the latest edit hash and reports a current hashing failure', async () => {
+    const firstHash = deferred<string>()
+    const secondHash = deferred<string>()
+    let failure: Error | undefined
+    const hashText = (text: string): Promise<string> => {
+      if (text === 'first') return firstHash.promise
+      if (text === 'second') return secondHash.promise
+      if (text === 'failure') return Promise.reject(failure)
+      return Promise.resolve(text)
+    }
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const service = new FileViewerService({ hashText })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+
+    service.edit(instanceId, 'first')
+    service.edit(instanceId, 'second')
+    secondHash.resolve('second-hash')
+    await settle()
+    firstHash.resolve('first-hash')
+    await settle()
+    expect(ready(service, instanceId)).toMatchObject({ text: 'second', localHash: 'second-hash' })
+
+    failure = new Error('digest unavailable')
+    service.edit(instanceId, 'failure')
+    await settle()
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'failure',
+      syncStatus: 'unknown',
+      automationPaused: true,
+      failure: { code: 'hash-failed', message: 'digest unavailable' },
     })
   })
 
-  it('source unload aborts every source operation, invalidates snapshots, and rejects late completions', async () => {
-    const service = new FileViewerService()
+  it('does not let a late read reset a newer successful save', async () => {
     const source = new MemorySource('memory')
-    source.put('save', 'original')
-    source.put('external', 'external')
-    const loadGate = deferred<FileViewerLoadedText>()
+    const oldVersion = source.put('one', 'base')
+    const staleRead = deferred<FileViewerLoadedText>()
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    source.queueLoad(staleRead.promise)
+    const refresh = service.refresh(instanceId)
+    service.edit(instanceId, 'saved')
+    await settle()
+    await service.save(instanceId)
+    const savedVersion = source.document('one').version
+    staleRead.resolve({ text: 'base', version: oldVersion })
+    await refresh
+
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'saved',
+      baseText: 'saved',
+      latestSourceText: 'saved',
+      baseVersion: savedVersion,
+      latestSourceVersion: savedVersion,
+      syncStatus: 'synced',
+    })
+  })
+
+  it('keeps saving visible across a concurrent observation and prevents overlapping writes', async () => {
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
     const saveGate = deferred<void>()
-    const externalGate = deferred<void>()
+    source.queueSave(saveGate.promise)
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const documentRef = ref(sid('session'), source, 'one')
+    const instanceId = await service.open(documentRef)
+    service.edit(instanceId, 'submitted')
+    await settle()
+
+    const first = service.save(instanceId)
+    const second = service.save(instanceId)
+    expect(source.saveCalls).toHaveLength(1)
+    source.emit(documentRef, { kind: 'snapshot', snapshot: { text: 'base', version: source.document('one').version } })
+    await settle()
+    expect(ready(service, instanceId).operation).toBe('saving')
+    saveGate.resolve(undefined)
+    await Promise.all([first, second])
+    expect(ready(service, instanceId).operation).toBe('idle')
+    expect(source.saveCalls).toHaveLength(1)
+  })
+
+  it('retains typing and edit-back performed while the submitted text saves', async () => {
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const saveGate = deferred<void>()
+    source.queueSave(saveGate.promise)
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    service.edit(instanceId, 'submitted')
+    await settle()
+    const save = service.save(instanceId)
+    service.edit(instanceId, 'newer')
+    service.edit(instanceId, 'base')
+    await settle()
+    saveGate.resolve(undefined)
+    await save
+
+    expect(source.document('one').text).toBe('submitted')
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'base',
+      baseText: 'submitted',
+      latestSourceText: 'submitted',
+      syncStatus: 'local-ahead',
+    })
+    expect(isFileViewerDirty(ready(service, instanceId))).toBe(true)
+  })
+
+  it('saves the submitted text while its hash waits and retains newer local typing', async () => {
+    const submittedHash = deferred<string>()
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const service = new FileViewerService({
+      hashText: text => text === 'submitted' ? submittedHash.promise : Promise.resolve(text),
+    })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    service.edit(instanceId, 'submitted')
+    const save = service.save(instanceId)
+    service.edit(instanceId, 'newer')
+    await settle()
+    submittedHash.resolve('submitted')
+    await save
+
+    expect(source.document('one').text).toBe('submitted')
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'newer',
+      baseText: 'submitted',
+      latestSourceText: 'submitted',
+      syncStatus: 'local-ahead',
+    })
+  })
+
+  it('retains ready content when its source unloads and can refresh after replacement registration', async () => {
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
     const unregister = service.registerSource(source)
-    const loadingSession = sid('loading')
-    const saveSession = sid('saving')
-    const externalSession = sid('external')
-    await service.open(ref(saveSession, source, 'save'))
-    await service.open(ref(externalSession, source, 'external'))
-    source.enqueueLoad(loadGate.promise)
-    source.enqueueSave(saveGate.promise)
-    source.enqueueExternalOpen(externalGate.promise)
-    const loading = service.open(ref(loadingSession, source, 'late'))
-    service.edit(saveSession, 'submitted')
-    const save = service.save(saveSession)
-    const external = service.openExternal(externalSession)
-    const loadSignal = source.loadCalls.find(call => call.ref.sessionId === loadingSession)!.signal
-    const saveSignal = source.saveCalls[0]!.signal
-    const externalSignal = source.externalCalls[0]!.signal
+    const documentRef = ref(sid('session'), source, 'one')
+    const instanceId = await service.open(documentRef)
+    service.edit(instanceId, 'local')
+    await settle()
 
     unregister()
-    for (const signal of [loadSignal, saveSignal, externalSignal]) {
-      expect(signal.aborted).toBe(true)
-      expect(signal.reason).toEqual(new Error('source unloaded'))
-    }
-    expect(service.snapshot(loadingSession)).toMatchObject({
-      status: 'failed', ref: { resourceId: 'late' }, failure: { code: 'source-unavailable' },
+    expect(source.watchDisposals).toBe(1)
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'local',
+      baseText: 'base',
+      sourceStale: true,
+      syncStatus: 'unknown',
+      failure: { code: 'source-unavailable' },
     })
-    expect(service.snapshot(saveSession)).toMatchObject({
-      status: 'failed', ref: { resourceId: 'save' }, failure: { code: 'source-unavailable' },
+
+    const replacement = new MemorySource('memory')
+    replacement.put('one', 'replacement')
+    service.registerSource(replacement)
+    await service.refresh(instanceId)
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'local',
+      latestSourceText: 'replacement',
+      syncStatus: 'diverged',
     })
-    expect(service.snapshot(externalSession)).toMatchObject({
-      status: 'failed', ref: { resourceId: 'external' }, failure: { code: 'source-unavailable' },
-    })
-    loadGate.resolve({ text: 'too late' })
-    saveGate.resolve(undefined)
-    externalGate.reject(new Error('too late'))
-    await Promise.all([loading, save, external])
-    expect(service.snapshot(loadingSession)).toMatchObject({ status: 'failed', failure: { code: 'source-unavailable' } })
-    expect(service.snapshot(saveSession)).toMatchObject({ status: 'failed', failure: { code: 'source-unavailable' } })
-    expect(service.snapshot(externalSession)).toMatchObject({ status: 'failed', failure: { code: 'source-unavailable' } })
   })
 
-  it('opens externally, preserves edits on failure, and clears the failure on retry', async () => {
-    const service = new FileViewerService()
+  it('rejects late source work after unload and reports failed loading instances', async () => {
     const source = new MemorySource('memory')
-    source.put('one', 'original')
-    const failedOpen = deferred<void>()
-    source.enqueueExternalOpen(failedOpen.promise)
-    service.registerSource(source)
-    const sessionId = sid('session')
-    await service.open(ref(sessionId, source, 'one'))
+    const loadGate = deferred<FileViewerLoadedText>()
+    source.queueLoad(loadGate.promise)
+    const service = new FileViewerService({ hashText: identityHash })
+    const unregister = service.registerSource(source)
+    const opening = service.open(ref(sid('session'), source, 'late'))
+    const signal = source.loadCalls[0]!.signal
+    unregister()
+    expect(signal.aborted).toBe(true)
+    expect(service.snapshot('text-editor-1')).toMatchObject({
+      status: 'failed',
+      failure: { code: 'source-unavailable' },
+    })
+    loadGate.resolve({ text: 'too late' })
+    await expect(opening).rejects.toMatchObject({ failure: { code: 'source-unavailable' } })
+    expect(service.snapshot('text-editor-1')).toMatchObject({ status: 'failed' })
+  })
 
-    const opening = service.openExternal(sessionId)
-    service.edit(sessionId, 'edited while opening')
-    failedOpen.reject(new Error('launcher refused'))
+  it('does not close newer dirty text accepted by an older asynchronous confirmation', async () => {
+    const confirmation = deferred<boolean>()
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const service = new FileViewerService({ confirmDiscard: () => confirmation.promise, hashText: identityHash })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    service.edit(instanceId, 'first')
+    await settle()
+
+    const closing = service.close(instanceId)
+    service.edit(instanceId, 'newer')
+    service.edit(instanceId, 'first')
+    await settle()
+    confirmation.resolve(true)
+    await expect(closing).resolves.toBe(false)
+    expect(ready(service, instanceId).text).toBe('first')
+  })
+
+  it('reports watch setup and hashing failures without unhandled callback rejections', async () => {
+    const watchFailure = new MemorySource('watch-failure', { watchError: new Error('watch refused') })
+    watchFailure.put('one', 'base')
+    const watchService = new FileViewerService({ hashText: identityHash })
+    watchService.registerSource(watchFailure)
+    const watchId = await watchService.open(ref(sid('session'), watchFailure, 'one'))
+    expect(ready(watchService, watchId)).toMatchObject({
+      watchSupported: false,
+      automationPaused: true,
+      failure: { code: 'watch-failed', message: 'watch refused' },
+    })
+
+    const source = new MemorySource('hash-failure')
+    source.put('one', 'base')
+    const service = new FileViewerService({
+      hashText: text => text === 'bad watch text' ? Promise.reject(new Error('digest refused')) : Promise.resolve(text),
+    })
+    service.registerSource(source)
+    const documentRef = ref(sid('session'), source, 'one')
+    const instanceId = await service.open(documentRef)
+    source.emit(documentRef, { kind: 'snapshot', snapshot: { text: 'bad watch text' } })
+    await settle()
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'base',
+      sourceStale: true,
+      syncStatus: 'unknown',
+      automationPaused: true,
+      failure: { code: 'hash-failed', message: 'digest refused' },
+    })
+
+    const host = new MemoryHost()
+    const hosted = new MemorySource('hosted')
+    hosted.put('one', 'base')
+    const hostedService = new FileViewerService({ host, hashText: identityHash })
+    hostedService.registerSource(hosted)
+    const hostedRef = ref(sid('session'), hosted, 'one')
+    const hostedId = await hostedService.open(hostedRef)
+    host.updateError = new Error('sidebar update refused')
+    hosted.emit(hostedRef, { kind: 'snapshot', snapshot: { text: 'remote' } })
+    await settle()
+    expect(ready(hostedService, hostedId)).toMatchObject({
+      automationPaused: true,
+      failure: { code: 'watch-failed', message: 'sidebar update refused' },
+    })
+  })
+
+  it('clears returned versions and preserves newer local text after a versionless save', async () => {
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    source.returnVersionlessSave = true
+    const service = new FileViewerService({ hashText: identityHash })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    service.edit(instanceId, 'saved')
+    await settle()
+    await service.save(instanceId)
+
+    expect(ready(service, instanceId)).not.toHaveProperty('baseVersion')
+    expect(ready(service, instanceId)).not.toHaveProperty('latestSourceVersion')
+    expect(ready(service, instanceId).syncStatus).toBe('synced')
+  })
+
+  it('projects location actions and keeps external failures independent of editor content', async () => {
+    const host = new MemoryHost()
+    const source = new MemorySource('memory')
+    source.put('one', 'base', 'Title', { selectorId: 'files', segments: [{ label: 'one' }] })
+    const externalGate = deferred<void>()
+    source.queueExternal(externalGate.promise)
+    const service = new FileViewerService({ host, hashText: identityHash })
+    service.registerSource(source)
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
+    await service.selectLocation(instanceId, { parent: true })
+    service.edit(instanceId, 'local')
+    const opening = service.openExternal(instanceId)
+    externalGate.reject(new Error('launcher refused'))
     await opening
-    expect(ready(service, sessionId)).toMatchObject({
-      text: 'edited while opening',
+
+    expect(host.launched).toEqual([{ selectorId: 'files', selection: { parent: true } }])
+    expect(ready(service, instanceId)).toMatchObject({
+      text: 'local',
       failure: { code: 'external-open-failed', message: 'launcher refused' },
     })
-    await service.openExternal(sessionId)
-    expect(source.externalCalls).toHaveLength(2)
-    expect(ready(service, sessionId).failure).toBeUndefined()
   })
 
-  it('disposal aborts document and external operations, silences listeners, and invalidates the API', async () => {
-    const service = new FileViewerService()
+  it('disposes to a silent API and detaches persistent watches', async () => {
     const source = new MemorySource('memory')
-    source.put('ready', 'ready')
-    const loadGate = deferred<FileViewerLoadedText>()
-    const externalGate = deferred<void>()
-    source.enqueueLoad(loadGate.promise)
-    source.enqueueExternalOpen(externalGate.promise)
+    source.put('one', 'base')
+    const service = new FileViewerService({ hashText: identityHash })
     const unregister = service.registerSource(source)
-    const loadingSession = sid('loading')
-    const externalSession = sid('external')
+    const instanceId = await service.open(ref(sid('session'), source, 'one'))
     let notifications = 0
-    service.subscribe(loadingSession, () => { notifications += 1 })
-    const loading = service.open(ref(loadingSession, source, 'late'))
-    await service.open(ref(externalSession, source, 'ready'))
-    const external = service.openExternal(externalSession)
-    const loadSignal = source.loadCalls.find(call => call.ref.sessionId === loadingSession)!.signal
-    const externalSignal = source.externalCalls[0]!.signal
+    service.subscribe(instanceId, () => { notifications += 1 })
 
     service.dispose()
     service.dispose()
     unregister()
-    expect(loadSignal.aborted).toBe(true)
-    expect(loadSignal.reason).toEqual(new Error('file viewer disposed'))
-    expect(externalSignal.aborted).toBe(true)
-    expect(externalSignal.reason).toEqual(new Error('file viewer disposed'))
-    loadGate.resolve({ text: 'too late' })
-    externalGate.reject(new Error('too late'))
-    await Promise.all([loading, external])
-    expect(notifications).toBe(1)
-
-    expect(() => service.snapshot(loadingSession)).toThrow('service is disposed')
-    expect(() => service.subscribe(loadingSession, () => undefined)).toThrow('service is disposed')
-    expect(() => service.edit(loadingSession, 'ignored')).toThrow('service is disposed')
-    expect(() => service.registerSource(new MemorySource('after-dispose'))).toThrow('service is disposed')
-    await expect(service.open(ref(loadingSession, source, 'again'))).rejects.toThrow('service is disposed')
-    await expect(service.save(loadingSession)).rejects.toThrow('service is disposed')
-    await expect(service.refresh(loadingSession)).rejects.toThrow('service is disposed')
-    await expect(service.openExternal(loadingSession)).rejects.toThrow('service is disposed')
-  })
-
-  it('rejects an empty source id and uses the resource id as the default title', async () => {
-    expect(() => FileViewerSourceId('   ')).toThrow('source id must not be empty')
-    const service = new FileViewerService()
-    const source = new MemorySource('memory')
-    source.put('plain.txt', 'text')
-    service.registerSource(source)
-    const sessionId = sid('session')
-
-    await service.open(ref(sessionId, source, 'plain.txt'))
-
-    expect(ready(service, sessionId).title).toBe('plain.txt')
+    expect(source.watchDisposals).toBe(1)
+    expect(notifications).toBe(0)
+    expect(() => service.snapshot(instanceId)).toThrow('service is disposed')
+    expect(() => service.edit(instanceId, 'ignored')).toThrow('service is disposed')
+    await expect(service.save(instanceId)).rejects.toThrow('service is disposed')
   })
 })

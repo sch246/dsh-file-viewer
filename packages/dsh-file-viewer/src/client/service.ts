@@ -51,7 +51,8 @@ export interface FileViewerSource {
 }
 
 /** Stable operation failure codes. */
-export type FileViewerErrorCode = 'source-unavailable' | 'load-failed' | 'save-unsupported' | 'save-failed'
+export type FileViewerErrorCode = 'source-unavailable' | 'load-failed' | 'hash-failed'
+  | 'save-unsupported' | 'save-conflict' | 'save-failed' | 'watch-failed'
   | 'external-open-unsupported' | 'external-open-failed'
 
 /** One retained operation failure. */
@@ -109,7 +110,10 @@ export class FileViewerOpenError extends Error {
 }
 
 /** Browser persistence subset used for automation preferences. */
-export interface FileViewerPreferenceStorage { getItem(key: string): string | null; setItem(key: string, value: string): void }
+export interface FileViewerPreferenceStorage {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+}
 
 /** Right-sidebar lifecycle used by instance controllers. */
 export interface FileViewerInstanceHost {
@@ -119,7 +123,19 @@ export interface FileViewerInstanceHost {
   launch(sessionId: SessionId, selectorId: string, selection?: unknown): Promise<void>
 }
 
-interface OperationState { generation: number; controller?: AbortController }
+interface OperationState {
+  generation: number
+  controller: AbortController | undefined
+  kind: FileViewerOperation | undefined
+}
+
+interface ActiveOperation {
+  readonly generation: number
+  readonly controller: AbortController
+}
+
+type AutomationPauseReason = 'conflict' | 'failure'
+
 interface InstanceRecord {
   snapshot: FileViewerInstanceSnapshot
   listeners: Set<() => void>
@@ -127,16 +143,23 @@ interface InstanceRecord {
   save: OperationState
   external: OperationState
   hashGeneration: number
-  watchDispose?: () => void
-  autoUpdateTimer?: ReturnType<typeof setTimeout>
-  autoSaveTimer?: ReturnType<typeof setTimeout>
+  editGeneration: number
+  pauseReason: AutomationPauseReason | undefined
+  watchSource: FileViewerSource | undefined
+  watchDispose: (() => void) | undefined
+  savePromise: Promise<void> | undefined
+  autoUpdateTimer: ReturnType<typeof setTimeout> | undefined
+  autoSaveTimer: ReturnType<typeof setTimeout> | undefined
 }
 
-interface FileViewerServiceOptions {
+/** Optional browser dependencies and timing policy. */
+export interface FileViewerServiceOptions {
   readonly host?: FileViewerInstanceHost
   readonly storage?: FileViewerPreferenceStorage
   readonly automationDebounceMs?: number
   readonly confirmDiscard?: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
+  /** Injectable only to make hashing failures and completion order deterministic in tests. */
+  readonly hashText?: (text: string) => Promise<string>
 }
 
 const DEFAULT_AUTOMATION = Object.freeze({ autoUpdate: false, autoSave: false })
@@ -156,28 +179,71 @@ function errorMessage(error: unknown): string | undefined {
   const message = error instanceof Error ? error.message : String(error)
   return message === '' ? undefined : message
 }
+
 function toFailure(code: FileViewerErrorCode, error: unknown): FileViewerFailure {
   const message = errorMessage(error)
   return { code, ...(message === undefined ? {} : { message }) }
 }
+
 function clearFailure<T extends { readonly failure?: FileViewerFailure }>(value: T): Omit<T, 'failure'> {
   const { failure: _failure, ...rest } = value
   return rest
 }
-function keyOf(ref: FileViewerDocumentRef): string { return JSON.stringify([ref.sessionId, ref.sourceId, ref.resourceId]) }
-function preferenceKey(ref: FileViewerDocumentRef): string { return `dsh-file-viewer:automation:${JSON.stringify([ref.sourceId, ref.resourceId])}` }
+
+function keyOf(ref: FileViewerDocumentRef): string {
+  return JSON.stringify([ref.sessionId, ref.sourceId, ref.resourceId])
+}
+
+function preferenceKey(ref: FileViewerDocumentRef): string {
+  return `dsh-file-viewer:automation:${JSON.stringify([ref.sourceId, ref.resourceId])}`
+}
+
+function replaceBase(snapshot: ReadySnapshot, text: string, hash: string, version: unknown): ReadySnapshot {
+  const { baseVersion: _baseVersion, ...rest } = snapshot
+  return { ...rest, baseText: text, baseHash: hash, ...(version === undefined ? {} : { baseVersion: version }) }
+}
+
+function replaceLatestSource(snapshot: ReadySnapshot, loaded: FileViewerLoadedText, hash: string): ReadySnapshot {
+  const {
+    latestSourceVersion: _latestSourceVersion,
+    latestSourceText: _latestSourceText,
+    latestSourceHash: _latestSourceHash,
+    location: _location,
+    ...rest
+  } = snapshot
+  return {
+    ...rest,
+    latestSourceText: loaded.text,
+    latestSourceHash: hash,
+    ...(loaded.version === undefined ? {} : { latestSourceVersion: loaded.version }),
+    ...(loaded.location === undefined ? {} : { location: loaded.location }),
+  }
+}
+
+function replaceLocalTextWithoutHash(snapshot: ReadySnapshot, text: string): ReadySnapshot {
+  const { localHash: _localHash, ...rest } = snapshot
+  return { ...rest, text }
+}
 
 function deriveSync(snapshot: ReadySnapshot): ReadySnapshot {
-  if (snapshot.localHash === undefined || snapshot.latestSourceHash === undefined || snapshot.sourceStale) {
+  const localHash = snapshot.localHash
+  const latestSourceHash = snapshot.latestSourceHash
+  if (localHash === undefined || latestSourceHash === undefined || snapshot.sourceStale) {
     return { ...snapshot, syncStatus: 'unknown' }
   }
-  if (snapshot.localHash === snapshot.latestSourceHash) {
-    return { ...snapshot, baseText: snapshot.text, baseHash: snapshot.localHash,
-      ...(snapshot.latestSourceVersion === undefined ? {} : { baseVersion: snapshot.latestSourceVersion }), syncStatus: 'synced' }
+  let next = snapshot
+  if (next.latestSourceHash === next.baseHash) {
+    next = replaceBase(next, next.latestSourceText ?? next.baseText, next.baseHash, next.latestSourceVersion)
   }
-  if (snapshot.localHash === snapshot.baseHash) return { ...snapshot, syncStatus: 'source-ahead' }
-  if (snapshot.latestSourceHash === snapshot.baseHash) return { ...snapshot, syncStatus: 'local-ahead' }
-  return { ...snapshot, syncStatus: 'diverged' }
+  if (localHash === latestSourceHash) {
+    return {
+      ...replaceBase(next, next.latestSourceText ?? next.text, localHash, next.latestSourceVersion),
+      syncStatus: 'synced',
+    }
+  }
+  if (localHash === next.baseHash) return { ...next, syncStatus: 'source-ahead' }
+  if (latestSourceHash === next.baseHash) return { ...next, syncStatus: 'local-ahead' }
+  return { ...next, syncStatus: 'diverged' }
 }
 
 /** Authoritative registry for sources and independent document controllers. */
@@ -185,10 +251,11 @@ export class FileViewerService {
   private readonly sources = new Map<FileViewerSourceId, FileViewerSource>()
   private readonly instances = new Map<string, InstanceRecord>()
   private readonly refs = new Map<string, string>()
-  private readonly host?: FileViewerInstanceHost
-  private readonly storage?: FileViewerPreferenceStorage
+  private readonly host: FileViewerInstanceHost | undefined
+  private readonly storage: FileViewerPreferenceStorage | undefined
   private readonly debounceMs: number
   private readonly confirmDiscard: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
+  private readonly hashText: (text: string) => Promise<string>
   private nextInstance = 0
   private disposed = false
 
@@ -197,6 +264,7 @@ export class FileViewerService {
     this.storage = options.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage)
     this.debounceMs = options.automationDebounceMs ?? 700
     this.confirmDiscard = options.confirmDiscard ?? (() => false)
+    this.hashText = options.hashText ?? hashFileViewerText
   }
 
   /** Register a source until the returned disposer runs. */
@@ -213,85 +281,165 @@ export class FileViewerService {
       for (const record of this.instances.values()) {
         if (record.snapshot.ref.sourceId !== source.id) continue
         this.stop(record, new Error('source unloaded'))
-        record.snapshot = { ...record.snapshot, status: 'failed', operation: 'idle', failure: { code: 'source-unavailable' } }
+        if (record.snapshot.status === 'ready') {
+          record.pauseReason = 'failure'
+          record.snapshot = {
+            ...record.snapshot,
+            operation: 'idle',
+            sourceStale: true,
+            syncStatus: 'unknown',
+            saveSupported: false,
+            conditionalSaveSupported: false,
+            watchSupported: false,
+            externalOpenSupported: false,
+            automationPaused: true,
+            failure: { code: 'source-unavailable' },
+          }
+        } else {
+          record.snapshot = {
+            ...record.snapshot,
+            status: 'failed',
+            operation: 'idle',
+            failure: { code: 'source-unavailable' },
+          }
+        }
         this.notify(record)
       }
     }
   }
 
-  /** Open a new instance, or activate the existing instance for the exact ref. */
+  /** Open a new instance, or activate and retry the existing instance for the exact ref. */
   async open(ref: FileViewerDocumentRef): Promise<string> {
     this.assertLive()
     const existing = this.refs.get(keyOf(ref))
     if (existing !== undefined) {
+      const record = this.record(existing)
       this.host?.activate(existing, ref.sessionId)
+      if (record.snapshot.status === 'failed') {
+        const failure = await this.read(record, 'loading', 'initial')
+        if (failure !== undefined) throw new FileViewerOpenError(failure)
+        if (record.snapshot.status === 'failed') throw new FileViewerOpenError(record.snapshot.failure ?? { code: 'load-failed' })
+      }
       return existing
     }
+
     const instanceId = `text-editor-${++this.nextInstance}`
     const record: InstanceRecord = {
       snapshot: { instanceId, ref, title: ref.resourceId, status: 'loading', operation: 'loading' },
-      listeners: new Set(), read: { generation: 0 }, save: { generation: 0 }, external: { generation: 0 }, hashGeneration: 0,
+      listeners: new Set(),
+      read: { generation: 0, controller: undefined, kind: undefined },
+      save: { generation: 0, controller: undefined, kind: undefined },
+      external: { generation: 0, controller: undefined, kind: undefined },
+      hashGeneration: 0,
+      editGeneration: 0,
+      pauseReason: undefined,
+      watchSource: undefined,
+      watchDispose: undefined,
+      savePromise: undefined,
+      autoUpdateTimer: undefined,
+      autoSaveTimer: undefined,
     }
     this.instances.set(instanceId, record)
     this.refs.set(keyOf(ref), instanceId)
-    this.host?.open(instanceId, ref, ref.resourceId, () => this.close(instanceId))
-    await this.read(record, 'loading', true)
+    try {
+      this.host?.open(instanceId, ref, ref.resourceId, () => this.close(instanceId))
+    } catch (error: unknown) {
+      this.remove(instanceId, record, new Error('host open failed'))
+      throw error
+    }
+
+    const failure = await this.read(record, 'loading', 'initial')
+    if (failure !== undefined) throw new FileViewerOpenError(failure)
+    if (this.instances.get(instanceId) === record && record.snapshot.status === 'failed') {
+      throw new FileViewerOpenError(record.snapshot.failure ?? { code: 'load-failed' })
+    }
     return instanceId
   }
 
   /** Read one instance snapshot. */
-  snapshot(instanceId: string): FileViewerInstanceSnapshot { this.assertLive(); return this.record(instanceId).snapshot }
+  snapshot(instanceId: string): FileViewerInstanceSnapshot {
+    return this.record(instanceId).snapshot
+  }
 
   /** Subscribe to one instance. */
   subscribe(instanceId: string, listener: () => void): () => void {
-    this.assertLive(); const listeners = this.record(instanceId).listeners; listeners.add(listener); return () => { listeners.delete(listener) }
+    const listeners = this.record(instanceId).listeners
+    listeners.add(listener)
+    return () => { listeners.delete(listener) }
   }
 
-  /** Replace local text and schedule enabled automation. */
+  /** Replace local text and schedule enabled automation after its exact hash resolves. */
   edit(instanceId: string, text: string): void {
     const record = this.record(instanceId)
     if (record.snapshot.status !== 'ready') return
+    record.editGeneration += 1
     const generation = ++record.hashGeneration
-    record.snapshot = deriveSync({ ...clearFailure(record.snapshot), text, localHash: undefined })
+    record.snapshot = deriveSync(replaceLocalTextWithoutHash(record.snapshot, text))
     this.notify(record)
-    void hashFileViewerText(text).then(hash => {
-      if (this.instances.get(instanceId) !== record || record.hashGeneration !== generation || record.snapshot.status !== 'ready') return
-      record.snapshot = deriveSync({ ...record.snapshot, localHash: hash })
-      this.notify(record)
-      this.scheduleAutoSave(record)
-    })
+    void this.hashText(text).then(
+      hash => {
+        if (!this.hashCurrent(instanceId, record, generation)) return
+        let next = deriveSync({ ...record.snapshot, localHash: hash })
+        next = this.reconcilePause(record, next)
+        record.snapshot = next
+        this.notify(record)
+        this.scheduleAutomation(record, true)
+      },
+      error => {
+        if (!this.hashCurrent(instanceId, record, generation)) return
+        record.pauseReason = 'failure'
+        record.snapshot = {
+          ...record.snapshot,
+          syncStatus: 'unknown',
+          automationPaused: true,
+          failure: toFailure('hash-failed', error),
+        }
+        this.notify(record)
+        this.clearAutomationTimers(record)
+      },
+    )
   }
 
-  /** Save local text. */
-  async save(instanceId: string): Promise<void> { await this.saveRecord(this.record(instanceId), false, false) }
-  /** Read latest source even while local text is dirty. */
-  async refresh(instanceId: string): Promise<void> { await this.read(this.record(instanceId), 'refreshing', false) }
-  /** Publish local text against the latest observed source revision. */
-  async overwriteSource(instanceId: string): Promise<void> { await this.saveRecord(this.record(instanceId), false, true) }
+  /** Save local text only through a conditional source write. */
+  async save(instanceId: string): Promise<void> {
+    await this.saveRecord(this.record(instanceId), false, false)
+  }
 
-  /** Replace local text with latest observed source text. */
+  /** Read and manually pull latest source text when local text is clean. */
+  async refresh(instanceId: string): Promise<void> {
+    await this.read(this.record(instanceId), 'refreshing', 'manual')
+  }
+
+  /** Publish local text through the explicit overwrite path. */
+  async overwriteSource(instanceId: string): Promise<void> {
+    await this.saveRecord(this.record(instanceId), false, true)
+  }
+
+  /** Replace local text with the latest observed source text. */
   discardLocal(instanceId: string): void {
-    const record = this.record(instanceId); const value = record.snapshot
-    if (value.status !== 'ready' || value.latestSourceText === undefined || value.latestSourceHash === undefined) return
-    record.hashGeneration += 1
-    record.snapshot = { ...clearFailure(value), text: value.latestSourceText, localHash: value.latestSourceHash,
-      baseText: value.latestSourceText, baseHash: value.latestSourceHash,
-      ...(value.latestSourceVersion === undefined ? {} : { baseVersion: value.latestSourceVersion }),
-      syncStatus: 'synced', automationPaused: false }
-    this.notify(record)
+    this.pullLatest(this.record(instanceId))
   }
 
-  /** Change and persist an automation preference. */
+  /** Change and persist a capability-valid automation preference. */
   setAutomation(instanceId: string, name: keyof FileViewerAutomationPreferences, enabled: boolean): void {
     const record = this.record(instanceId)
     if (record.snapshot.status !== 'ready') return
+    if (enabled && name === 'autoUpdate' && !record.snapshot.watchSupported) {
+      throw new Error('file-viewer: automatic update requires source watch support')
+    }
+    if (enabled && name === 'autoSave' && !record.snapshot.conditionalSaveSupported) {
+      throw new Error('file-viewer: automatic save requires conditional save support')
+    }
     const automation = { ...record.snapshot.automation, [name]: enabled }
-    record.snapshot = { ...record.snapshot, automation, automationPaused: false }
-    try { this.storage?.setItem(preferenceKey(record.snapshot.ref), JSON.stringify(automation)) } catch { /* Memory value remains effective. */ }
+    record.snapshot = { ...record.snapshot, automation }
+    try {
+      this.storage?.setItem(preferenceKey(record.snapshot.ref), JSON.stringify(automation))
+    } catch {
+      // The validated in-memory preference remains effective when browser persistence is unavailable.
+    }
     if (!enabled) this.clearTimer(record, name)
     this.notify(record)
-    if (enabled && name === 'autoSave') this.scheduleAutoSave(record)
-    if (enabled && name === 'autoUpdate' && record.snapshot.sourceStale && !isFileViewerDirty(record.snapshot)) this.scheduleAutoUpdate(record)
+    this.scheduleAutomation(record, true)
   }
 
   /** Launch a source-declared location selector. */
@@ -304,27 +452,50 @@ export class FileViewerService {
 
   /** Open through the source external action. */
   async openExternal(instanceId: string): Promise<void> {
-    const record = this.record(instanceId); const value = record.snapshot
+    const record = this.record(instanceId)
+    const value = record.snapshot
     if (value.status !== 'ready') return
     const source = this.sources.get(value.ref.sourceId)
-    if (source?.openExternal === undefined) { record.snapshot = { ...value, failure: { code: 'external-open-unsupported' } }; this.notify(record); return }
-    const operation = this.begin(record.external)
-    record.snapshot = { ...clearFailure(value), operation: 'opening-external' }; this.notify(record)
+    if (source?.openExternal === undefined) {
+      record.snapshot = { ...value, failure: { code: 'external-open-unsupported' } }
+      this.notify(record)
+      return
+    }
+    const operation = this.begin(record.external, 'opening-external')
+    this.publishOperation(record)
     try {
       await source.openExternal(value.ref, operation.controller.signal)
-      if (this.current(record.external, operation) && record.snapshot.status === 'ready') { record.snapshot = { ...record.snapshot, operation: 'idle' }; this.notify(record) }
+      if (!this.complete(record.external, operation) || record.snapshot.status !== 'ready') return
+      record.snapshot = { ...clearFailure(record.snapshot), operation: this.visibleOperation(record) }
+      this.notify(record)
     } catch (error: unknown) {
-      if (this.current(record.external, operation) && record.snapshot.status === 'ready') {
-        record.snapshot = { ...record.snapshot, operation: 'idle', failure: toFailure('external-open-failed', error) }; this.notify(record)
+      if (!this.complete(record.external, operation) || record.snapshot.status !== 'ready') return
+      record.snapshot = {
+        ...record.snapshot,
+        operation: this.visibleOperation(record),
+        failure: toFailure('external-open-failed', error),
       }
-    } finally { this.finish(record.external, operation) }
+      this.notify(record)
+    }
   }
 
-  /** Veto dirty close unless confirmed, then dispose the instance. */
+  /** Veto dirty close unless the confirmation covers the current local text. */
   async close(instanceId: string): Promise<boolean> {
-    this.assertLive(); const record = this.instances.get(instanceId); if (record === undefined) return true
-    if (record.snapshot.status === 'ready' && isFileViewerDirty(record.snapshot) && !await this.confirmDiscard(record.snapshot)) return false
-    this.remove(instanceId, record, new Error('document closed')); return true
+    this.assertLive()
+    const record = this.instances.get(instanceId)
+    if (record === undefined) return true
+    const candidate = record.snapshot
+    const candidateEditGeneration = record.editGeneration
+    if (candidate.status === 'ready' && isFileViewerDirty(candidate)) {
+      if (!await this.confirmDiscard(candidate)) return false
+      if (this.instances.get(instanceId) !== record) return true
+      const current = record.snapshot
+      if (current.status === 'ready' && isFileViewerDirty(current)
+        && record.editGeneration !== candidateEditGeneration) return false
+    }
+    if (this.instances.get(instanceId) !== record) return true
+    this.remove(instanceId, record, new Error('document closed'))
+    return true
   }
 
   /** Abort all work and detach watches. */
@@ -335,110 +506,496 @@ export class FileViewerService {
     this.sources.clear()
   }
 
-  private async read(record: InstanceRecord, name: 'loading' | 'refreshing', initial: boolean): Promise<void> {
-    const source = this.sources.get(record.snapshot.ref.sourceId); const operation = this.begin(record.read)
-    record.snapshot = { ...clearFailure(record.snapshot), operation: name }; this.notify(record)
+  private async read(
+    record: InstanceRecord,
+    operationName: 'loading' | 'refreshing',
+    mode: 'initial' | 'manual' | 'observe',
+  ): Promise<FileViewerFailure | undefined> {
+    const source = this.sources.get(record.snapshot.ref.sourceId)
+    const operation = this.begin(record.read, operationName)
+    this.publishOperation(record)
     if (source === undefined) {
-      this.finish(record.read, operation); record.snapshot = { ...record.snapshot, status: 'failed', operation: 'idle', failure: { code: 'source-unavailable' } }; this.notify(record)
-      if (initial) throw new FileViewerOpenError(record.snapshot.failure); return
+      const failure = { code: 'source-unavailable' } as const
+      if (this.complete(record.read, operation)) this.publishReadFailure(record, failure)
+      return failure
     }
+
+    let loaded: FileViewerLoadedText
     try {
-      const loaded = await source.load(record.snapshot.ref, operation.controller.signal)
-      const hash = await hashFileViewerText(loaded.text)
-      if (!this.current(record.read, operation) || !this.instances.has(record.snapshot.instanceId)) return
-      this.applyLoaded(record, source, loaded, hash, initial)
+      loaded = await source.load(record.snapshot.ref, operation.controller.signal)
     } catch (error: unknown) {
-      if (!this.current(record.read, operation)) return
+      if (!this.complete(record.read, operation)) return undefined
       const failure = toFailure('load-failed', error)
-      record.snapshot = record.snapshot.status === 'ready'
-        ? { ...record.snapshot, operation: 'idle', sourceStale: true, syncStatus: 'unknown', failure, automationPaused: true }
-        : { ...record.snapshot, status: 'failed', operation: 'idle', failure }
-      this.notify(record); if (initial) throw new FileViewerOpenError(failure, { cause: error })
-    } finally { this.finish(record.read, operation) }
+      this.publishReadFailure(record, failure)
+      return failure
+    }
+
+    let hash: string
+    try {
+      hash = await this.hashText(loaded.text)
+    } catch (error: unknown) {
+      if (!this.complete(record.read, operation)) return undefined
+      const failure = toFailure('hash-failed', error)
+      this.publishReadFailure(record, failure)
+      return failure
+    }
+
+    if (!this.complete(record.read, operation) || this.instances.get(record.snapshot.instanceId) !== record) return undefined
+    this.applyObserved(record, source, loaded, hash, mode)
+    return undefined
   }
 
-  private applyLoaded(record: InstanceRecord, source: FileViewerSource, loaded: FileViewerLoadedText, hash: string, initial: boolean): void {
-    const previous = record.snapshot; const clean = previous.status !== 'ready' || !isFileViewerDirty(previous)
-    let preferences: FileViewerAutomationPreferences = DEFAULT_AUTOMATION
-    try { const raw = this.storage?.getItem(preferenceKey(previous.ref)); if (raw !== null && raw !== undefined) { const value = JSON.parse(raw) as Record<string, unknown>; preferences = { autoUpdate: value.autoUpdate === true, autoSave: value.autoSave === true } } } catch { /* Defaults remain. */ }
-    let next: ReadySnapshot = {
-      instanceId: previous.instanceId, ref: previous.ref, status: 'ready', title: loaded.title ?? previous.ref.resourceId, operation: 'idle',
-      text: clean ? loaded.text : previous.text, ...(clean ? { localHash: hash } : previous.localHash === undefined ? {} : { localHash: previous.localHash }),
-      baseText: initial || previous.status !== 'ready' ? loaded.text : previous.baseText,
-      baseHash: initial || previous.status !== 'ready' ? hash : previous.baseHash,
-      ...(initial || previous.status !== 'ready' ? (loaded.version === undefined ? {} : { baseVersion: loaded.version }) : (previous.baseVersion === undefined ? {} : { baseVersion: previous.baseVersion })),
-      latestSourceText: loaded.text, latestSourceHash: hash, ...(loaded.version === undefined ? {} : { latestSourceVersion: loaded.version }),
-      sourceStale: false, syncStatus: 'unknown', saveSupported: source.save !== undefined,
-      conditionalSaveSupported: source.save !== undefined && source.supportsConditionalSave === true,
-      watchSupported: source.watch !== undefined, externalOpenSupported: source.openExternal !== undefined,
-      ...(loaded.location === undefined ? {} : { location: loaded.location }),
-      automation: previous.status === 'ready' ? previous.automation : preferences, automationPaused: false,
+  private publishReadFailure(record: InstanceRecord, failure: FileViewerFailure): void {
+    record.pauseReason = 'failure'
+    record.snapshot = record.snapshot.status === 'ready'
+      ? {
+        ...record.snapshot,
+        operation: this.visibleOperation(record),
+        sourceStale: true,
+        syncStatus: 'unknown',
+        automationPaused: true,
+        failure,
+      }
+      : {
+        ...record.snapshot,
+        status: 'failed',
+        operation: this.visibleOperation(record),
+        failure,
+      }
+    this.notify(record)
+    this.clearAutomationTimers(record)
+  }
+
+  private applyObserved(
+    record: InstanceRecord,
+    source: FileViewerSource,
+    loaded: FileViewerLoadedText,
+    hash: string,
+    mode: 'initial' | 'manual' | 'observe',
+  ): void {
+    const previous = record.snapshot
+    const preferences = previous.status === 'ready' ? previous.automation : this.readPreferences(previous.ref, source)
+    let next: ReadySnapshot
+    if (previous.status !== 'ready') {
+      next = {
+        instanceId: previous.instanceId,
+        ref: previous.ref,
+        status: 'ready',
+        title: loaded.title ?? previous.ref.resourceId,
+        operation: this.visibleOperation(record),
+        text: loaded.text,
+        localHash: hash,
+        baseText: loaded.text,
+        baseHash: hash,
+        ...(loaded.version === undefined ? {} : { baseVersion: loaded.version }),
+        latestSourceText: loaded.text,
+        latestSourceHash: hash,
+        ...(loaded.version === undefined ? {} : { latestSourceVersion: loaded.version }),
+        sourceStale: false,
+        syncStatus: 'synced',
+        saveSupported: source.save !== undefined,
+        conditionalSaveSupported: source.save !== undefined && source.supportsConditionalSave === true,
+        watchSupported: source.watch !== undefined,
+        externalOpenSupported: source.openExternal !== undefined,
+        ...(loaded.location === undefined ? {} : { location: loaded.location }),
+        automation: preferences,
+        automationPaused: false,
+      }
+    } else {
+      const pull = mode === 'manual' && !isFileViewerDirty(previous)
+      next = replaceLatestSource({
+        ...clearFailure(previous),
+        title: loaded.title ?? previous.ref.resourceId,
+        operation: this.visibleOperation(record),
+        sourceStale: false,
+        saveSupported: source.save !== undefined,
+        conditionalSaveSupported: source.save !== undefined && source.supportsConditionalSave === true,
+        watchSupported: source.watch !== undefined,
+        externalOpenSupported: source.openExternal !== undefined,
+      }, loaded, hash)
+      if (pull) {
+        record.hashGeneration += 1
+        next = replaceBase({ ...next, text: loaded.text, localHash: hash }, loaded.text, hash, loaded.version)
+      }
+      next = deriveSync(next)
     }
-    next = deriveSync(next); record.snapshot = next; this.host?.update(next.instanceId, next.ref.sessionId, next.title)
-    record.watchDispose?.(); record.watchDispose = source.watch?.(next.ref, event => { void this.onWatch(record, source, event) })
-    this.notify(record); this.scheduleAutoSave(record)
+    record.pauseReason = undefined
+    next = this.reconcilePause(record, next)
+    record.snapshot = next
+    this.host?.update(next.instanceId, next.ref.sessionId, next.title)
+    this.attachWatch(record, source)
+    this.notify(record)
+    this.scheduleAutomation(record, true)
+  }
+
+  private attachWatch(record: InstanceRecord, source: FileViewerSource): void {
+    if (source.watch === undefined || record.watchSource === source) return
+    this.detachWatch(record)
+    record.watchSource = source
+    try {
+      record.watchDispose = source.watch(record.snapshot.ref, event => {
+        void this.onWatch(record, source, event).catch(error => {
+          if (!this.watchCurrent(record, source)) return
+          record.pauseReason = 'failure'
+          record.snapshot = {
+            ...record.snapshot,
+            automationPaused: true,
+            failure: toFailure('watch-failed', error),
+          }
+          this.notify(record)
+          this.clearAutomationTimers(record)
+        })
+      })
+    } catch (error: unknown) {
+      record.watchSource = undefined
+      record.watchDispose = undefined
+      record.pauseReason = 'failure'
+      if (record.snapshot.status === 'ready') {
+        record.snapshot = {
+          ...record.snapshot,
+          watchSupported: false,
+          automation: { ...record.snapshot.automation, autoUpdate: false },
+          automationPaused: true,
+          failure: toFailure('watch-failed', error),
+        }
+      }
+      this.clearTimer(record, 'autoUpdate')
+    }
   }
 
   private async onWatch(record: InstanceRecord, source: FileViewerSource, event: FileViewerWatchEvent): Promise<void> {
-    if (this.instances.get(record.snapshot.instanceId) !== record || this.sources.get(source.id) !== source || record.snapshot.status !== 'ready') return
+    if (!this.watchCurrent(record, source)) return
     if (event.kind === 'invalidate') {
-      record.snapshot = { ...record.snapshot, sourceStale: true, syncStatus: 'unknown' }; this.notify(record)
-      if (record.snapshot.automation.autoUpdate && !record.snapshot.automationPaused && !isFileViewerDirty(record.snapshot)) this.scheduleAutoUpdate(record)
+      record.snapshot = { ...record.snapshot, sourceStale: true, syncStatus: 'unknown' }
+      this.notify(record)
+      this.clearTimer(record, 'autoUpdate')
+      await this.read(record, 'refreshing', 'observe')
       return
     }
-    const generation = ++record.read.generation; const hash = await hashFileViewerText(event.snapshot.text)
-    if (this.instances.get(record.snapshot.instanceId) === record && record.read.generation === generation) this.applyLoaded(record, source, event.snapshot, hash, false)
-  }
 
-  private async saveRecord(record: InstanceRecord, automatic: boolean, overwrite: boolean): Promise<void> {
-    const value = record.snapshot; if (value.status !== 'ready') return
-    const source = this.sources.get(value.ref.sourceId)
-    if (source?.save === undefined) { record.snapshot = { ...value, failure: { code: 'save-unsupported' } }; this.notify(record); return }
-    if (automatic && (!value.conditionalSaveSupported || value.latestSourceHash !== value.baseHash || value.sourceStale)) return
-    if (overwrite && (!value.conditionalSaveSupported || value.latestSourceVersion === undefined)) return
-    const operation = this.begin(record.save); const savedText = value.text; const savedHash = value.localHash ?? await hashFileViewerText(savedText)
-    if (!this.current(record.save, operation) || record.snapshot.status !== 'ready') return
-    record.snapshot = { ...clearFailure(record.snapshot), operation: 'saving' }; this.notify(record)
+    this.cancel(record.read, new Error('source snapshot superseded read'))
+    const generation = record.read.generation
+    let hash: string
     try {
-      const saved = await source.save(value.ref, savedText, overwrite ? value.latestSourceVersion : value.baseVersion, operation.controller.signal)
-      if (!this.current(record.save, operation) || record.snapshot.status !== 'ready') return
-      record.snapshot = deriveSync({ ...clearFailure(record.snapshot), operation: 'idle', baseText: savedText, baseHash: savedHash,
-        ...(saved.version === undefined ? {} : { baseVersion: saved.version }), latestSourceText: savedText, latestSourceHash: savedHash,
-        ...(saved.version === undefined ? {} : { latestSourceVersion: saved.version }), sourceStale: false, automationPaused: false })
-      this.notify(record); this.scheduleAutoSave(record)
+      hash = await this.hashText(event.snapshot.text)
     } catch (error: unknown) {
-      if (this.current(record.save, operation) && record.snapshot.status === 'ready') {
-        record.snapshot = { ...record.snapshot, operation: 'idle', failure: toFailure('save-failed', error), automationPaused: automatic || record.snapshot.automation.autoSave }; this.notify(record)
+      if (!this.watchHashCurrent(record, source, generation)) return
+      record.pauseReason = 'failure'
+      record.snapshot = {
+        ...record.snapshot,
+        sourceStale: true,
+        syncStatus: 'unknown',
+        automationPaused: true,
+        failure: toFailure('hash-failed', error),
       }
-    } finally { this.finish(record.save, operation) }
+      this.notify(record)
+      this.clearAutomationTimers(record)
+      return
+    }
+    if (!this.watchHashCurrent(record, source, generation)) return
+    this.applyObserved(record, source, event.snapshot, hash, 'observe')
   }
 
-  private scheduleAutoUpdate(record: InstanceRecord): void {
-    clearTimeout(record.autoUpdateTimer); record.autoUpdateTimer = setTimeout(() => {
-      record.autoUpdateTimer = undefined
-      if (record.snapshot.status === 'ready' && !isFileViewerDirty(record.snapshot) && !record.snapshot.automationPaused) void this.read(record, 'refreshing', false)
-    }, this.debounceMs)
+  private saveRecord(record: InstanceRecord, automatic: boolean, overwrite: boolean): Promise<void> {
+    if (record.savePromise !== undefined) return record.savePromise
+    const promise = this.runSave(record, automatic, overwrite)
+    record.savePromise = promise
+    const release = (): void => {
+      if (record.savePromise === promise) record.savePromise = undefined
+    }
+    void promise.then(release, release)
+    return promise
   }
-  private scheduleAutoSave(record: InstanceRecord): void {
-    if (record.snapshot.status !== 'ready') return
+
+  private async runSave(record: InstanceRecord, automatic: boolean, overwrite: boolean): Promise<void> {
     const value = record.snapshot
-    if (!value.automation.autoSave || value.automationPaused || !value.conditionalSaveSupported || value.localHash === undefined
-      || value.localHash === value.baseHash || value.latestSourceHash !== value.baseHash || value.sourceStale) return
-    clearTimeout(record.autoSaveTimer); record.autoSaveTimer = setTimeout(() => { record.autoSaveTimer = undefined; void this.saveRecord(record, true, false) }, this.debounceMs)
+    if (value.status !== 'ready') return
+    const source = this.sources.get(value.ref.sourceId)
+    if (source?.save === undefined) {
+      this.publishSaveBlock(record, { code: 'save-unsupported' })
+      return
+    }
+    if (automatic && !this.canAutoSave(value)) return
+    if (!overwrite && !value.conditionalSaveSupported) {
+      this.publishSaveBlock(record, {
+        code: 'save-conflict',
+        message: 'source requires explicit overwrite because conditional save is unavailable',
+      })
+      return
+    }
+    if (!overwrite && (value.sourceStale || value.latestSourceHash === undefined
+      || value.latestSourceHash !== value.baseHash)) {
+      this.publishSaveBlock(record, { code: 'save-conflict', message: 'source changed since the local base was observed' })
+      return
+    }
+    if (!overwrite && !isFileViewerDirty(value)) return
+
+    const operation = this.begin(record.save, 'saving')
+    this.clearTimer(record, 'autoSave')
+    this.publishOperation(record)
+    const savedText = value.text
+    let savedHash = value.localHash
+    if (savedHash === undefined) {
+      try {
+        savedHash = await this.hashText(savedText)
+      } catch (error: unknown) {
+        if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
+        record.pauseReason = 'failure'
+        record.snapshot = {
+          ...record.snapshot,
+          operation: this.visibleOperation(record),
+          automationPaused: true,
+          failure: toFailure('hash-failed', error),
+        }
+        this.notify(record)
+        return
+      }
+    }
+    if (!this.current(record.save, operation) || record.snapshot.status !== 'ready') return
+
+    const current = record.snapshot
+    if (!overwrite && (current.sourceStale || current.latestSourceHash === undefined
+      || current.latestSourceHash !== current.baseHash)) {
+      if (this.complete(record.save, operation)) {
+        this.publishSaveBlock(record, { code: 'save-conflict', message: 'source changed while preparing the save' })
+      }
+      return
+    }
+    const version = overwrite ? current.latestSourceVersion : current.baseVersion
+    try {
+      const saved = await source.save(value.ref, savedText, version, operation.controller.signal)
+      if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
+      this.cancel(record.read, new Error('successful save superseded source read'))
+      record.pauseReason = undefined
+      let next = replaceLatestSource({
+        ...clearFailure(record.snapshot),
+        operation: this.visibleOperation(record),
+        sourceStale: false,
+      }, { text: savedText, version: saved.version }, savedHash)
+      next = replaceBase(next, savedText, savedHash, saved.version)
+      next = this.reconcilePause(record, deriveSync(next))
+      record.snapshot = next
+      this.notify(record)
+      this.scheduleAutomation(record, true)
+    } catch (error: unknown) {
+      if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
+      record.pauseReason = 'failure'
+      record.snapshot = {
+        ...record.snapshot,
+        operation: this.visibleOperation(record),
+        automationPaused: true,
+        failure: toFailure('save-failed', error),
+      }
+      this.notify(record)
+      this.clearAutomationTimers(record)
+    }
   }
+
+  private publishSaveBlock(record: InstanceRecord, failure: FileViewerFailure): void {
+    if (record.snapshot.status !== 'ready') return
+    record.pauseReason = failure.code === 'save-conflict' ? 'conflict' : 'failure'
+    record.snapshot = { ...record.snapshot, automationPaused: true, failure }
+    this.notify(record)
+    this.clearAutomationTimers(record)
+  }
+
+  private pullLatest(record: InstanceRecord): void {
+    const value = record.snapshot
+    if (value.status !== 'ready' || value.sourceStale
+      || value.latestSourceText === undefined || value.latestSourceHash === undefined) return
+    record.hashGeneration += 1
+    record.pauseReason = undefined
+    let next = replaceBase({
+      ...clearFailure(value),
+      text: value.latestSourceText,
+      localHash: value.latestSourceHash,
+      syncStatus: 'synced',
+      automationPaused: false,
+    }, value.latestSourceText, value.latestSourceHash, value.latestSourceVersion)
+    next = this.reconcilePause(record, deriveSync(next))
+    record.snapshot = next
+    this.notify(record)
+    this.scheduleAutomation(record, true)
+  }
+
+  private readPreferences(ref: FileViewerDocumentRef, source: FileViewerSource): FileViewerAutomationPreferences {
+    let stored: Record<string, unknown> = DEFAULT_AUTOMATION
+    try {
+      const raw = this.storage?.getItem(preferenceKey(ref))
+      if (raw !== null && raw !== undefined) stored = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      // Malformed or unavailable browser persistence uses the documented defaults.
+    }
+    return {
+      autoUpdate: stored.autoUpdate === true && source.watch !== undefined,
+      autoSave: stored.autoSave === true && source.save !== undefined && source.supportsConditionalSave === true,
+    }
+  }
+
+  private scheduleAutomation(record: InstanceRecord, reset: boolean): void {
+    if (record.snapshot.status !== 'ready') return
+    if (this.canAutoUpdate(record.snapshot)) {
+      if (reset) clearTimeout(record.autoUpdateTimer)
+      if (reset || record.autoUpdateTimer === undefined) {
+        record.autoUpdateTimer = setTimeout(() => {
+          record.autoUpdateTimer = undefined
+          if (record.snapshot.status === 'ready' && this.canAutoUpdate(record.snapshot)) this.pullLatest(record)
+        }, this.debounceMs)
+      }
+    } else {
+      this.clearTimer(record, 'autoUpdate')
+    }
+
+    if (this.canAutoSave(record.snapshot)) {
+      if (reset) clearTimeout(record.autoSaveTimer)
+      if (reset || record.autoSaveTimer === undefined) {
+        record.autoSaveTimer = setTimeout(() => {
+          record.autoSaveTimer = undefined
+          if (record.snapshot.status === 'ready' && this.canAutoSave(record.snapshot)) {
+            void this.saveRecord(record, true, false)
+          }
+        }, this.debounceMs)
+      }
+    } else {
+      this.clearTimer(record, 'autoSave')
+    }
+  }
+
+  private canAutoUpdate(value: ReadySnapshot): boolean {
+    return value.automation.autoUpdate && value.watchSupported && !value.automationPaused
+      && !value.sourceStale && value.syncStatus === 'source-ahead' && !isFileViewerDirty(value)
+      && value.latestSourceText !== undefined && value.latestSourceHash !== undefined
+  }
+
+  private canAutoSave(value: ReadySnapshot): boolean {
+    return value.automation.autoSave && value.conditionalSaveSupported && !value.automationPaused
+      && !value.sourceStale && value.syncStatus === 'local-ahead' && value.localHash !== undefined
+      && value.latestSourceHash === value.baseHash
+  }
+
+  private reconcilePause(record: InstanceRecord, value: ReadySnapshot): ReadySnapshot {
+    if (value.syncStatus === 'diverged') {
+      if (record.pauseReason !== 'failure') record.pauseReason = 'conflict'
+    } else if (record.pauseReason === 'conflict' && value.syncStatus !== 'unknown') {
+      record.pauseReason = undefined
+    }
+    return { ...value, automationPaused: record.pauseReason !== undefined }
+  }
+
   private clearTimer(record: InstanceRecord, name: keyof FileViewerAutomationPreferences): void {
-    if (name === 'autoUpdate') { clearTimeout(record.autoUpdateTimer); record.autoUpdateTimer = undefined }
-    else { clearTimeout(record.autoSaveTimer); record.autoSaveTimer = undefined }
+    if (name === 'autoUpdate') {
+      clearTimeout(record.autoUpdateTimer)
+      record.autoUpdateTimer = undefined
+    } else {
+      clearTimeout(record.autoSaveTimer)
+      record.autoSaveTimer = undefined
+    }
   }
-  private remove(id: string, record: InstanceRecord, reason: Error): void { record.listeners.clear(); this.stop(record, reason); this.instances.delete(id); this.refs.delete(keyOf(record.snapshot.ref)) }
+
+  private clearAutomationTimers(record: InstanceRecord): void {
+    this.clearTimer(record, 'autoUpdate')
+    this.clearTimer(record, 'autoSave')
+  }
+
+  private remove(id: string, record: InstanceRecord, reason: Error): void {
+    record.listeners.clear()
+    this.stop(record, reason)
+    this.instances.delete(id)
+    if (this.refs.get(keyOf(record.snapshot.ref)) === id) this.refs.delete(keyOf(record.snapshot.ref))
+  }
+
   private stop(record: InstanceRecord, reason: Error): void {
-    for (const state of [record.read, record.save, record.external]) { state.generation += 1; state.controller?.abort(reason); state.controller = undefined }
-    record.watchDispose?.(); record.watchDispose = undefined; clearTimeout(record.autoUpdateTimer); clearTimeout(record.autoSaveTimer)
+    for (const state of [record.read, record.save, record.external]) this.cancel(state, reason)
+    this.detachWatch(record)
+    record.savePromise = undefined
+    this.clearAutomationTimers(record)
   }
-  private record(id: string): InstanceRecord { this.assertLive(); const value = this.instances.get(id); if (value === undefined) throw new Error(`file-viewer: unknown instance "${id}"`); return value }
-  private begin(state: OperationState) { state.generation += 1; state.controller?.abort(new Error('superseded')); const operation = { generation: state.generation, controller: new AbortController() }; state.controller = operation.controller; return operation }
-  private current(state: OperationState, operation: { generation: number; controller: AbortController }): boolean { return !this.disposed && state.generation === operation.generation && state.controller === operation.controller && !operation.controller.signal.aborted }
-  private finish(state: OperationState, operation: { controller: AbortController }): void { if (state.controller === operation.controller) state.controller = undefined }
-  private notify(record: InstanceRecord): void { for (const listener of record.listeners) { try { listener() } catch { /* A subscriber cannot starve later subscribers. */ } } }
-  private assertLive(): void { if (this.disposed) throw new Error('file-viewer: service is disposed') }
+
+  private detachWatch(record: InstanceRecord): void {
+    const dispose = record.watchDispose
+    record.watchDispose = undefined
+    record.watchSource = undefined
+    if (dispose === undefined) return
+    try {
+      dispose()
+    } catch {
+      // A source-owned watch disposer cannot prevent the viewer from reaching a detached state.
+    }
+  }
+
+  private record(id: string): InstanceRecord {
+    this.assertLive()
+    const value = this.instances.get(id)
+    if (value === undefined) throw new Error(`file-viewer: unknown instance "${id}"`)
+    return value
+  }
+
+  private begin(state: OperationState, kind: FileViewerOperation): ActiveOperation {
+    this.cancel(state, new Error('superseded'))
+    const operation = { generation: state.generation, controller: new AbortController() }
+    state.controller = operation.controller
+    state.kind = kind
+    return operation
+  }
+
+  private cancel(state: OperationState, reason: Error): void {
+    state.generation += 1
+    state.controller?.abort(reason)
+    state.controller = undefined
+    state.kind = undefined
+  }
+
+  private current(state: OperationState, operation: ActiveOperation): boolean {
+    return !this.disposed && state.generation === operation.generation
+      && state.controller === operation.controller && !operation.controller.signal.aborted
+  }
+
+  private complete(state: OperationState, operation: ActiveOperation): boolean {
+    if (!this.current(state, operation)) return false
+    state.controller = undefined
+    state.kind = undefined
+    return true
+  }
+
+  private visibleOperation(record: InstanceRecord): FileViewerOperation {
+    return record.save.kind ?? record.read.kind ?? record.external.kind ?? 'idle'
+  }
+
+  private publishOperation(record: InstanceRecord): void {
+    record.snapshot = { ...record.snapshot, operation: this.visibleOperation(record) }
+    this.notify(record)
+  }
+
+  private hashCurrent(
+    instanceId: string,
+    record: InstanceRecord,
+    generation: number,
+  ): record is InstanceRecord & { snapshot: ReadySnapshot } {
+    return this.instances.get(instanceId) === record && record.hashGeneration === generation
+      && record.snapshot.status === 'ready'
+  }
+
+  private watchCurrent(record: InstanceRecord, source: FileViewerSource): record is InstanceRecord & { snapshot: ReadySnapshot } {
+    return this.instances.get(record.snapshot.instanceId) === record
+      && this.sources.get(source.id) === source && record.watchSource === source
+      && record.snapshot.status === 'ready'
+  }
+
+  private watchHashCurrent(record: InstanceRecord, source: FileViewerSource, generation: number): boolean {
+    return this.watchCurrent(record, source) && record.read.generation === generation
+  }
+
+  private notify(record: InstanceRecord): void {
+    for (const listener of record.listeners) {
+      try {
+        listener()
+      } catch {
+        // A subscriber cannot starve later subscribers.
+      }
+    }
+  }
+
+  private assertLive(): void {
+    if (this.disposed) throw new Error('file-viewer: service is disposed')
+  }
 }
