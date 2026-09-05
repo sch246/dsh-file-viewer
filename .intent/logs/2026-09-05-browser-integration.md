@@ -1,0 +1,5 @@
+# Browser integration verification
+
+The viewer's source location occupies the second row without a duplicated resource heading. Read-only sources omit Save, ordinary source changes are distinct from divergence, and remounting CodeMirror uses the instance id so undo history cannot leak into a different document. Page suspension flushes pending local Base/Local persistence without disposing reusable instances.
+
+The private Web profile exercised real filesystem manual save, source observation without forced pull, manual update, automatic save and update, edit-back hash equality, divergent Base/Local/Source comparison, confirmed overwrite and independent alpha/beta editor buffers. Provider disposal during a development rebuild retained local text with an explicit unavailable state. Browser-driven source location selection reopened the separate file manager. The final controller and browser-entry regressions pass in the 45-test suite; builds use the candidate alpha.2 Host and public multi-instance sidebar API.

@@ -43,6 +43,11 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   })
   const face: FileViewerClientService = createFileViewerClientService(runtime, ctx.rightSidebar)
   ctx.provide('fileViewer', face)
+  const offPagePersistence = ctx.effect(() => {
+    const flush = () => { runtime.flushDrafts() }
+    window.addEventListener('pagehide', flush)
+    return () => { window.removeEventListener('pagehide', flush) }
+  }, 'file-viewer: flush drafts before page suspension')
 
   let editorModule: ReturnType<typeof asFileViewerEditorModule> | undefined
   let editorRequest: Promise<ReturnType<typeof asFileViewerEditorModule>> | undefined
@@ -88,6 +93,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   }, FileViewerPanel))
 
   return () => {
+    offPagePersistence()
     offView()
     offPresentation()
     runtime.dispose()

@@ -551,6 +551,12 @@ export class FileViewerService {
     return true
   }
 
+  /** Flush current text before browser page suspension without disposing reusable instances. */
+  flushDrafts(): void {
+    if (this.disposed) return
+    for (const record of this.instances.values()) this.flushDraft(record)
+  }
+
   /** Abort all work and detach watches. */
   dispose(): void {
     if (this.disposed) return

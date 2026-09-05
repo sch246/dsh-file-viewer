@@ -6,6 +6,8 @@ import type { RightSidebarService } from '@dsh-external/dsh-right-sidebar/client
 import { describe, expect, it, vi } from 'vitest'
 import { apply, inject } from '../src/client/index.ts'
 import { FILE_VIEWER_VIEW_ID } from '../src/client/face.ts'
+import { FileViewerSourceId } from '../src/client/service.ts'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 describe('file viewer browser plugin', () => {
   it('registers one source-neutral workbench view without materializing CodeMirror', async () => {
@@ -38,9 +40,20 @@ describe('file viewer browser plugin', () => {
     ])
     expect(importModule).not.toHaveBeenCalled()
 
+    const sourceId = FileViewerSourceId('pagehide-test')
+    const offSource = ctx.fileViewer.registerSource({ id: sourceId, load: async () => ({ text: 'base' }) })
+    const ref = { sessionId: 'pagehide-session' as SessionId, sourceId, resourceId: 'memory' }
+    const id = await ctx.fileViewer.open(ref)
+    ctx.fileViewer.edit(id, 'last keystroke')
+    window.dispatchEvent(new Event('pagehide'))
+    const key = `dsh-file-viewer:draft:${JSON.stringify([ref.sessionId, ref.sourceId, ref.resourceId])}`
+    expect(JSON.parse(localStorage.getItem(key) ?? 'null')).toMatchObject({ baseText: 'base', localText: 'last keystroke' })
+    offSource()
+
     await plugin.dispose()
     expect(slots.entries('rightbar.view')).toEqual([])
     offRoot()
     await slotsFiber.dispose()
+    localStorage.removeItem(key)
   })
 })
