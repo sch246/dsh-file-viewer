@@ -43,4 +43,4 @@ Provide a Session-aware, source-neutral text editor in the DeepSeek Harness Web 
 
 ## Evidence status
 
-Source and focused tests define this revision. The installation status in `STATE.json` records an earlier live revision and is not evidence for this source-defined multi-instance behavior. No current realization lock or user acceptance is recorded.
+Source and focused tests define this revision. Local Web installation and browser evidence are recorded in [the deployment log](../logs/2026-09-05-live-workbench.md). No accepted realization lock or user visual acceptance is recorded.

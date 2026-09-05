@@ -1,0 +1,5 @@
+# Local Web activation
+
+Source revision `4bc2a097d5b98d20468c5cd777b3896880e474e5` is installed at `/root/dsh-file-viewer`. The viewer and lazy editor dependencies were installed together with the multi-instance sidebar and file manager through the atomic Web-profile CLI transaction. Both browser entries occur once. The viewer Client SHA-256 `c246018744720e385735e545daf4f90a7dbef87e841bd47be27994c44d01cebe` matches the private-tested candidate, and dsh-web was restarted under existing user authority.
+
+The private real-file browser passed manual/automatic synchronization, three-way divergence, hash-based edit-back equality, independent document buffers, provider selector navigation and immediate-page-reload draft recovery. The cold real Web passed opening a file and switching away/back between established sessions with sidebar open/maximization and the active document retained, with no page errors. The 45-test suite covers memory providers, persistence failures and browser pagehide flushing. Live acceptance did not modify a user file. This is local deployment evidence, not user visual acceptance or a portable accepted realization.
