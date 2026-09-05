@@ -1,0 +1,9 @@
+# Generic resource workbench deployment
+
+The user authorized installation and Web restart after isolated verification. Viewer/editor source `08f40e1c57ff171388e707a1eab8428631dcc89d` was verified with sidebar `24207ab593aa516678936666d403238db2bdce9a` and manager `e7da9510f9e1c9ae8ce1f713e6dcfb7544142d95` in a private Home reproducing the full live composition. All 75 viewer/editor tests, typecheck and the owned build passed.
+
+The private browser exercised file and memory sources, shared text across groups, preview pinning, exact edit-revert status, manual and automatic synchronization, inherited defaults, conflict pause, dirty-close veto, draft recovery, source selector dispatch, and SVG image/text switching with retained drafts. The final sidebar drag test compared exact model text and found no document mutation. A content-only memory source retained its caller-provided display name.
+
+The reviewed source was fast-forwarded into `/root/dsh-file-viewer` and rebuilt against `/root/deepseek-harness` while the managed Web service was stopped. One profile transaction added the viewer and editor together with sidebar and manager. The editor remains a plain dependency. Manifest, lockfile, realpath, package listing, Bundle membership and composed configuration checks passed; the final viewer and editor browser bundles match the private artifacts byte for byte.
+
+The authorized service restart completed with MainPID `1913261` and zero automatic restarts. A fresh live browser loaded both entries once and rendered the existing Host README in a separate group beside Files, without page/console/request errors or file edits. No Harness source changed. The sidebar's existing global catalog limitation and unrehearsed grouped-workbench uninstall remain outside this local activation evidence; no user visual acceptance or accepted realization lock is claimed.

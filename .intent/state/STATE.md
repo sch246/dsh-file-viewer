@@ -47,4 +47,4 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 
 ## Evidence status
 
-Source, focused tests and candidate builds define this revision. [The previous deployment log](../logs/2026-09-05-live-workbench.md) applies only to the superseded text-only revision. The generic resource revision is not installed or activated and has no accepted realization lock or user visual acceptance.
+Source, focused tests and builds define this revision. [The generic deployment log](../logs/2026-09-05-generic-workbench-deployment.md) records local installation, authorized activation and bounded private/live browser verification. The revision has no accepted realization lock or user visual acceptance.
