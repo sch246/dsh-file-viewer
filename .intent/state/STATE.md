@@ -1,6 +1,6 @@
 # File viewer current intended state
 
-Status: source-defined revision under [the source-neutral editor decision](../logs/2026-09-05-source-neutral-editor-workbench.md); no accepted realization lock.
+Status: source-defined revision under [the browser draft persistence decision](../logs/2026-09-05-editor-draft-persistence.md); no accepted realization lock.
 
 ## Intent
 
@@ -13,6 +13,7 @@ Provide a Session-aware, source-neutral text editor in the DeepSeek Harness Web 
 - A source owns canonical text, resource ids, optional title and location, opaque revision values, loading, optional guarded saving, optional watching and optional external opening. Duplicate live source ids fail.
 - Manual Update observes the latest source while preserving local edits. Manual Save uses conditional writes; a writable source without conditional writes requires explicit overwrite confirmation. Automatic Update requires watching; automatic Save requires conditional writes. Their preferences are independent and persisted per resource.
 - Exact hashes classify synchronized, local-ahead, source-ahead, diverged and unknown states. A conflict retains Base, Local and Source text, pauses automation and offers confirmed Overwrite source or Discard local actions.
+- Browser-local draft records retain exact Base and Local text under the complete document identity. Explicit reopening freshly loads Source and recomputes all three hashes; provider revisions and transient failures remain runtime-only. Accepted close removes the record, while Client disposal flushes pending retention.
 - The right-sidebar workbench owns instance tabs, activation and close gestures. The viewer registers one static `text-editor` renderer. Dirty close requires confirmation.
 - Optional source locations remain opaque. A location can display a label and segments; its selector id launches another right-sidebar feature with an optional source-owned selection hint.
 - `@dsh-external/dsh-file-viewer-editor` owns CodeMirror dependencies and editor construction. Source state updates reuse the mounted view, preserve bounded cursor positions and do not enter undo history.
@@ -20,7 +21,7 @@ Provide a Session-aware, source-neutral text editor in the DeepSeek Harness Web 
 
 ## Acceptance criteria
 
-- `VIEWER-001`: One Session can retain and switch among multiple independently edited resources; opening an exact existing identity activates it without reloading.
+- `VIEWER-001`: One Session can retain and switch among multiple independently edited resources; opening an exact live identity activates it without reloading, while reopening after Client recreation restores its Base and Local text against a fresh Source observation.
 - `VIEWER-002`: A Client fixture can register an in-memory source, open and save a resource, watch an external change, dispose the source and retain explicit source-unavailable state without receiving store setters.
 - `VIEWER-003`: Manual and automatic synchronization derive from exact base/local/source text hashes, suppress stale completions and pause automation after conflicts or operation failures.
 - `VIEWER-004`: The UI gates automatic controls by watch and conditional-save capabilities, exposes source location selectors, saves immediately on `Ctrl+S` or `Cmd+S`, and requires confirmation for destructive conflict resolution and dirty close.

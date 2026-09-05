@@ -194,8 +194,13 @@ class MemorySource implements FileViewerSource {
 
 class MemoryStorage {
   readonly values = new Map<string, string>()
+  readonly setCalls: Array<{ readonly key: string; readonly value: string }> = []
   getItem(key: string): string | null { return this.values.get(key) ?? null }
-  setItem(key: string, value: string): void { this.values.set(key, value) }
+  setItem(key: string, value: string): void {
+    this.setCalls.push({ key, value })
+    this.values.set(key, value)
+  }
+  removeItem(key: string): void { this.values.delete(key) }
 }
 
 class MemoryHost implements FileViewerInstanceHost {
@@ -237,6 +242,14 @@ function sid(value: string): SessionId {
 
 function ref(sessionId: SessionId, source: FileViewerSource, resourceId: string): FileViewerDocumentRef {
   return { sessionId, sourceId: source.id, resourceId }
+}
+
+function draftKey(documentRef: FileViewerDocumentRef): string {
+  return `dsh-file-viewer:draft:${JSON.stringify([
+    documentRef.sessionId,
+    documentRef.sourceId,
+    documentRef.resourceId,
+  ])}`
 }
 
 function ready(service: FileViewerService, instanceId: string): Extract<FileViewerInstanceSnapshot, { status: 'ready' }> {
@@ -507,6 +520,227 @@ describe('FileViewerService', () => {
     secondService.registerSource(capable)
     const restored = await secondService.open(ref(sid('second'), capable, 'one'))
     expect(ready(secondService, restored).automation).toEqual({ autoUpdate: true, autoSave: true })
+  })
+
+  it('debounces full-ref drafts and restores local-ahead content against a fresh source read', async () => {
+    vi.useFakeTimers()
+    const storage = new MemoryStorage()
+    const source = new MemorySource('memory')
+    const sourceVersion = source.put('one', 'base')
+    const documentRef = ref(sid('session'), source, 'one')
+    const firstService = new FileViewerService({
+      storage,
+      persistenceDebounceMs: 20,
+      hashText: identityHash,
+    })
+    firstService.registerSource(source)
+    const first = await firstService.open(documentRef)
+    firstService.edit(first, 'first')
+    firstService.edit(first, 'local')
+    await settle()
+
+    expect(storage.values.has(draftKey(documentRef))).toBe(false)
+    await vi.advanceTimersByTimeAsync(19)
+    expect(storage.values.has(draftKey(documentRef))).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(JSON.parse(storage.values.get(draftKey(documentRef))!)).toEqual({
+      format: 1,
+      baseText: 'base',
+      localText: 'local',
+    })
+    expect(storage.setCalls.filter(call => call.key === draftKey(documentRef))).toHaveLength(1)
+    firstService.dispose()
+
+    const secondService = new FileViewerService({ storage, hashText: identityHash })
+    secondService.registerSource(source)
+    const restored = await secondService.open(documentRef)
+    expect(source.loadCalls).toHaveLength(2)
+    expect(ready(secondService, restored)).toMatchObject({
+      text: 'local',
+      localHash: 'local',
+      baseText: 'base',
+      baseHash: 'base',
+      baseVersion: sourceVersion,
+      latestSourceText: 'base',
+      latestSourceHash: 'base',
+      latestSourceVersion: sourceVersion,
+      syncStatus: 'local-ahead',
+      automationPaused: false,
+    })
+
+    const otherSession = await secondService.open(ref(sid('other-session'), source, 'one'))
+    expect(ready(secondService, otherSession)).toMatchObject({ text: 'base', syncStatus: 'synced' })
+  })
+
+  it('restores the saved base and classifies divergence after the source moves', async () => {
+    const storage = new MemoryStorage()
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const documentRef = ref(sid('session'), source, 'one')
+    const firstService = new FileViewerService({ storage, hashText: identityHash })
+    firstService.registerSource(source)
+    const first = await firstService.open(documentRef)
+    firstService.edit(first, 'local')
+    await settle()
+    firstService.dispose()
+    const remoteVersion = source.put('one', 'remote')
+
+    const secondService = new FileViewerService({ storage, hashText: identityHash })
+    secondService.registerSource(source)
+    const restored = await secondService.open(documentRef)
+    expect(ready(secondService, restored)).toMatchObject({
+      text: 'local',
+      localHash: 'local',
+      baseText: 'base',
+      baseHash: 'base',
+      latestSourceText: 'remote',
+      latestSourceHash: 'remote',
+      latestSourceVersion: remoteVersion,
+      syncStatus: 'diverged',
+      automationPaused: true,
+    })
+    expect(ready(secondService, restored)).not.toHaveProperty('baseVersion')
+  })
+
+  it('rebases a restored local draft when the fresh source has the same exact text', async () => {
+    const storage = new MemoryStorage()
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const documentRef = ref(sid('session'), source, 'one')
+    const firstService = new FileViewerService({ storage, hashText: identityHash })
+    firstService.registerSource(source)
+    const first = await firstService.open(documentRef)
+    firstService.edit(first, 'shared')
+    await settle()
+    firstService.dispose()
+    const sharedVersion = source.put('one', 'shared')
+
+    const secondService = new FileViewerService({ storage, hashText: identityHash })
+    secondService.registerSource(source)
+    const restored = await secondService.open(documentRef)
+    expect(ready(secondService, restored)).toMatchObject({
+      text: 'shared',
+      baseText: 'shared',
+      baseHash: 'shared',
+      baseVersion: sharedVersion,
+      latestSourceVersion: sharedVersion,
+      syncStatus: 'synced',
+    })
+    expect(isFileViewerDirty(ready(secondService, restored))).toBe(false)
+  })
+
+  it('flushes the latest edit-back text during disposal', async () => {
+    const storage = new MemoryStorage()
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const documentRef = ref(sid('session'), source, 'one')
+    const firstService = new FileViewerService({ storage, hashText: identityHash })
+    firstService.registerSource(source)
+    const first = await firstService.open(documentRef)
+    firstService.edit(first, 'temporary')
+    firstService.edit(first, 'base')
+    firstService.dispose()
+    await settle()
+    expect(JSON.parse(storage.values.get(draftKey(documentRef))!)).toMatchObject({
+      baseText: 'base',
+      localText: 'base',
+    })
+    source.put('one', 'remote')
+
+    const secondService = new FileViewerService({ storage, hashText: identityHash })
+    secondService.registerSource(source)
+    const restored = await secondService.open(documentRef)
+    expect(ready(secondService, restored)).toMatchObject({
+      text: 'base',
+      localHash: 'base',
+      baseText: 'base',
+      baseHash: 'base',
+      latestSourceText: 'remote',
+      latestSourceHash: 'remote',
+      syncStatus: 'source-ahead',
+      automationPaused: false,
+    })
+    expect(ready(secondService, restored)).not.toHaveProperty('baseVersion')
+  })
+
+  it('flushes a rejected close and discards persistence after a confirmed dirty close', async () => {
+    const storage = new MemoryStorage()
+    const source = new MemorySource('memory')
+    source.put('one', 'base')
+    const documentRef = ref(sid('session'), source, 'one')
+    let confirmed = false
+    const service = new FileViewerService({
+      storage,
+      confirmDiscard: () => confirmed,
+      hashText: identityHash,
+    })
+    service.registerSource(source)
+    const instanceId = await service.open(documentRef)
+    service.edit(instanceId, 'local')
+    await settle()
+
+    await expect(service.close(instanceId)).resolves.toBe(false)
+    expect(storage.values.has(draftKey(documentRef))).toBe(true)
+    confirmed = true
+    await expect(service.close(instanceId)).resolves.toBe(true)
+    expect(storage.values.has(draftKey(documentRef))).toBe(false)
+
+    const reopened = await service.open(documentRef)
+    expect(ready(service, reopened)).toMatchObject({ text: 'base', syncStatus: 'synced' })
+  })
+
+  it('keeps in-memory edits when stored data is malformed or browser storage fails', async () => {
+    let reads = 0
+    const storage = {
+      getItem: (): string | null => {
+        reads += 1
+        if (reads === 1) return '{malformed'
+        throw new Error('storage read refused')
+      },
+      setItem: (): void => { throw new Error('quota exceeded') },
+      removeItem: (): void => { throw new Error('storage removal refused') },
+    }
+    const source = new MemorySource('memory')
+    source.put('one', 'one')
+    source.put('two', 'two')
+    const service = new FileViewerService({ storage, hashText: identityHash })
+    service.registerSource(source)
+    const one = await service.open(ref(sid('session'), source, 'one'))
+    const two = await service.open(ref(sid('session'), source, 'two'))
+    service.edit(one, 'local one')
+    service.edit(two, 'local two')
+    await settle()
+
+    expect(ready(service, one)).toMatchObject({ text: 'local one', syncStatus: 'local-ahead' })
+    expect(ready(service, two)).toMatchObject({ text: 'local two', syncStatus: 'local-ahead' })
+    expect(() => service.dispose()).not.toThrow()
+  })
+
+  it('never serializes opaque revisions and uses only the revision from the reopening load', async () => {
+    const storage = new MemoryStorage()
+    const source = new MemorySource('memory')
+    const opaqueVersion: { self?: unknown } = {}
+    opaqueVersion.self = opaqueVersion
+    source.set('one', 'base', opaqueVersion)
+    const documentRef = ref(sid('session'), source, 'one')
+    const firstService = new FileViewerService({ storage, hashText: identityHash })
+    firstService.registerSource(source)
+    const first = await firstService.open(documentRef)
+    firstService.edit(first, 'local')
+    await settle()
+    expect(() => firstService.dispose()).not.toThrow()
+    expect(JSON.parse(storage.values.get(draftKey(documentRef))!)).toEqual({
+      format: 1,
+      baseText: 'base',
+      localText: 'local',
+    })
+
+    const secondService = new FileViewerService({ storage, hashText: identityHash })
+    secondService.registerSource(source)
+    const restored = await secondService.open(documentRef)
+    await secondService.save(restored)
+    expect(source.saveCalls.at(-1)).toMatchObject({ text: 'local', version: opaqueVersion })
+    expect(source.document('one').text).toBe('local')
   })
 
   it('blocks safe saves after observed source movement and resolves by explicit overwrite', async () => {

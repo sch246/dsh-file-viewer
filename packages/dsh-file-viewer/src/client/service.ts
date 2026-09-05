@@ -109,10 +109,11 @@ export class FileViewerOpenError extends Error {
   }
 }
 
-/** Browser persistence subset used for automation preferences. */
-export interface FileViewerPreferenceStorage {
+/** Browser persistence used for resource preferences and recoverable editor drafts. */
+export interface FileViewerBrowserStorage {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
+  removeItem(key: string): void
 }
 
 /** Right-sidebar lifecycle used by instance controllers. */
@@ -150,19 +151,33 @@ interface InstanceRecord {
   savePromise: Promise<void> | undefined
   autoUpdateTimer: ReturnType<typeof setTimeout> | undefined
   autoSaveTimer: ReturnType<typeof setTimeout> | undefined
+  draftTimer: ReturnType<typeof setTimeout> | undefined
 }
 
 /** Optional browser dependencies and timing policy. */
 export interface FileViewerServiceOptions {
   readonly host?: FileViewerInstanceHost
-  readonly storage?: FileViewerPreferenceStorage
+  readonly storage?: FileViewerBrowserStorage
   readonly automationDebounceMs?: number
+  readonly persistenceDebounceMs?: number
   readonly confirmDiscard?: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   /** Injectable only to make hashing failures and completion order deterministic in tests. */
   readonly hashText?: (text: string) => Promise<string>
 }
 
 const DEFAULT_AUTOMATION = Object.freeze({ autoUpdate: false, autoSave: false })
+const DRAFT_FORMAT_VERSION = 1
+
+interface PersistedDraft {
+  readonly format: typeof DRAFT_FORMAT_VERSION
+  readonly baseText: string
+  readonly localText: string
+}
+
+interface RestoredDraft extends PersistedDraft {
+  readonly baseHash: string
+  readonly localHash: string
+}
 
 /** Calculate the exact SHA-256 of canonical source text. */
 export async function hashFileViewerText(text: string): Promise<string> {
@@ -196,6 +211,32 @@ function keyOf(ref: FileViewerDocumentRef): string {
 
 function preferenceKey(ref: FileViewerDocumentRef): string {
   return `dsh-file-viewer:automation:${JSON.stringify([ref.sourceId, ref.resourceId])}`
+}
+
+function draftKey(ref: FileViewerDocumentRef): string {
+  return `dsh-file-viewer:draft:${keyOf(ref)}`
+}
+
+function parseDraft(raw: string): PersistedDraft | undefined {
+  const value: unknown = JSON.parse(raw)
+  if (typeof value !== 'object' || value === null) return undefined
+  const candidate = value as Record<string, unknown>
+  if (candidate.format !== DRAFT_FORMAT_VERSION
+    || typeof candidate.baseText !== 'string'
+    || typeof candidate.localText !== 'string') return undefined
+  return {
+    format: DRAFT_FORMAT_VERSION,
+    baseText: candidate.baseText,
+    localText: candidate.localText,
+  }
+}
+
+function defaultBrowserStorage(): FileViewerBrowserStorage | undefined {
+  try {
+    return typeof localStorage === 'undefined' ? undefined : localStorage
+  } catch {
+    return undefined
+  }
 }
 
 function replaceBase(snapshot: ReadySnapshot, text: string, hash: string, version: unknown): ReadySnapshot {
@@ -252,8 +293,9 @@ export class FileViewerService {
   private readonly instances = new Map<string, InstanceRecord>()
   private readonly refs = new Map<string, string>()
   private readonly host: FileViewerInstanceHost | undefined
-  private readonly storage: FileViewerPreferenceStorage | undefined
+  private readonly storage: FileViewerBrowserStorage | undefined
   private readonly debounceMs: number
+  private readonly persistenceDebounceMs: number
   private readonly confirmDiscard: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   private readonly hashText: (text: string) => Promise<string>
   private nextInstance = 0
@@ -261,8 +303,9 @@ export class FileViewerService {
 
   constructor(options: FileViewerServiceOptions = {}) {
     this.host = options.host
-    this.storage = options.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage)
+    this.storage = options.storage ?? defaultBrowserStorage()
     this.debounceMs = options.automationDebounceMs ?? 700
+    this.persistenceDebounceMs = options.persistenceDebounceMs ?? 700
     this.confirmDiscard = options.confirmDiscard ?? (() => false)
     this.hashText = options.hashText ?? hashFileViewerText
   }
@@ -338,6 +381,7 @@ export class FileViewerService {
       savePromise: undefined,
       autoUpdateTimer: undefined,
       autoSaveTimer: undefined,
+      draftTimer: undefined,
     }
     this.instances.set(instanceId, record)
     this.refs.set(keyOf(ref), instanceId)
@@ -375,6 +419,7 @@ export class FileViewerService {
     record.editGeneration += 1
     const generation = ++record.hashGeneration
     record.snapshot = deriveSync(replaceLocalTextWithoutHash(record.snapshot, text))
+    this.scheduleDraftPersistence(record)
     this.notify(record)
     void this.hashText(text).then(
       hash => {
@@ -382,6 +427,7 @@ export class FileViewerService {
         let next = deriveSync({ ...record.snapshot, localHash: hash })
         next = this.reconcilePause(record, next)
         record.snapshot = next
+        this.scheduleDraftPersistence(record)
         this.notify(record)
         this.scheduleAutomation(record, true)
       },
@@ -487,13 +533,20 @@ export class FileViewerService {
     const candidate = record.snapshot
     const candidateEditGeneration = record.editGeneration
     if (candidate.status === 'ready' && isFileViewerDirty(candidate)) {
-      if (!await this.confirmDiscard(candidate)) return false
+      if (!await this.confirmDiscard(candidate)) {
+        this.flushDraft(record)
+        return false
+      }
       if (this.instances.get(instanceId) !== record) return true
       const current = record.snapshot
       if (current.status === 'ready' && isFileViewerDirty(current)
-        && record.editGeneration !== candidateEditGeneration) return false
+        && record.editGeneration !== candidateEditGeneration) {
+        this.flushDraft(record)
+        return false
+      }
     }
     if (this.instances.get(instanceId) !== record) return true
+    this.discardDraft(record)
     this.remove(instanceId, record, new Error('document closed'))
     return true
   }
@@ -502,7 +555,10 @@ export class FileViewerService {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    for (const [id, record] of this.instances) this.remove(id, record, new Error('file viewer disposed'))
+    for (const [id, record] of this.instances) {
+      this.flushDraft(record)
+      this.remove(id, record, new Error('file viewer disposed'))
+    }
     this.sources.clear()
   }
 
@@ -530,9 +586,32 @@ export class FileViewerService {
       return failure
     }
 
+    const persisted = mode === 'initial' && record.snapshot.status !== 'ready'
+      ? this.readDraft(record.snapshot.ref)
+      : undefined
     let hash: string
+    let restored: RestoredDraft | undefined
     try {
-      hash = await this.hashText(loaded.text)
+      if (persisted === undefined) {
+        hash = await this.hashText(loaded.text)
+      } else {
+        const sourceHashPromise = this.hashText(loaded.text)
+        const baseHashPromise = persisted.baseText === loaded.text
+          ? sourceHashPromise
+          : this.hashText(persisted.baseText)
+        const localHashPromise = persisted.localText === loaded.text
+          ? sourceHashPromise
+          : persisted.localText === persisted.baseText
+            ? baseHashPromise
+            : this.hashText(persisted.localText)
+        const [sourceHash, baseHash, localHash] = await Promise.all([
+          sourceHashPromise,
+          baseHashPromise,
+          localHashPromise,
+        ])
+        hash = sourceHash
+        restored = { ...persisted, baseHash, localHash }
+      }
     } catch (error: unknown) {
       if (!this.complete(record.read, operation)) return undefined
       const failure = toFailure('hash-failed', error)
@@ -541,7 +620,7 @@ export class FileViewerService {
     }
 
     if (!this.complete(record.read, operation) || this.instances.get(record.snapshot.instanceId) !== record) return undefined
-    this.applyObserved(record, source, loaded, hash, mode)
+    this.applyObserved(record, source, loaded, hash, mode, restored)
     return undefined
   }
 
@@ -572,22 +651,23 @@ export class FileViewerService {
     loaded: FileViewerLoadedText,
     hash: string,
     mode: 'initial' | 'manual' | 'observe',
+    restored?: RestoredDraft,
   ): void {
     const previous = record.snapshot
     const preferences = previous.status === 'ready' ? previous.automation : this.readPreferences(previous.ref, source)
     let next: ReadySnapshot
     if (previous.status !== 'ready') {
-      next = {
+      next = deriveSync({
         instanceId: previous.instanceId,
         ref: previous.ref,
         status: 'ready',
         title: loaded.title ?? previous.ref.resourceId,
         operation: this.visibleOperation(record),
-        text: loaded.text,
-        localHash: hash,
-        baseText: loaded.text,
-        baseHash: hash,
-        ...(loaded.version === undefined ? {} : { baseVersion: loaded.version }),
+        text: restored?.localText ?? loaded.text,
+        localHash: restored?.localHash ?? hash,
+        baseText: restored?.baseText ?? loaded.text,
+        baseHash: restored?.baseHash ?? hash,
+        ...(restored === undefined && loaded.version !== undefined ? { baseVersion: loaded.version } : {}),
         latestSourceText: loaded.text,
         latestSourceHash: hash,
         ...(loaded.version === undefined ? {} : { latestSourceVersion: loaded.version }),
@@ -600,7 +680,7 @@ export class FileViewerService {
         ...(loaded.location === undefined ? {} : { location: loaded.location }),
         automation: preferences,
         automationPaused: false,
-      }
+      })
     } else {
       const pull = mode === 'manual' && !isFileViewerDirty(previous)
       next = replaceLatestSource({
@@ -622,6 +702,7 @@ export class FileViewerService {
     record.pauseReason = undefined
     next = this.reconcilePause(record, next)
     record.snapshot = next
+    this.scheduleDraftPersistence(record)
     this.host?.update(next.instanceId, next.ref.sessionId, next.title)
     this.attachWatch(record, source)
     this.notify(record)
@@ -775,6 +856,7 @@ export class FileViewerService {
       next = replaceBase(next, savedText, savedHash, saved.version)
       next = this.reconcilePause(record, deriveSync(next))
       record.snapshot = next
+      this.scheduleDraftPersistence(record)
       this.notify(record)
       this.scheduleAutomation(record, true)
     } catch (error: unknown) {
@@ -814,6 +896,7 @@ export class FileViewerService {
     }, value.latestSourceText, value.latestSourceHash, value.latestSourceVersion)
     next = this.reconcilePause(record, deriveSync(next))
     record.snapshot = next
+    this.scheduleDraftPersistence(record)
     this.notify(record)
     this.scheduleAutomation(record, true)
   }
@@ -829,6 +912,53 @@ export class FileViewerService {
     return {
       autoUpdate: stored.autoUpdate === true && source.watch !== undefined,
       autoSave: stored.autoSave === true && source.save !== undefined && source.supportsConditionalSave === true,
+    }
+  }
+
+  private readDraft(ref: FileViewerDocumentRef): PersistedDraft | undefined {
+    try {
+      const raw = this.storage?.getItem(draftKey(ref))
+      return raw === null || raw === undefined ? undefined : parseDraft(raw)
+    } catch {
+      // Malformed or unavailable browser persistence leaves source loading authoritative.
+      return undefined
+    }
+  }
+
+  private scheduleDraftPersistence(record: InstanceRecord): void {
+    if (this.storage === undefined || record.snapshot.status !== 'ready') return
+    clearTimeout(record.draftTimer)
+    record.draftTimer = setTimeout(() => {
+      record.draftTimer = undefined
+      this.persistDraft(record)
+    }, this.persistenceDebounceMs)
+  }
+
+  private persistDraft(record: InstanceRecord): void {
+    if (this.storage === undefined || record.snapshot.status !== 'ready') return
+    const value: PersistedDraft = {
+      format: DRAFT_FORMAT_VERSION,
+      baseText: record.snapshot.baseText,
+      localText: record.snapshot.text,
+    }
+    try {
+      this.storage.setItem(draftKey(record.snapshot.ref), JSON.stringify(value))
+    } catch {
+      // The in-memory Base and Local text remain authoritative when browser quota or storage is unavailable.
+    }
+  }
+
+  private flushDraft(record: InstanceRecord): void {
+    this.clearDraftTimer(record)
+    this.persistDraft(record)
+  }
+
+  private discardDraft(record: InstanceRecord): void {
+    this.clearDraftTimer(record)
+    try {
+      this.storage?.removeItem(draftKey(record.snapshot.ref))
+    } catch {
+      // Browser storage failure cannot prevent an explicitly confirmed close.
     }
   }
 
@@ -897,9 +1027,15 @@ export class FileViewerService {
     this.clearTimer(record, 'autoSave')
   }
 
+  private clearDraftTimer(record: InstanceRecord): void {
+    clearTimeout(record.draftTimer)
+    record.draftTimer = undefined
+  }
+
   private remove(id: string, record: InstanceRecord, reason: Error): void {
     record.listeners.clear()
     this.stop(record, reason)
+    this.clearDraftTimer(record)
     this.instances.delete(id)
     if (this.refs.get(keyOf(record.snapshot.ref)) === id) this.refs.delete(keyOf(record.snapshot.ref))
   }

@@ -8,6 +8,7 @@ This repository adds independent plain-text editor instances to the DeepSeek Har
 
 - [Open documents from another plugin](#open-documents-from-another-plugin)
 - [Synchronize a document](#synchronize-a-document)
+- [Recover browser drafts](#recover-browser-drafts)
 - [Use source locations](#use-source-locations)
 - [Build and install](#build-and-install)
 - [Remove the packages](#remove-the-packages)
@@ -62,6 +63,17 @@ Sources define canonical text, including line endings and terminal newlines. The
 
 -----
 
+<a id="recover-browser-drafts"></a>
+## Recover browser drafts
+
+Each ready instance retains its exact Base and Local text in browser `localStorage`, keyed by the complete Session, source and resource identity. Writes are debounced while typing and flushed when the Client controller is disposed. A later explicit open freshly loads Source text, recomputes all three hashes and restores the synchronized, local-ahead, source-ahead or diverged relationship. Source revisions, operation failures and paused-automation state are never serialized; a guarded write after recovery uses only the revision returned by the new source load.
+
+Accepting an instance close deletes its retained draft, while rejecting a dirty close flushes the current edit. Storage parsing, access or quota failures do not replace the live editor text.
+
+Base and Local text can contain sensitive source content. Retention stays in the user's origin-local browser workspace: it is not written to the Session log, sent to the model or logged over the network. Other scripts served from the same origin can access `localStorage`; accepting the document close or clearing site data removes retained content when browser storage is available.
+
+-----
+
 <a id="use-source-locations"></a>
 ## Use source locations
 
@@ -107,6 +119,7 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run uninstall --remo
 - [Viewer Bundle reference](packages/dsh-file-viewer/README.md) — composition and ownership.
 - [Current intended state](.intent/state/STATE.md) — synchronization and acceptance requirements.
 - [Workbench decision](.intent/logs/2026-09-05-source-neutral-editor-workbench.md) — responsibility split.
+- [Draft persistence decision](.intent/logs/2026-09-05-editor-draft-persistence.md) — local retention and recovery semantics.
 
 <a id="dev-note"></a>
 ## Dev Note

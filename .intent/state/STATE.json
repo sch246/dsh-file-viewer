@@ -1,10 +1,10 @@
 {
   "$schema": "dsh-file-viewer/current-state/1",
   "id": "dsh-file-viewer",
-  "revision": "0.2.0",
+  "revision": "0.2.1",
   "status": "source-defined",
   "document": "STATE.md",
-  "decisionLog": "../logs/2026-09-05-source-neutral-editor-workbench.md",
+  "decisionLog": "../logs/2026-09-05-editor-draft-persistence.md",
   "protocol": null,
   "acceptedRealization": null,
   "installationStatus": "source-only-not-installed",
