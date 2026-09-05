@@ -1,0 +1,278 @@
+import type { ComponentType } from 'react'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type {
+  FileViewerInstanceSnapshot,
+  FileViewerWatchEvent,
+} from './service.ts'
+
+/** Stable source identifier contributed by a resource provider. */
+export type ResourceSourceId = string & { readonly __resourceSourceId: unique symbol }
+
+/** @param value Non-empty provider-stable value. @returns Branded resource source id. */
+export function ResourceSourceId(value: string): ResourceSourceId {
+  if (value.trim() === '') throw new Error('resource-workbench: source id must not be empty')
+  return value as ResourceSourceId
+}
+
+/** Stable resource-handler identifier. */
+export type ResourceHandlerId = string & { readonly __resourceHandlerId: unique symbol }
+
+/** @param value Non-empty handler-stable value. @returns Branded resource handler id. */
+export function ResourceHandlerId(value: string): ResourceHandlerId {
+  if (value.trim() === '') throw new Error('resource-workbench: handler id must not be empty')
+  return value as ResourceHandlerId
+}
+
+/** Exact identity of one source-owned resource. */
+export interface ResourceRef {
+  readonly sessionId: SessionId
+  readonly sourceId: ResourceSourceId
+  readonly resourceId: string
+}
+
+/** Optional source-owned location projection. */
+export interface ResourceLocation {
+  readonly label?: string
+  readonly segments?: readonly { readonly label: string; readonly selectionHint?: unknown }[]
+  readonly selectorId?: string
+}
+
+/** Metadata used for handler selection and workbench presentation. */
+export interface ResourceDescriptor {
+  readonly ref: ResourceRef
+  readonly name: string
+  readonly mediaType?: string
+  readonly kind?: string
+  readonly size?: number
+  readonly location?: ResourceLocation
+}
+
+/** Exact source text with an opaque revision and optional refreshed metadata. */
+export interface ResourceLoadedText {
+  readonly text: string
+  readonly version?: unknown
+  readonly descriptor?: Partial<Omit<ResourceDescriptor, 'ref'>>
+}
+
+/** Source bytes with an opaque revision and optional refreshed metadata. */
+export interface ResourceLoadedBytes {
+  readonly bytes: Uint8Array
+  readonly version?: unknown
+  readonly descriptor?: Partial<Omit<ResourceDescriptor, 'ref'>>
+}
+
+/** Result of publishing text to a source. */
+export interface ResourceSavedText { readonly version?: unknown }
+
+/** Result of publishing bytes to a source. */
+export interface ResourceSavedBytes { readonly version?: unknown }
+
+/** Resolved automatic update and save preferences. */
+export interface ResourceAutomationPreferences {
+  readonly autoUpdate: boolean
+  readonly autoSave: boolean
+}
+
+/** Shared text-document projection exposed to text handlers. */
+export type TextDocumentSnapshot = FileViewerInstanceSnapshot
+
+/** A resource provider; text and byte reading are independent capabilities. */
+export interface ResourceSource {
+  readonly id: ResourceSourceId
+  readonly defaults?: Partial<ResourceAutomationPreferences>
+  /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Canonical source text and revision. */
+  readText?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedText>
+  /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Opaque source bytes and revision. */
+  readBytes?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes>
+  /** @param ref Exact resource identity. @param text Canonical text to publish. @param version Caller-observed revision. @param signal Cancellation signal. @returns Published revision. */
+  saveText?(ref: ResourceRef, text: string, version: unknown, signal: AbortSignal): Promise<ResourceSavedText>
+  /** Provider declaration that `saveText` rejects its recognized revision mismatch before publishing. */
+  readonly supportsConditionalTextSave?: boolean
+  /** @param ref Exact resource identity. @param listener Text notification receiver. @returns Source watch disposer. */
+  watchText?(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void): () => void
+  /** @param ref Exact resource identity. @param bytes Opaque bytes to publish. @param version Caller-observed revision. @param signal Cancellation signal. @returns Published revision. */
+  saveBytes?(ref: ResourceRef, bytes: Uint8Array, version: unknown, signal: AbortSignal): Promise<ResourceSavedBytes>
+  /** Provider declaration that `saveBytes` rejects its recognized revision mismatch before publishing. */
+  readonly supportsConditionalByteSave?: boolean
+  /** @param ref Exact resource identity. @param listener Byte notification receiver. @returns Source watch disposer. */
+  watchBytes?(ref: ResourceRef, listener: (event: ResourceBytesWatchEvent) => void): () => void
+  /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Nothing after source-owned external opening. */
+  openExternal?(ref: ResourceRef, signal: AbortSignal): Promise<void>
+}
+
+/** Text watch notification with source-owned metadata. */
+export type ResourceTextWatchEvent =
+  | { readonly kind: 'invalidate' }
+  | { readonly kind: 'snapshot'; readonly snapshot: ResourceLoadedText }
+
+/** Byte watch notification; invalidation never implies decoded content. */
+export type ResourceBytesWatchEvent =
+  | { readonly kind: 'invalidate' }
+  | { readonly kind: 'snapshot'; readonly snapshot: ResourceLoadedBytes }
+
+/** Handler-visible source capabilities without exposing the source registry. */
+export interface ResourceCapabilities {
+  readonly text: boolean
+  readonly bytes: boolean
+  readonly byteWrite: boolean
+  readonly conditionalByteWrite: boolean
+  readonly byteWatch: boolean
+  readonly externalOpen: boolean
+}
+
+/** Handler match role; priority resolves unequal defaults only. */
+export interface ResourceHandlerMatch {
+  readonly role: 'default' | 'available'
+  readonly priority?: number
+}
+
+/** Props supplied to a lazily loaded resource handler. */
+export interface ResourceHandlerProps {
+  readonly viewId: string
+  readonly handlerId: ResourceHandlerId
+  readonly service: ResourceWorkbenchClientService
+}
+
+/** Lazily loaded renderer for one handler. */
+export interface ResourceHandlerModule {
+  readonly View: ComponentType<ResourceHandlerProps>
+}
+
+/** One pluggable resource presentation. */
+export interface ResourceHandler {
+  readonly id: ResourceHandlerId
+  readonly label: string | (() => string)
+  /** @param descriptor Resource metadata. @param capabilities Available source operations. @returns Match role or false when unsupported. */
+  match(descriptor: ResourceDescriptor, capabilities: ResourceCapabilities): ResourceHandlerMatch | false
+  /** @returns Lazily imported renderer module. */
+  load(): Promise<ResourceHandlerModule>
+}
+
+/** User-facing handler choice for one descriptor. */
+export interface ResourceHandlerChoice {
+  readonly id: ResourceHandlerId
+  readonly label: string
+  readonly role: 'default' | 'available'
+  readonly selected: boolean
+  readonly associated: boolean
+}
+
+/** Relative or explicit sidebar destination for a resource view. */
+export type ResourceOpenTarget =
+  | { readonly groupId: string }
+  | {
+    readonly fromInstanceId: string
+    readonly direction: 'center' | 'left' | 'right' | 'up' | 'down'
+  }
+
+/** Placement and presentation intent for one open request. */
+export interface ResourceOpenOptions {
+  readonly handlerId?: ResourceHandlerId
+  readonly target?: ResourceOpenTarget
+  readonly preview?: boolean
+  /** Force another view even when the target group already contains the same resource and handler. */
+  readonly sideBySide?: boolean
+}
+
+/** Generic view state owned by the resource workbench. */
+export interface ResourceViewSnapshot {
+  readonly viewId: string
+  readonly descriptor: ResourceDescriptor
+  readonly handlerId?: ResourceHandlerId
+  readonly handlerStatus: 'choice' | 'loading' | 'ready' | 'failed' | 'source-unavailable'
+  readonly failure?: string
+  readonly openWith: readonly ResourceHandlerChoice[]
+  readonly capabilities: ResourceCapabilities
+  readonly externalOpenSupported: boolean
+}
+
+/** Frozen generic resource-opening service exposed as `ctx.resourceWorkbench`. */
+export interface ResourceWorkbenchClientService {
+  /** @param source Source contribution. @returns Idempotent registration disposer. */
+  registerSource(source: ResourceSource): () => void
+  /** @param handler Lazy handler contribution. @returns Idempotent registration disposer. */
+  registerHandler(handler: ResourceHandler): () => void
+  /** @param descriptor Resource identity and selection metadata. @param options Target and handler intent. @returns Opened or activated view id. */
+  open(descriptor: ResourceDescriptor, options?: ResourceOpenOptions): Promise<string>
+  /** @param descriptor Resource to match. @returns Deterministically ordered handler choices. */
+  listOpenWith(descriptor: ResourceDescriptor): readonly ResourceHandlerChoice[]
+  /** @param viewId Existing resource view. @param handlerId Selected matching handler. @returns Nothing after the switch or veto. */
+  switchHandler(viewId: string, handlerId: ResourceHandlerId): Promise<void>
+  /** @param descriptor Association subject. @param handlerId Preferred handler, or undefined to inherit defaults. */
+  setAssociation(descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined): void
+  /** @param viewId Resource view. @returns Stable immutable snapshot until notification. */
+  snapshot(viewId: string): ResourceViewSnapshot
+  /** @param viewId Resource view. @param listener Change listener. @returns Subscription disposer. */
+  subscribe(viewId: string, listener: () => void): () => void
+  /** @param viewId Resource view. @returns Validated selected handler module. */
+  loadHandler(viewId: string): Promise<ResourceHandlerModule>
+  /** @param viewId Resource view. @param signal Cancellation signal. @returns Opaque source bytes and revision. */
+  readBytes(viewId: string, signal: AbortSignal): Promise<ResourceLoadedBytes>
+  /** @param viewId Resource view. @param bytes Bytes to publish. @param version Caller-observed revision. @param signal Cancellation signal. @returns Published revision from a provider-declared guarded write. */
+  writeBytes(viewId: string, bytes: Uint8Array, version: unknown, signal: AbortSignal): Promise<ResourceSavedBytes>
+  /** @param viewId Resource view. @param listener Byte notification listener. @returns Source watch disposer. */
+  watchBytes(viewId: string, listener: (event: ResourceBytesWatchEvent) => void): () => void
+  /** @param viewId Edited resource view. Permanently pins its preview after the first edit. */
+  markEdited(viewId: string): void
+  /**
+   * Retain a handler-owned close/switch guard until the returned disposer or committed handler exit.
+   * Register from the retained handler controller, not a renderer effect that ends on group remount.
+   * @param viewId Resource view.
+   * @param guard Confirmation callback that returns false to retain the handler.
+   * @returns Guard disposer.
+   */
+  registerCloseGuard(viewId: string, guard: () => boolean | Promise<boolean>): () => void
+  /** @param viewId Resource view. @returns Shared text-document id when attached. */
+  textDocumentId(viewId: string): string | undefined
+  /** @param viewId Resource view. @returns Shared text-document snapshot. */
+  textSnapshot(viewId: string): TextDocumentSnapshot
+  /** @param viewId Resource view. @param listener Document listener. @returns Subscription disposer. */
+  subscribeText(viewId: string, listener: () => void): () => void
+  /** @param viewId Text resource view. @param text New shared local text. Pins the view after its first edit. */
+  editText(viewId: string, text: string): void
+  /** @param viewId Text resource view. @returns Nothing after guarded saving. */
+  saveText(viewId: string): Promise<void>
+  /** @param viewId Text resource view. @returns Nothing after source observation. */
+  refreshText(viewId: string): Promise<void>
+  /** @param viewId Text resource view. @returns Nothing after explicit publication. */
+  overwriteSourceText(viewId: string): Promise<void>
+  /** @param viewId Text resource view. Replaces local text with the last observed source. */
+  discardLocalText(viewId: string): void
+  /** @param viewId Text resource view. @param name Automation preference. @param enabled Explicit value, or undefined to inherit. */
+  setTextAutomation(viewId: string, name: keyof ResourceAutomationPreferences, enabled: boolean | undefined): void
+  /** @returns Persisted global text-automation defaults. */
+  automationDefaults(): ResourceAutomationPreferences
+  /** @param name Automation preference. @param enabled New persisted global default. */
+  setGlobalAutomation(name: keyof ResourceAutomationPreferences, enabled: boolean): void
+  /** @param viewId Resource view. @param handlerId State owner. @returns Memory-only state for that handler. */
+  getViewState(viewId: string, handlerId: ResourceHandlerId): unknown
+  /** @param viewId Resource view. @param handlerId State owner. @param state Memory-only state retained across renderer remounts. */
+  setViewState(viewId: string, handlerId: ResourceHandlerId, state: unknown): void
+  /** @param viewId Resource view. @param selection Optional source-owned hint. @returns Nothing after selector launch. */
+  selectLocation(viewId: string, selection?: unknown): Promise<void>
+  /** @param viewId Resource view. @returns Nothing after external opening. */
+  openExternal(viewId: string): Promise<void>
+  /** @param viewId Resource view. @returns Nothing after the sidebar commits, vetoes or invalidates the close request. */
+  close(viewId: string): Promise<void>
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    /** Generic resource opening, handler selection and source registry. */
+    resourceWorkbench: ResourceWorkbenchClientService
+  }
+}
+
+/** @param event Resource text notification. @returns Shared text-document notification. */
+export function toFileViewerWatchEvent(event: ResourceTextWatchEvent): FileViewerWatchEvent {
+  if (event.kind === 'invalidate') return event
+  return {
+    kind: 'snapshot',
+    snapshot: {
+      text: event.snapshot.text,
+      ...(event.snapshot.version === undefined ? {} : { version: event.snapshot.version }),
+      ...(event.snapshot.descriptor?.name === undefined ? {} : { title: event.snapshot.descriptor.name }),
+      ...(event.snapshot.descriptor?.location === undefined ? {} : { location: event.snapshot.descriptor.location }),
+    },
+  }
+}

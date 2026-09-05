@@ -5,8 +5,8 @@ import { SlotRegistry } from '../../../harness/packages/client/ui-renderer/src/c
 import type { RightSidebarService } from '@dsh-external/dsh-right-sidebar/client'
 import { describe, expect, it, vi } from 'vitest'
 import { apply, inject } from '../src/client/index.ts'
-import { FILE_VIEWER_VIEW_ID } from '../src/client/face.ts'
-import { FileViewerSourceId } from '../src/client/service.ts'
+import { RESOURCE_WORKBENCH_VIEW_ID } from '../src/client/workbench.ts'
+import { ResourceSourceId } from '../src/client/resource.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 describe('file viewer browser plugin', () => {
@@ -28,23 +28,28 @@ describe('file viewer browser plugin', () => {
       openInstance: vi.fn(),
       activateInstance: vi.fn(),
       updateInstance: vi.fn(),
+      switchInstanceView: vi.fn(),
+      pinInstance: vi.fn(),
+      getInstanceGroup: vi.fn(() => 'group'),
+      resolveTarget: vi.fn(() => 'group'),
+      registerRestorer: vi.fn(() => () => {}),
       closeInstance: vi.fn(async () => {}),
     }
     ctx.provide('rightSidebar', rightSidebar)
     const plugin = ctx.plugin({ inject: [...inject], apply })
     await plugin.await()
 
-    expect(ctx.fileViewer).toBeDefined()
+    expect(ctx.resourceWorkbench).toBeDefined()
     expect(slots.entries('rightbar.view').map(entry => entry.options.id)).toEqual([
-      FILE_VIEWER_VIEW_ID,
+      RESOURCE_WORKBENCH_VIEW_ID,
     ])
     expect(importModule).not.toHaveBeenCalled()
 
-    const sourceId = FileViewerSourceId('pagehide-test')
-    const offSource = ctx.fileViewer.registerSource({ id: sourceId, load: async () => ({ text: 'base' }) })
+    const sourceId = ResourceSourceId('pagehide-test')
+    const offSource = ctx.resourceWorkbench.registerSource({ id: sourceId, readText: async () => ({ text: 'base' }) })
     const ref = { sessionId: 'pagehide-session' as SessionId, sourceId, resourceId: 'memory' }
-    const id = await ctx.fileViewer.open(ref)
-    ctx.fileViewer.edit(id, 'last keystroke')
+    const id = await ctx.resourceWorkbench.open({ ref, name: 'memory', mediaType: 'text/plain' })
+    ctx.resourceWorkbench.editText(id, 'last keystroke')
     window.dispatchEvent(new Event('pagehide'))
     const key = `dsh-file-viewer:draft:${JSON.stringify([ref.sessionId, ref.sourceId, ref.resourceId])}`
     expect(JSON.parse(localStorage.getItem(key) ?? 'null')).toMatchObject({ baseText: 'base', localText: 'last keystroke' })

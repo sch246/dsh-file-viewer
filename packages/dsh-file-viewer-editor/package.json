@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/dsh-file-viewer-editor",
   "version": "0.1.0",
-  "description": "CodeMirror editor graph row materialized by dsh-file-viewer on first ready document",
+  "description": "CodeMirror editor graph row materialized by the resource workbench on first ready text view",
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",

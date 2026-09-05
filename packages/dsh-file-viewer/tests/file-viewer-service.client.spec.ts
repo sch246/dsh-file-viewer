@@ -6,7 +6,6 @@ import {
   hashFileViewerText,
   isFileViewerDirty,
   type FileViewerDocumentRef,
-  type FileViewerInstanceHost,
   type FileViewerInstanceSnapshot,
   type FileViewerLoadedText,
   type FileViewerLocation,
@@ -203,37 +202,6 @@ class MemoryStorage {
   removeItem(key: string): void { this.values.delete(key) }
 }
 
-class MemoryHost implements FileViewerInstanceHost {
-  readonly opened: Array<{ id: string; ref: FileViewerDocumentRef; close: () => boolean | Promise<boolean> }> = []
-  readonly activated: Array<{ id: string; sessionId: FileViewerDocumentRef['sessionId'] }> = []
-  readonly updated: Array<{ id: string; title: string }> = []
-  readonly launched: Array<{ selectorId: string; selection?: unknown }> = []
-  openError?: Error
-  updateError?: Error
-
-  open(instanceId: string, ref: FileViewerDocumentRef, _title: string, onClose: () => boolean | Promise<boolean>): void {
-    if (this.openError !== undefined) throw this.openError
-    this.opened.push({ id: instanceId, ref, close: onClose })
-  }
-
-  activate(instanceId: string, sessionId: FileViewerDocumentRef['sessionId']): void {
-    this.activated.push({ id: instanceId, sessionId })
-  }
-
-  update(instanceId: string, _sessionId: FileViewerDocumentRef['sessionId'], title: string): void {
-    if (this.updateError !== undefined) throw this.updateError
-    this.updated.push({ id: instanceId, title })
-  }
-
-  async launch(
-    _sessionId: FileViewerDocumentRef['sessionId'],
-    selectorId: string,
-    selection?: unknown,
-  ): Promise<void> {
-    this.launched.push({ selectorId, ...(selection === undefined ? {} : { selection }) })
-  }
-}
-
 type SessionId = FileViewerDocumentRef['sessionId']
 
 function sid(value: string): SessionId {
@@ -278,9 +246,8 @@ describe('FileViewerService', () => {
     await expect(hashFileViewerText('a')).resolves.not.toBe(await hashFileViewerText('a\n'))
   })
 
-  it('owns independent instances and reactivates only an exact existing ref', async () => {
-    const host = new MemoryHost()
-    const service = new FileViewerService({ host, hashText: identityHash })
+  it('owns independent documents and reuses only an exact existing ref', async () => {
+    const service = new FileViewerService({ hashText: identityHash })
     const source = new MemorySource('memory')
     source.put('one', 'one')
     source.put('two', 'two')
@@ -295,8 +262,6 @@ describe('FileViewerService', () => {
     expect(ready(service, second).text).toBe('two')
     expect(ready(service, otherSession).text).toBe('one')
     expect(await service.open(ref(sid('session'), source, 'one'))).toBe(first)
-    expect(host.opened).toHaveLength(3)
-    expect(host.activated).toEqual([{ id: first, sessionId: sid('session') }])
   })
 
   it('contains subscriber failures and isolates notifications by instance', async () => {
@@ -345,9 +310,8 @@ describe('FileViewerService', () => {
     expect(ready(service, 'text-editor-2').text).toBe('also recovered')
   })
 
-  it('retries a missing source after registration and rolls back a throwing host open', async () => {
-    const host = new MemoryHost()
-    const service = new FileViewerService({ host, hashText: identityHash })
+  it('retries a missing source after registration', async () => {
+    const service = new FileViewerService({ hashText: identityHash })
     const source = new MemorySource('late')
     source.put('one', 'available')
     const documentRef = ref(sid('session'), source, 'one')
@@ -356,16 +320,6 @@ describe('FileViewerService', () => {
     service.registerSource(source)
     expect(await service.open(documentRef)).toBe('text-editor-1')
 
-    const failingHost = new MemoryHost()
-    failingHost.openError = new Error('sidebar refused')
-    const otherService = new FileViewerService({ host: failingHost, hashText: identityHash })
-    const other = new MemorySource('other')
-    other.put('one', 'one')
-    otherService.registerSource(other)
-    await expect(otherService.open(ref(sid('session'), other, 'one'))).rejects.toThrow('sidebar refused')
-    failingHost.openError = undefined
-    expect(await otherService.open(ref(sid('session'), other, 'one'))).toBe('text-editor-2')
-    expect(other.loadCalls).toHaveLength(1)
   })
 
   it('observes watch snapshots without pulling clean local text or re-registering the watch', async () => {
@@ -490,7 +444,7 @@ describe('FileViewerService', () => {
     expect(source.document('save').text).toBe('base')
   })
 
-  it('validates stored and requested automation against source capabilities per resource', async () => {
+  it('retains inherited automation preferences while capabilities gate execution', async () => {
     const storage = new MemoryStorage()
     storage.values.set('dsh-file-viewer:automation:["limited","one"]', JSON.stringify({
       autoUpdate: true,
@@ -504,10 +458,12 @@ describe('FileViewerService', () => {
     const one = await service.open(ref(sid('session'), limited, 'one'))
     const two = await service.open(ref(sid('session'), limited, 'two'))
 
-    expect(ready(service, one).automation).toEqual({ autoUpdate: false, autoSave: false })
+    expect(ready(service, one).automation).toEqual({ autoUpdate: true, autoSave: true })
     expect(ready(service, two).automation).toEqual({ autoUpdate: false, autoSave: false })
-    expect(() => service.setAutomation(one, 'autoUpdate', true)).toThrow('requires source watch support')
-    expect(() => service.setAutomation(one, 'autoSave', true)).toThrow('requires conditional save support')
+    service.setAutomation(one, 'autoUpdate', undefined)
+    service.setGlobalAutomation('autoUpdate', true)
+    expect(ready(service, one).automation.autoUpdate).toBe(true)
+    expect(ready(service, one).watchSupported).toBe(false)
 
     const capable = new MemorySource('capable')
     capable.put('one', 'one')
@@ -520,6 +476,31 @@ describe('FileViewerService', () => {
     secondService.registerSource(capable)
     const restored = await secondService.open(ref(sid('second'), capable, 'one'))
     expect(ready(secondService, restored).automation).toEqual({ autoUpdate: true, autoSave: true })
+  })
+
+  it('resolves global, source and resource automation layers and resets to inheritance', async () => {
+    const source: FileViewerSource = {
+      id: FileViewerSourceId('inherited'),
+      defaults: { autoUpdate: true, autoSave: false },
+      load: async () => ({ text: 'base' }),
+    }
+    const service = new FileViewerService({
+      globalAutomationDefaults: { autoUpdate: false, autoSave: true },
+      hashText: identityHash,
+    })
+    service.registerSource(source)
+    const id = await service.open({ sessionId: sid('session'), sourceId: source.id, resourceId: 'one' })
+
+    expect(ready(service, id).automation).toEqual({ autoUpdate: true, autoSave: false })
+    service.setAutomation(id, 'autoUpdate', false)
+    service.setAutomation(id, 'autoSave', true)
+    expect(ready(service, id).automation).toEqual({ autoUpdate: false, autoSave: true })
+    service.setGlobalAutomation('autoUpdate', true)
+    expect(ready(service, id).automation.autoUpdate).toBe(false)
+    service.setAutomation(id, 'autoUpdate', undefined)
+    service.setAutomation(id, 'autoSave', undefined)
+    expect(ready(service, id).automation).toEqual({ autoUpdate: true, autoSave: false })
+    expect(ready(service, id).automationInheritance.resource).toEqual({})
   })
 
   it('debounces full-ref drafts and restores local-ahead content against a fresh source read', async () => {
@@ -679,10 +660,13 @@ describe('FileViewerService', () => {
     service.edit(instanceId, 'local')
     await settle()
 
-    await expect(service.close(instanceId)).resolves.toBe(false)
+    await expect(service.canClose(instanceId)).resolves.toBe(false)
     expect(storage.values.has(draftKey(documentRef))).toBe(true)
     confirmed = true
-    await expect(service.close(instanceId)).resolves.toBe(true)
+    await expect(service.canClose(instanceId)).resolves.toBe(true)
+    expect(service.snapshot(instanceId)).toMatchObject({ text: 'local' })
+    expect(storage.values.has(draftKey(documentRef))).toBe(true)
+    service.discard(instanceId)
     expect(storage.values.has(draftKey(documentRef))).toBe(false)
 
     const reopened = await service.open(documentRef)
@@ -1055,7 +1039,7 @@ describe('FileViewerService', () => {
     service.edit(instanceId, 'first')
     await settle()
 
-    const closing = service.close(instanceId)
+    const closing = service.canClose(instanceId)
     service.edit(instanceId, 'newer')
     service.edit(instanceId, 'first')
     await settle()
@@ -1094,20 +1078,6 @@ describe('FileViewerService', () => {
       failure: { code: 'hash-failed', message: 'digest refused' },
     })
 
-    const host = new MemoryHost()
-    const hosted = new MemorySource('hosted')
-    hosted.put('one', 'base')
-    const hostedService = new FileViewerService({ host, hashText: identityHash })
-    hostedService.registerSource(hosted)
-    const hostedRef = ref(sid('session'), hosted, 'one')
-    const hostedId = await hostedService.open(hostedRef)
-    host.updateError = new Error('sidebar update refused')
-    hosted.emit(hostedRef, { kind: 'snapshot', snapshot: { text: 'remote' } })
-    await settle()
-    expect(ready(hostedService, hostedId)).toMatchObject({
-      automationPaused: true,
-      failure: { code: 'watch-failed', message: 'sidebar update refused' },
-    })
   })
 
   it('clears returned versions and preserves newer local text after a versionless save', async () => {
@@ -1126,22 +1096,19 @@ describe('FileViewerService', () => {
     expect(ready(service, instanceId).syncStatus).toBe('synced')
   })
 
-  it('projects location actions and keeps external failures independent of editor content', async () => {
-    const host = new MemoryHost()
+  it('keeps external failures independent of editor content', async () => {
     const source = new MemorySource('memory')
     source.put('one', 'base', 'Title', { selectorId: 'files', segments: [{ label: 'one' }] })
     const externalGate = deferred<void>()
     source.queueExternal(externalGate.promise)
-    const service = new FileViewerService({ host, hashText: identityHash })
+    const service = new FileViewerService({ hashText: identityHash })
     service.registerSource(source)
     const instanceId = await service.open(ref(sid('session'), source, 'one'))
-    await service.selectLocation(instanceId, { parent: true })
     service.edit(instanceId, 'local')
     const opening = service.openExternal(instanceId)
     externalGate.reject(new Error('launcher refused'))
     await opening
 
-    expect(host.launched).toEqual([{ selectorId: 'files', selection: { parent: true } }])
     expect(ready(service, instanceId)).toMatchObject({
       text: 'local',
       failure: { code: 'external-open-failed', message: 'launcher refused' },

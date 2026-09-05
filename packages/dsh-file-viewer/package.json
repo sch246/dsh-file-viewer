@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/dsh-file-viewer",
   "version": "0.1.0",
-  "description": "Source-neutral multi-instance text editor for DeepSeek Harness Web",
+  "description": "Generic resource workbench with lazy text and image handlers for DeepSeek Harness Web",
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",

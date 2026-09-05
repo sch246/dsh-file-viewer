@@ -1,5 +1,5 @@
 ---
-description: "Source-neutral multi-instance text editing for users composing a DeepSeek Harness Web profile."
+description: "Generic resource opening with lazy text, image and contributed handlers for a DeepSeek Harness Web profile."
 kind: "package-bundle"
 ---
 
@@ -7,7 +7,7 @@ kind: "package-bundle"
 
 ## Summary
 
-This Bundle adds a source-neutral text editor service and one reusable right-sidebar renderer to a Web profile. Client plugins can register content providers and open independent editor instances. Add the Bundle together with its editor dependency through the repository setup command; the file-manager plugin independently provides filesystem sources and navigation.
+This Bundle adds a generic resource-opening service and one reusable right-sidebar renderer to a Web profile. Client plugins can register content providers, lazy handlers and independent resource views. Add the Bundle together with its text-editor dependency through the repository setup command; the file-manager plugin independently provides filesystem sources and navigation.
 
 ## Table of Contents
 
@@ -33,9 +33,9 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run setup --install
 
 ### What you get
 
-The Bundle inserts the browser `@dsh-external/dsh-file-viewer` row and the independent `@dsh-external/dsh-file-viewer-editor` graph row. The browser service exposes source registration and instance actions through `ctx.fileViewer`. Each open resource becomes a right-sidebar workbench instance rendered by the shared `text-editor` view.
+The Bundle inserts the browser `@dsh-external/dsh-file-viewer` row and the independent `@dsh-external/dsh-file-viewer-editor` graph row. The browser service exposes generic source, handler and opening actions through `ctx.resourceWorkbench`. Each resource view uses the static `resource-workbench` sidebar renderer; its selected text, image or contributed handler module loads on demand.
 
-The Bundle registers no file source or right-sidebar launcher. A source provider supplies loading, optional saving and watching, opaque revisions, and optional source-location selection. The file-manager plugin owns the user filesystem provider and Files launcher.
+The Bundle registers no file source or right-sidebar launcher. A provider independently supplies text or bytes, optional guarded writes and watches, opaque revisions, and optional source-location selection. The file-manager plugin owns the user filesystem provider, external-opening policy and Files launcher.
 
 -----
 
@@ -45,7 +45,7 @@ The Bundle registers no file source or right-sidebar launcher. A source provider
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-[`cordis.patch.yml`](cordis.patch.yml) inserts the viewer and editor Client rows. [`src/client/service.ts`](src/client/service.ts) owns sources, editor instances, exact text hashes and guarded asynchronous operations. [`src/client/index.ts`](src/client/index.ts) registers the public face and one static workbench renderer. The CodeMirror implementation stays in the sibling editor package and materializes only after a ready document mounts.
+[`cordis.patch.yml`](cordis.patch.yml) inserts the workbench and editor Client rows. [`src/client/workbench.ts`](src/client/workbench.ts) owns resource views, handlers, associations and sidebar restoration. [`src/client/service.ts`](src/client/service.ts) owns shared text documents, exact hashes and guarded asynchronous operations. The CodeMirror implementation stays in the sibling editor package and materializes only after a ready text view mounts.
 
 </details>
 
@@ -68,7 +68,8 @@ None. This Bundle changes human browser presentation and adds no model-visible i
 ## Known Limitations and Deferred Work
 
 - The editor presents complete plain text. Sources own size limits, partial-loading policy and canonical line representation.
-- Browser editor instances are in memory and do not survive a Client reload.
+- Workbench descriptors and text drafts survive Client recreation; selection, scroll, undo and custom handler state are memory-only.
+- The image handler displays bytes but does not edit images. Custom byte handlers own their draft and revision model through the generic byte and close-guard APIs.
 - The differences view presents complete Base, Local and Source text without syntax-aware diff alignment.
 
 <a id="dev-note"></a>

@@ -1,14 +1,14 @@
 {
   "$schema": "dsh-file-viewer/current-state/1",
   "id": "dsh-file-viewer",
-  "revision": "0.2.1",
+  "revision": "0.3.0",
   "status": "source-defined",
   "document": "STATE.md",
-  "decisionLog": "../logs/2026-09-05-editor-draft-persistence.md",
+  "decisionLog": "../logs/2026-09-05-generic-resource-workbench.md",
   "protocol": null,
   "acceptedRealization": null,
-  "installationStatus": "installed-local-web-unaccepted",
-  "deploymentLog": "../logs/2026-09-05-live-workbench.md",
+  "installationStatus": "candidate-not-installed",
+  "deploymentLog": null,
   "packages": [
     "@dsh-external/dsh-file-viewer",
     "@dsh-external/dsh-file-viewer-editor"

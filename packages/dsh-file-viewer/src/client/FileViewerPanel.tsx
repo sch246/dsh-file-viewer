@@ -19,12 +19,14 @@ export interface FileViewerPanelInjected {
   refresh(instanceId: string): void
   overwriteSource(instanceId: string): void
   discardLocal(instanceId: string): void
-  setAutoUpdate(instanceId: string, enabled: boolean): void
-  setAutoSave(instanceId: string, enabled: boolean): void
-  selectLocation(instanceId: string, selection?: unknown): void
-  openExternal(instanceId: string): void
+  setAutoUpdate(instanceId: string, enabled: boolean | undefined): void
+  setAutoSave(instanceId: string, enabled: boolean | undefined): void
+  setGlobalAutoUpdate?(enabled: boolean): void
+  setGlobalAutoSave?(enabled: boolean): void
   confirm(message: string): boolean
   loadEditor(): Promise<FileViewerEditorModule>
+  getViewState?(instanceId: string): unknown
+  setViewState?(instanceId: string, state: unknown): void
 }
 
 /** Composed editor view props. */
@@ -64,21 +66,27 @@ interface EditorHostProps {
   readonly readOnly: boolean
   readonly loadEditor: () => Promise<FileViewerEditorModule>
   readonly onChange: (text: string) => void
+  readonly viewState?: unknown
+  readonly onViewStateChange?: (state: unknown) => void
   readonly loadingLabel: string
   readonly failureLabel: string
 }
 
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
-  text, readOnly, loadEditor, onChange, loadingLabel, failureLabel,
+  text, readOnly, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<FileViewerEditorModule['createFileViewerEditor']>>()
   const textRef = useRef(text)
+  const viewStateRef = useRef(viewState)
   const onChangeRef = useRef(onChange)
+  const onViewStateChangeRef = useRef(onViewStateChange)
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
   textRef.current = text
+  viewStateRef.current = viewState
   onChangeRef.current = onChange
+  onViewStateChangeRef.current = onViewStateChange
 
   useEffect(() => {
     let live = true
@@ -89,6 +97,8 @@ export function EditorHost({
         text: textRef.current,
         readOnly,
         onChange: value => { onChangeRef.current(value) },
+        viewState: viewStateRef.current,
+        onViewStateChange: value => { onViewStateChangeRef.current?.(value) },
       })
       if (!live) {
         handle.destroy()
@@ -117,42 +127,6 @@ export function EditorHost({
   )
 }
 
-function LocationRow({
-  state, selectLocation, t,
-}: {
-  readonly state: ReadySnapshot
-  readonly selectLocation: (selection?: unknown) => void
-  readonly t: FileViewerPanelProps['t']
-}) {
-  const location = state.location
-  if (location === undefined || (location.label === undefined && location.segments === undefined)) return null
-  const selectable = location.selectorId !== undefined
-  return (
-    <nav className="dsh-file-viewer-location" aria-label={t('location')}>
-      {location.label !== undefined && (
-        selectable
-          ? <button type="button" onClick={() => { selectLocation() }}>{location.label}</button>
-          : <span title={location.label}>{location.label}</span>
-      )}
-      {location.segments?.map((segment, index) => (
-        <span className="dsh-file-viewer-location-segment" key={`${index}:${segment.label}`}>
-          {index > 0 && <span aria-hidden="true">›</span>}
-          {selectable
-            ? (
-              <button
-                type="button"
-                onClick={() => { selectLocation(segment.selectionHint) }}
-              >
-                {segment.label}
-              </button>
-            )
-            : <span>{segment.label}</span>}
-        </span>
-      ))}
-    </nav>
-  )
-}
-
 function Differences({ state, t }: { readonly state: ReadySnapshot; readonly t: FileViewerPanelProps['t'] }) {
   return (
     <section className="dsh-file-viewer-differences" aria-label={t('differences')}>
@@ -165,7 +139,8 @@ function Differences({ state, t }: { readonly state: ReadySnapshot; readonly t: 
 
 function ReadyPanel({
   state, edit, save, refresh, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
-  selectLocation, openExternal, confirm, loadEditor, t,
+  setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
+  viewState, onViewStateChange, t,
 }: {
   readonly state: ReadySnapshot
   readonly edit: (text: string) => void
@@ -173,12 +148,14 @@ function ReadyPanel({
   readonly refresh: () => void
   readonly overwriteSource: () => void
   readonly discardLocal: () => void
-  readonly setAutoUpdate: (enabled: boolean) => void
-  readonly setAutoSave: (enabled: boolean) => void
-  readonly selectLocation: (selection?: unknown) => void
-  readonly openExternal: () => void
+  readonly setAutoUpdate: (enabled: boolean | undefined) => void
+  readonly setAutoSave: (enabled: boolean | undefined) => void
+  readonly setGlobalAutoUpdate?: (enabled: boolean) => void
+  readonly setGlobalAutoSave?: (enabled: boolean) => void
   readonly confirm: (message: string) => boolean
   readonly loadEditor: () => Promise<FileViewerEditorModule>
+  readonly viewState?: unknown
+  readonly onViewStateChange?: (state: unknown) => void
   readonly t: FileViewerPanelProps['t']
 }) {
   const [showDifferences, setShowDifferences] = useState(false)
@@ -205,7 +182,6 @@ function ReadyPanel({
   return (
     <section className="dsh-file-viewer-root" onKeyDown={onKeyDown}>
       <header className="dsh-file-viewer-header">
-        <LocationRow state={state} selectLocation={selectLocation} t={t} />
         <div className="dsh-file-viewer-heading">
           {state.location === undefined && <div className="dsh-file-viewer-title" title={state.title}>{state.title}</div>}
           <span className={`dsh-file-viewer-status is-${state.syncStatus}`}>{t(state.syncStatus)}</span>
@@ -237,8 +213,36 @@ function ReadyPanel({
               {t('automatic')}
             </label>
           </div>}
-          {state.externalOpenSupported && <button type="button" onClick={openExternal} disabled={busy}>{t('openExternal')}</button>}
         </div>
+        <details className="dsh-file-viewer-defaults">
+          <summary>{t('automationDefaults')}</summary>
+          <label>
+            <input
+              type="checkbox"
+              checked={state.automationInheritance.global.autoUpdate}
+              onChange={event => { setGlobalAutoUpdate?.(event.currentTarget.checked) }}
+            />
+            {t('globalAutoUpdate')}
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={state.automationInheritance.global.autoSave}
+              onChange={event => { setGlobalAutoSave?.(event.currentTarget.checked) }}
+            />
+            {t('globalAutoSave')}
+          </label>
+          <button
+            type="button"
+            disabled={state.automationInheritance.resource.autoUpdate === undefined}
+            onClick={() => { setAutoUpdate(undefined) }}
+          >{t('resetAutoUpdate')}</button>
+          <button
+            type="button"
+            disabled={state.automationInheritance.resource.autoSave === undefined}
+            onClick={() => { setAutoSave(undefined) }}
+          >{t('resetAutoSave')}</button>
+        </details>
       </header>
       {state.automationPaused && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
       {state.sourceStale && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
@@ -261,6 +265,8 @@ function ReadyPanel({
         readOnly={!state.saveSupported}
         loadEditor={loadEditor}
         onChange={edit}
+        viewState={viewState}
+        {...(onViewStateChange === undefined ? {} : { onViewStateChange })}
         loadingLabel={t('editorLoading')}
         failureLabel={t('editorFailed')}
       />
@@ -294,10 +300,12 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
       discardLocal={() => { props.discardLocal(props.instanceId) }}
       setAutoUpdate={enabled => { props.setAutoUpdate(props.instanceId, enabled) }}
       setAutoSave={enabled => { props.setAutoSave(props.instanceId, enabled) }}
-      selectLocation={selection => { props.selectLocation(props.instanceId, selection) }}
-      openExternal={() => { props.openExternal(props.instanceId) }}
+      {...(props.setGlobalAutoUpdate === undefined ? {} : { setGlobalAutoUpdate: props.setGlobalAutoUpdate })}
+      {...(props.setGlobalAutoSave === undefined ? {} : { setGlobalAutoSave: props.setGlobalAutoSave })}
       confirm={props.confirm}
       loadEditor={props.loadEditor}
+      viewState={props.getViewState?.(props.instanceId)}
+      onViewStateChange={value => { props.setViewState?.(props.instanceId, value) }}
       t={props.t}
     />
   )

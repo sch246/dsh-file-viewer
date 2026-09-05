@@ -1,7 +1,7 @@
-/** File viewer locale namespace. */
+/** Resource workbench locale namespace. */
 export const NS = 'file-viewer'
 
-/** Complete product-copy key set for the text editor. */
+/** Complete product-copy key set for generic controls and the text editor. */
 export type FileViewerLocaleKey =
   | 'loading' | 'editorLoading' | 'editorFailed'
   | 'save' | 'saving' | 'saveUnsupported' | 'update' | 'updating'
@@ -13,6 +13,12 @@ export type FileViewerLocaleKey =
   | 'automationPaused' | 'sourceStale' | 'conflict' | 'conflictHelp' | 'differences'
   | 'base' | 'local' | 'source' | 'sourceUnknown' | 'overwriteSource' | 'discardLocal'
   | 'confirmOverwrite' | 'confirmDiscard' | 'confirmClose'
+  | 'openWith' | 'chooseHandler' | 'rememberHandler' | 'rememberHandlerHelp'
+  | 'unsupportedResource' | 'handlerFailed' | 'textHandler' | 'imageHandler'
+  | 'handlerLoading'
+  | 'automationDefaults' | 'globalAutoUpdate' | 'globalAutoSave' | 'resetAutoUpdate' | 'resetAutoSave'
+  | 'imageDecodeFailed'
+  | 'confirmHandlerSwitch'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -67,6 +73,22 @@ export const en: Record<FileViewerLocaleKey, string> = {
   confirmOverwrite: 'Overwrite the source with the local text? This cannot be undone here.',
   confirmDiscard: 'Discard local edits and replace them with the latest source text?',
   confirmClose: 'Close this document and discard its unsaved local edits?',
+  openWith: 'Open with',
+  chooseHandler: 'Choose a viewer',
+  rememberHandler: 'Use by default',
+  rememberHandlerHelp: 'Remember this viewer for resources with the same type.',
+  unsupportedResource: 'No installed viewer supports this resource.',
+  handlerFailed: 'The selected viewer could not be loaded.',
+  handlerLoading: 'Loading viewer…',
+  textHandler: 'Text editor',
+  imageHandler: 'Image viewer',
+  automationDefaults: 'Synchronization defaults',
+  globalAutoUpdate: 'Default automatic update',
+  globalAutoSave: 'Default automatic save',
+  resetAutoUpdate: 'Inherit update',
+  resetAutoSave: 'Inherit save',
+  imageDecodeFailed: 'The image data could not be decoded.',
+  confirmHandlerSwitch: 'Keep the unsaved text draft and pause its automation while opening another viewer?',
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
@@ -115,4 +137,20 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   confirmOverwrite: '用本地文本覆盖来源吗？此操作无法在这里撤销。',
   confirmDiscard: '放弃本地修改并替换为最新来源文本吗？',
   confirmClose: '关闭此文档并放弃尚未保存的本地修改吗？',
+  openWith: '打开方式',
+  chooseHandler: '选择查看器',
+  rememberHandler: '设为默认',
+  rememberHandlerHelp: '为相同类型的资源记住此查看器。',
+  unsupportedResource: '没有已安装的查看器支持此资源。',
+  handlerFailed: '无法加载所选查看器。',
+  handlerLoading: '正在加载查看器…',
+  textHandler: '文本编辑器',
+  imageHandler: '图片查看器',
+  automationDefaults: '同步默认设置',
+  globalAutoUpdate: '默认自动更新',
+  globalAutoSave: '默认自动保存',
+  resetAutoUpdate: '继承更新设置',
+  resetAutoSave: '继承保存设置',
+  imageDecodeFailed: '无法解码图片数据。',
+  confirmHandlerSwitch: '保留未保存的文本草稿并暂停自动同步，然后改用其它查看器吗？',
 }

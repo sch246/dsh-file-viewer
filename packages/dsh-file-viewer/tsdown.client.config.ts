@@ -16,6 +16,7 @@ const client: UserConfig = {
   external: CLIENT_EXTERNALS,
   noExternal: (id: string) => !CLIENT_EXTERNALS.includes(id),
   outputOptions: {
+    inlineDynamicImports: true,
     entryFileNames: 'client.js',
     banner: 'window.__ModuleLoader__.load({ id: "@dsh-external/dsh-file-viewer", factory: (require) => {',
     footer: 'return module.exports; } });',

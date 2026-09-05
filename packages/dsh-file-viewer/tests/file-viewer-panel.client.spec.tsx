@@ -31,6 +31,11 @@ function ready(
     watchSupported: true,
     externalOpenSupported: false,
     automation: { autoUpdate: false, autoSave: false },
+    automationInheritance: {
+      global: { autoUpdate: false, autoSave: false },
+      source: {},
+      resource: {},
+    },
     automationPaused: true,
     location: {
       label: 'Memory',
@@ -53,13 +58,11 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     discardLocal: vi.fn(),
     setAutoUpdate: vi.fn(),
     setAutoSave: vi.fn(),
-    selectLocation: vi.fn(),
-    openExternal: vi.fn(),
     confirm: vi.fn(() => true),
     loadEditor: async () => ({
       createFileViewerEditor: ({ parent }) => {
         parent.dataset.editor = 'mounted'
-        return { setText: vi.fn(), destroy: vi.fn() }
+        return { setText: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
       },
     }),
     t: key => en[key],
@@ -75,9 +78,6 @@ describe('FileViewerPanel', () => {
 
     expect(screen.getByText('Conflict')).toBeTruthy()
     expect(screen.getByText('Automatic synchronization is paused until this state is resolved.')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'One' }))
-    expect(input.selectLocation).toHaveBeenCalledWith(instanceId, { resourceId: 'one' })
-
     fireEvent.click(screen.getByRole('button', { name: 'Differences' }))
     const differences = screen.getByRole('region', { name: 'Differences' })
     expect(within(differences).getByText('base')).toBeTruthy()
@@ -96,7 +96,7 @@ describe('FileViewerPanel', () => {
     const input = props(ready({ watchSupported: false, syncStatus: 'local-ahead', latestSourceText: 'base', latestSourceHash: 'base-hash' }))
     const { container } = render(<FileViewerPanel {...input} />)
     const checkboxes = screen.getAllByRole('checkbox')
-    expect(checkboxes).toHaveLength(2)
+    expect(checkboxes).toHaveLength(4)
     expect((checkboxes[0] as HTMLInputElement).disabled).toBe(true)
     expect((checkboxes[1] as HTMLInputElement).disabled).toBe(false)
 

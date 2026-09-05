@@ -1,69 +1,87 @@
 import type { RightSidebarService } from '@dsh-external/dsh-right-sidebar/client'
-import type { FileViewerClientService } from './contract.ts'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ResourceBytesWatchEvent, ResourceAutomationPreferences } from './resource.ts'
+import type {
+  ResourceDescriptor,
+  ResourceHandler,
+  ResourceHandlerId,
+  ResourceOpenOptions,
+  ResourceSource,
+  ResourceWorkbenchClientService,
+} from './resource.ts'
 import {
-  FileViewerService,
-  type FileViewerAutomationPreferences,
-  type FileViewerDocumentRef,
-  type FileViewerInstanceHost,
-  type FileViewerSource,
-} from './service.ts'
+  RESOURCE_WORKBENCH_VIEW_ID,
+  ResourceWorkbenchRuntime,
+  type ResourceViewHost,
+} from './workbench.ts'
 
-/** Static renderer id shared by every file-viewer workbench instance. */
-export const FILE_VIEWER_VIEW_ID = 'text-editor'
-
-/** Adapt the right-sidebar workbench to the runtime's instance lifecycle. */
-export function createFileViewerInstanceHost(
-  rightSidebar: RightSidebarService,
-): FileViewerInstanceHost {
+/** @param rightSidebar Right-sidebar service. @returns Resource-view host adapter. */
+export function createResourceViewHost(rightSidebar: RightSidebarService): ResourceViewHost {
   return {
-    open: (instanceId, ref, title, onClose) => {
-      rightSidebar.openInstance(ref.sessionId, {
-        id: instanceId,
-        viewId: FILE_VIEWER_VIEW_ID,
-        title,
-        onClose,
+    open: (sessionId, input, options) => rightSidebar.openInstance(sessionId, input, options),
+    activate: (sessionId, viewId) => { rightSidebar.activateInstance(sessionId, viewId) },
+    update: (sessionId, viewId, update) => {
+      rightSidebar.switchInstanceView(sessionId, viewId, {
+        viewId: RESOURCE_WORKBENCH_VIEW_ID,
+        ...update,
       })
     },
-    activate: (instanceId, sessionId) => {
-      rightSidebar.activateInstance(sessionId, instanceId)
-    },
-    update: (instanceId, sessionId, title) => {
-      rightSidebar.updateInstance(sessionId, instanceId, { title })
-    },
-    launch: async (sessionId, selectorId, selection) => {
-      await rightSidebar.launch(sessionId, selectorId, selection)
-    },
+    pin: (sessionId, viewId) => { rightSidebar.pinInstance(sessionId, viewId) },
+    group: (sessionId, viewId) => rightSidebar.getInstanceGroup(sessionId, viewId),
+    resolveTarget: (sessionId, target) => rightSidebar.resolveTarget(sessionId, target),
+    launch: (sessionId, selectorId, selection) => rightSidebar.launch(sessionId, selectorId, selection),
+    registerRestorer: (viewId, restore) => rightSidebar.registerRestorer(viewId, context => restore({
+      sessionId: context.sessionId as SessionId,
+      instanceId: context.instanceId,
+      descriptor: context.descriptor,
+    })),
+    close: (sessionId, viewId) => rightSidebar.closeInstance(sessionId, viewId),
   }
 }
 
-/** Build the frozen public face over the sole document-state owner. */
-export function createFileViewerClientService(
-  runtime: FileViewerService,
-  rightSidebar: RightSidebarService,
-): FileViewerClientService {
+/** @param runtime Sole resource-workbench runtime. @returns Frozen public resource service. */
+export function createResourceWorkbenchClientService(
+  runtime: ResourceWorkbenchRuntime,
+): ResourceWorkbenchClientService {
   return Object.freeze({
-    registerSource: (source: FileViewerSource) => runtime.registerSource(source),
-    open: (ref: FileViewerDocumentRef) => runtime.open(ref),
-    snapshot: (instanceId: string) => runtime.snapshot(instanceId),
-    subscribe: (instanceId: string, listener: () => void) => runtime.subscribe(instanceId, listener),
-    edit: (instanceId: string, text: string) => { runtime.edit(instanceId, text) },
-    save: (instanceId: string) => runtime.save(instanceId),
-    refresh: (instanceId: string) => runtime.refresh(instanceId),
-    overwriteSource: (instanceId: string) => runtime.overwriteSource(instanceId),
-    discardLocal: (instanceId: string) => { runtime.discardLocal(instanceId) },
-    setAutomation: (
-      instanceId: string,
-      name: keyof FileViewerAutomationPreferences,
-      enabled: boolean,
-    ) => {
-      runtime.setAutomation(instanceId, name, enabled)
+    registerSource: (source: ResourceSource) => runtime.registerSource(source),
+    registerHandler: (handler: ResourceHandler) => runtime.registerHandler(handler),
+    open: (descriptor: ResourceDescriptor, options?: ResourceOpenOptions) => runtime.open(descriptor, options),
+    listOpenWith: (descriptor: ResourceDescriptor) => runtime.listOpenWith(descriptor),
+    switchHandler: (viewId: string, handlerId: ResourceHandlerId) => runtime.switchHandler(viewId, handlerId),
+    setAssociation: (descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined) => {
+      runtime.setAssociation(descriptor, handlerId)
     },
-    selectLocation: (instanceId: string, selection?: unknown) =>
-      runtime.selectLocation(instanceId, selection),
-    openExternal: (instanceId: string) => runtime.openExternal(instanceId),
-    close: async (instanceId: string): Promise<void> => {
-      const { sessionId } = runtime.snapshot(instanceId).ref
-      await rightSidebar.closeInstance(sessionId, instanceId)
+    snapshot: (viewId: string) => runtime.snapshot(viewId),
+    subscribe: (viewId: string, listener: () => void) => runtime.subscribe(viewId, listener),
+    loadHandler: (viewId: string) => runtime.loadHandler(viewId),
+    readBytes: (viewId: string, signal: AbortSignal) => runtime.readBytes(viewId, signal),
+    writeBytes: (viewId: string, bytes: Uint8Array, version: unknown, signal: AbortSignal) =>
+      runtime.writeBytes(viewId, bytes, version, signal),
+    watchBytes: (viewId: string, listener: (event: ResourceBytesWatchEvent) => void) => runtime.watchBytes(viewId, listener),
+    markEdited: (viewId: string) => { runtime.markEdited(viewId) },
+    registerCloseGuard: (viewId: string, guard: () => boolean | Promise<boolean>) => runtime.registerCloseGuard(viewId, guard),
+    textDocumentId: (viewId: string) => runtime.textDocumentId(viewId),
+    textSnapshot: (viewId: string) => runtime.textSnapshot(viewId),
+    subscribeText: (viewId: string, listener: () => void) => runtime.subscribeText(viewId, listener),
+    editText: (viewId: string, text: string) => { runtime.editText(viewId, text) },
+    saveText: (viewId: string) => runtime.saveText(viewId),
+    refreshText: (viewId: string) => runtime.refreshText(viewId),
+    overwriteSourceText: (viewId: string) => runtime.overwriteSourceText(viewId),
+    discardLocalText: (viewId: string) => { runtime.discardLocalText(viewId) },
+    setTextAutomation: (viewId: string, name: 'autoUpdate' | 'autoSave', enabled: boolean | undefined) => {
+      runtime.setTextAutomation(viewId, name, enabled)
     },
+    automationDefaults: () => runtime.automationDefaults(),
+    setGlobalAutomation: (name: keyof ResourceAutomationPreferences, enabled: boolean) => {
+      runtime.setGlobalAutomation(name, enabled)
+    },
+    getViewState: (viewId: string, handlerId: ResourceHandlerId) => runtime.getViewState(viewId, handlerId),
+    setViewState: (viewId: string, handlerId: ResourceHandlerId, state: unknown) => {
+      runtime.setViewState(viewId, handlerId, state)
+    },
+    selectLocation: (viewId: string, selection?: unknown) => runtime.selectLocation(viewId, selection),
+    openExternal: (viewId: string) => runtime.openExternal(viewId),
+    close: (viewId: string) => runtime.close(viewId),
   })
 }

@@ -3,51 +3,105 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-modules/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@dsh-external/dsh-right-sidebar/client'
-import type { FileViewerClientService } from './contract.ts'
 import { asFileViewerEditorModule } from './editor-module.ts'
 import {
-  createFileViewerClientService,
-  createFileViewerInstanceHost,
-  FILE_VIEWER_VIEW_ID,
+  createResourceViewHost,
+  createResourceWorkbenchClientService,
 } from './face.ts'
-import { FileViewerPanel, type FileViewerPanelInjected } from './FileViewerPanel.tsx'
+import { ResourceWorkbenchPanel } from './ResourceWorkbenchPanel.tsx'
 import { en, NS, zh } from './locales.ts'
-import { FileViewerService } from './service.ts'
+import type {
+  ResourceCapabilities,
+  ResourceDescriptor,
+  ResourceHandler,
+  ResourceHandlerMatch,
+  ResourceWorkbenchClientService,
+} from './resource.ts'
+import {
+  IMAGE_RESOURCE_HANDLER_ID,
+  RESOURCE_WORKBENCH_VIEW_ID,
+  ResourceWorkbenchRuntime,
+  TEXT_RESOURCE_HANDLER_ID,
+} from './workbench.ts'
 import { FILE_VIEWER_CSS } from './styles.ts'
 
-export type { FileViewerClientService } from './contract.ts'
 export type {
-  FileViewerAutomationPreferences,
-  FileViewerDocumentRef,
-  FileViewerFailure,
-  FileViewerErrorCode,
-  FileViewerInstanceSnapshot,
-  FileViewerLoadedText,
-  FileViewerLocation,
-  FileViewerOperation,
-  FileViewerSavedText,
-  FileViewerSource,
-  FileViewerSyncStatus,
-  FileViewerWatchEvent,
-} from './service.ts'
-export { FileViewerOpenError, FileViewerSourceId } from './service.ts'
+  ResourceAutomationPreferences,
+  ResourceBytesWatchEvent,
+  ResourceCapabilities,
+  ResourceDescriptor,
+  ResourceHandler,
+  ResourceHandlerChoice,
+  ResourceHandlerMatch,
+  ResourceHandlerModule,
+  ResourceHandlerProps,
+  ResourceLoadedBytes,
+  ResourceLoadedText,
+  ResourceLocation,
+  ResourceOpenOptions,
+  ResourceOpenTarget,
+  ResourceRef,
+  ResourceSavedText,
+  ResourceSavedBytes,
+  ResourceSource,
+  ResourceTextWatchEvent,
+  ResourceViewSnapshot,
+  ResourceWorkbenchClientService,
+} from './resource.ts'
+export { ResourceHandlerId, ResourceSourceId } from './resource.ts'
+export {
+  IMAGE_RESOURCE_HANDLER_ID,
+  RESOURCE_WORKBENCH_VIEW_ID,
+  TEXT_RESOURCE_HANDLER_ID,
+} from './workbench.ts'
 
-/** Client services required to present source-neutral text editor instances. */
+/** Text synchronization types used by handlers and source providers. */
+export type {
+  FileViewerFailure as TextDocumentFailure,
+  FileViewerErrorCode as TextDocumentErrorCode,
+  FileViewerInstanceSnapshot as TextDocumentSnapshot,
+  FileViewerOperation as TextDocumentOperation,
+  FileViewerSyncStatus as TextDocumentSyncStatus,
+} from './service.ts'
+
+/** Client services required by generic resource views. */
 export const inject = ['slots', 'locale', 'modules', 'rightSidebar']
+
+function textMatch(
+  descriptor: ResourceDescriptor,
+  capabilities: ResourceCapabilities,
+): ResourceHandlerMatch | false {
+  if (!capabilities.text) return false
+  const mediaType = descriptor.mediaType?.toLowerCase()
+  if (mediaType === 'image/svg+xml') return { role: 'available' }
+  if (mediaType?.startsWith('text/') === true
+    || mediaType === 'application/json'
+    || mediaType?.endsWith('+json') === true
+    || mediaType === 'application/xml'
+    || mediaType?.endsWith('+xml') === true
+    || mediaType === 'application/javascript') return { role: 'default' }
+  return { role: 'available' }
+}
+
+function imageMatch(
+  descriptor: ResourceDescriptor,
+  capabilities: ResourceCapabilities,
+): ResourceHandlerMatch | false {
+  return capabilities.bytes && descriptor.mediaType?.toLowerCase().startsWith('image/') === true
+    ? { role: 'default' }
+    : false
+}
 
 async function registerRuntime(ctx: Context): Promise<() => void> {
   const t = ctx.locale.bind(NS)
-  const runtime = new FileViewerService({
-    host: createFileViewerInstanceHost(ctx.rightSidebar),
+  const host = createResourceViewHost(ctx.rightSidebar)
+  const runtime = new ResourceWorkbenchRuntime({
+    host,
     confirmDiscard: () => window.confirm(t('confirmClose')),
+    confirmHandlerSwitch: () => window.confirm(t('confirmHandlerSwitch')),
   })
-  const face: FileViewerClientService = createFileViewerClientService(runtime, ctx.rightSidebar)
-  ctx.provide('fileViewer', face)
-  const offPagePersistence = ctx.effect(() => {
-    const flush = () => { runtime.flushDrafts() }
-    window.addEventListener('pagehide', flush)
-    return () => { window.removeEventListener('pagehide', flush) }
-  }, 'file-viewer: flush drafts before page suspension')
+  const service: ResourceWorkbenchClientService = createResourceWorkbenchClientService(runtime)
+  ctx.provide('resourceWorkbench', service)
 
   let editorModule: ReturnType<typeof asFileViewerEditorModule> | undefined
   let editorRequest: Promise<ReturnType<typeof asFileViewerEditorModule>> | undefined
@@ -60,6 +114,34 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     return editorModule
   }
 
+  const textHandler: ResourceHandler = {
+    id: TEXT_RESOURCE_HANDLER_ID,
+    label: () => t('textHandler'),
+    match: textMatch,
+    load: async () => {
+      const module = await import('./text-handler.tsx')
+      return { View: module.createTextResourceView({ loadEditor, confirm: message => window.confirm(message), t }) }
+    },
+  }
+  const imageHandler: ResourceHandler = {
+    id: IMAGE_RESOURCE_HANDLER_ID,
+    label: () => t('imageHandler'),
+    match: imageMatch,
+    load: async () => {
+      const module = await import('./image-handler.tsx')
+      return { View: module.createImageResourceView(t('imageDecodeFailed'), t('handlerLoading')) }
+    },
+  }
+  const offTextHandler = runtime.registerHandler(textHandler)
+  const offImageHandler = runtime.registerHandler(imageHandler)
+  const offRestorer = runtime.registerRestorer()
+
+  const offPagePersistence = ctx.effect(() => {
+    const flush = () => { runtime.flushDrafts() }
+    window.addEventListener('pagehide', flush)
+    return () => { window.removeEventListener('pagehide', flush) }
+  }, 'resource-workbench: flush drafts before page suspension')
+
   const offPresentation = ctx.effect(() => {
     const offLocale = ctx.locale.register(NS, { zh, en })
     const style = document.createElement('style')
@@ -67,40 +149,27 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     style.textContent = FILE_VIEWER_CSS
     document.head.appendChild(style)
     return () => { offLocale(); style.remove() }
-  }, 'file-viewer: locale and styles')
+  }, 'resource-workbench: locale and styles')
 
   const offView = ctx.slots.inject('rightbar.view', () => ctx.slots.register({
     name: 'rightbar.view',
-    id: FILE_VIEWER_VIEW_ID,
+    id: RESOURCE_WORKBENCH_VIEW_ID,
     locale: NS,
-    inject: (_sessionId: string): FileViewerPanelInjected => {
-      return {
-        snapshot: instanceId => face.snapshot(instanceId),
-        subscribe: (instanceId, listener) => face.subscribe(instanceId, listener),
-        edit: (instanceId, text) => { face.edit(instanceId, text) },
-        save: instanceId => { void face.save(instanceId) },
-        refresh: instanceId => { void face.refresh(instanceId) },
-        overwriteSource: instanceId => { void face.overwriteSource(instanceId) },
-        discardLocal: instanceId => { face.discardLocal(instanceId) },
-        setAutoUpdate: (instanceId, enabled) => { face.setAutomation(instanceId, 'autoUpdate', enabled) },
-        setAutoSave: (instanceId, enabled) => { face.setAutomation(instanceId, 'autoSave', enabled) },
-        selectLocation: (instanceId, selection) => { void face.selectLocation(instanceId, selection) },
-        openExternal: instanceId => { void face.openExternal(instanceId) },
-        confirm: message => window.confirm(message),
-        loadEditor,
-      }
-    },
-  }, FileViewerPanel))
+    inject: () => ({ service }),
+  }, ResourceWorkbenchPanel))
 
   return () => {
     offPagePersistence()
+    offRestorer()
     offView()
     offPresentation()
+    offImageHandler()
+    offTextHandler()
     runtime.dispose()
   }
 }
 
-/** Register the text editor service and its one static workbench renderer. */
+/** @param ctx Browser Client context. @returns Plugin disposer after registration completes. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const runtime = ctx.inject(['slots', 'locale', 'modules', 'rightSidebar'], registerRuntime)
   try {
