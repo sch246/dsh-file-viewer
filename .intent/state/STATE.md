@@ -1,10 +1,52 @@
 # Resource workbench current intended state
 
-Status: revision 0.3.5 activated under [the deleted fragment decision](../logs/2026-09-06-deleted-fragments.md). Revision 0.3.4 activation remains recorded in [the aligned comparison evidence](../logs/2026-09-06-aligned-comparison.md). No accepted realization lock or user visual acceptance is recorded.
+Recorded deployment: revision 0.3.5 activated under [the deleted fragment decision](../logs/2026-09-06-deleted-fragments.md). Revision 0.3.4 activation remains recorded in [the aligned comparison evidence](../logs/2026-09-06-aligned-comparison.md). This local STATE is an installation and behavior map, not the meta-intent protocol. Historical activation does not certify a new target checkout; no accepted realization lock or user visual acceptance is recorded.
 
 ## Intent
 
 Provide a Session-aware generic resource workbench in the DeepSeek Harness Web right sidebar. Client plugins contribute sources and lazy handlers without receiving workbench, document or group store mutation authority.
+
+## User intent and provenance
+
+Source: Codex task **评估网页文件查看编辑能力 (2)**, conversation `01a07134-78e5-7503-83c1-059bc388eecf`, actual user messages. Times below use **Asia/Shanghai (UTC+08:00)**, converted from message UTC timestamps. The September 5 18:54 message pastes both user requests and GPT proposals; the quoted user requests establish intent, while GPT implementation suggestions are not independent user requirements.
+
+- September 5 18:54, pasted user request: “文本查看应该只是文件编辑的一种功能罢了” and “应该能在文件编辑器里切换打开方式”. The resource workbench supports contributed handlers; text is one handler. The same pasted discussion assigns groups and placement to the shared sidebar, including opening tree selections to the right without replacing the tree. The proposed single editor plugin tab is not a requirement to reintroduce nested file tabs.
+- September 5 20:50: “默认的更新和保存应该与当前实例的更新保存无关，只影响新开时的自动更新自动保存的状态”. This supersedes the pasted GPT inheritance/reset proposal. The two inheritance buttons are rejected. The horizontal defaults row requested in this message is an intermediate presentation, superseded by the final hover controls below.
+- September 5 23:04 and September 6 00:14: keep breadcrumbs and a right-aligned open-with dropdown; handler names switch views and separate default markers toggle associations. “一个复选框就行了” confirms checkboxes instead of rotating icons; synchronization status remains visible and changes color. September 6 00:20 suggests operation animation in that status rather than revealing buttons; independent update/save activity is the implemented interpretation.
+- September 6 01:02: “点击‘查看差异’时视图直接替换编辑区域” and “它一定要是实时的”. Differences belongs beside Update/Save in the floating controls. Base has no separate pane; sides equal to Base are omitted. September 6 01:32 further requires editable Local, read-only Source, stronger green character backgrounds, line numbers and red deletions excluded even from select-all/copy.
+- September 6 01:53: “需要以基准行进行对齐才行” and “悬浮按钮的展开状态在鼠标移开后应该保持”. Paired Base/current columns, shared row displacement and linked scrolling align every visible side. Current and default line-number choices follow the automation control arrangement. “鼠标悬浮到自动更新/自动保存的框上的时候，才在左边额外显示一个勾选框” is the final default-control request; it supersedes separate More/default controls. September 6 02:45 adds “删除时对应的地方要有红色背景的”, including removed character fragments.
+
+## Installation map
+
+### Composition and implementation owners
+
+| Owner | Required contribution and location |
+| --- | --- |
+| Harness Web profile | Supported package declarations and source launcher; the manifests target `0.1.2-alpha.2`. Check actual API compatibility after Host upgrades. |
+| `@dsh-external/dsh-right-sidebar` | Must be built and composed first. Owns groups, placement, previews, tab orientation/dragging, resizing and layout persistence; these are not editor responsibilities. |
+| Viewer Bundle | [Bundle rows](../../packages/dsh-file-viewer/cordis.patch.yml) compose viewer and editor Client graph entries. [Workbench](../../packages/dsh-file-viewer/src/client/workbench.ts) owns generic opening, handlers and associations; [document service](../../packages/dsh-file-viewer/src/client/service.ts) owns synchronization. |
+| Editor dependency | [Editor package](../../packages/dsh-file-viewer-editor/package.json) owns CodeMirror and comparison rendering. It is installed as a plain dependency, never a second Bundle, and loaded lazily. |
+| Optional filesystem provider | `@dsh-external/dsh-file-manager` requires this viewer and supplies metadata, text/bytes, guarded saves, native-open capability and the Files launcher. Other sources can use the viewer without the manager. |
+| Optional Chat consumer | `@dsh-external/dsh-resource-links` requires manager, viewer and sidebar. It owns path recognition and Chat `preview\|system` policy; the viewer does not install it. |
+
+### Build, install and removal
+
+The [repository guide](../../README.md#build-and-install) owns build commands. Select explicit `DSH_CHECKOUT`, `DSH_HOME` and `DSH_PROFILE` for every profile operation. The viewer scripts permit omitted `DSH_HOME` and then use the ordinary default Home; supplying it avoids selecting an unintended profile. Keep sibling checkouts at the relative locations declared in the development manifest, or deliberately update those local links before building.
+
+| Operation | Owned entry and effects |
+| --- | --- |
+| Inspect | [Setup](../../scripts/setup-host.sh), `pnpm run setup --check`: checks checkout and package-source presence only. It does not prove an installed profile or browser works. |
+| Install/update | `pnpm run setup --install`: builds both packages and adds both absolute package paths in one `dsh plugin add` transaction; verifies manifest, lock, resolution and composed rows. The viewer is the Bundle and the editor is a plain dependency. |
+| Inspect removal | [Uninstall](../../scripts/uninstall-host.sh), `pnpm run uninstall --check`: reports declared dependencies and viewer Bundle presence. |
+| Remove | `pnpm run uninstall --remove`: removes both declared dependencies in one transaction and checks absence. Remove dependent resource-links and manager Bundles first, retaining unrelated sidebar consumers. |
+
+Scripts do not apply or reverse Harness patches or restart services. Build output and local build symlinks change during installation; the running profile is activated separately. After installation, inspect exact dependency/lock/resolution targets, Bundle and composed Client rows; after removal, inspect their absence. In particular, uninstall's already-absent dependency branch does not check for residual symlinks or lock rows. A successful inspection alone is not removal or boot evidence. Preserve user drafts and unrelated profile settings; package removal does not clear origin-local browser storage.
+
+### Host adaptation and ownership limits
+
+The tracked [historical Harness patch](../../patches/deepseek-harness.patch) includes the initial `chat/open-workspace-file` waterfall and other integration changes; it is not an input to viewer setup or uninstall. Resource-links maintains an incremental patch over that Chat baseline, including routing the workspace `.` action through the waterfall. Applying or reversing the historical patch wholesale can overlap that newer contribution.
+
+No current viewer or manager lifecycle script transfers the historical patch receipt. Resource-links refuses to adopt an already-applied patch without its matching receipt. The [resource-links baseline preparation map](https://github.com/sch246/dsh-resource-links/blob/main/.intent/state/STATE.md#preparing-a-host-that-lacks-the-baseline) identifies the exact Chat symbols and reviewed adaptation record needed on a Host without the waterfall. The [historical installation record](../logs/2026-09-05-live-web-install.md) excludes `packages/typert/generator/` from viewer ownership because its external-project support belongs to skill-manager. An integrator must inspect the selected Host, the historical receipt and resource-links receipt, preserve changes owned elsewhere, and reconcile that baseline before setup or removal; reverse applicability alone does not establish ownership transfer. After a Harness upgrade, adapt only the affected public sidebar/workbench APIs and owned Host increment, then regenerate the affected artifacts through their owning scripts. A clean arbitrary Host is not established as supported by the deployment logs.
 
 ## Stable behavior
 
@@ -30,8 +72,6 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 
 ## Acceptance criteria
 
-- `VIEWER-011`: Exact deleted character fragments have darker red backgrounds inside pale red baseline deletion rows. Highlight ranges follow live edits even when the baseline row text is unchanged; deletion spans remain display-only.
-
 - `VIEWER-001`: One Session can retain multiple views of one exact text resource with shared edits and independent editor state; restoration retains Base and Local text against a fresh Source observation.
 - `VIEWER-002`: Client fixtures can register in-memory text and byte sources, read and guarded-write without binary decoding, watch external changes, dispose a source and retain explicit source-unavailable state without receiving store setters.
 - `VIEWER-003`: Manual and automatic synchronization derive from exact base/local/source text hashes, suppress stale completions and pause automation after conflicts or operation failures.
@@ -42,6 +82,7 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 - `VIEWER-008`: Differences appears only in the floating toolbar, retains one editable local editor and read-only source text, omits unchanged/repeated sides, follows document observations, and retains mode through synchronization.
 - `VIEWER-009`: Two-column comparison line numbers and content use common Base-aligned slots; insertions, deletions and wrapping preserve cross-pane vertical alignment and linked scrolling. Copy and select-all exclude baseline deletion widgets and visual padding. Number toggles do not change document text or undo history.
 - `VIEWER-010`: The expanded toolbar survives mouse leave and view remounts. Current automation and line-number controls reveal their independent default checkboxes to the left on hover/focus; defaults initialize only new documents or view presentations. No separate More/defaults section remains.
+- `VIEWER-011`: Exact deleted character fragments have darker red backgrounds inside pale red baseline deletion rows. Highlight ranges follow live edits even when the baseline row text is unchanged; deletion spans remain display-only.
 
 ## Constraints
 
@@ -58,4 +99,4 @@ Provide a Session-aware generic resource workbench in the DeepSeek Harness Web r
 
 ## Evidence status
 
-The [aligned comparison decision](../logs/2026-09-06-aligned-comparison.md) owns current candidate evidence. Earlier decisions and activation logs describe their respective revisions. No accepted realization lock or user visual acceptance is recorded.
+The aligned comparison and deleted-fragment records linked above own the implementation and activation evidence for their revisions. This documentation update does not rerun those observations or install anything. Earlier decisions and activation logs describe their respective revisions. No accepted realization lock or user visual acceptance is recorded.

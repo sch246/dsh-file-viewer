@@ -2,7 +2,7 @@
 
 ## Summary
 
-This repository adds generic resource opening to the DeepSeek Harness Web right-sidebar workbench. Client plugins register sources and lazy handlers through `ctx.resourceWorkbench`; text, bytes and source metadata remain separate capabilities. The built-in text editor keeps exact Base, Local and Source state, while the image handler reads bytes without decoding them as text. The separate file-manager plugin supplies user filesystem policy, navigation and Chat routing.
+This repository adds generic resource opening to the DeepSeek Harness Web right-sidebar workbench. Client plugins register sources and lazy handlers through `ctx.resourceWorkbench`; text, bytes and source metadata remain separate capabilities. The built-in text editor keeps exact Base, Local and Source state, while the image handler reads bytes without decoding them as text. The separate file-manager plugin supplies user filesystem access and navigation; resource-links owns Chat path recognition and opening policy.
 
 ## Table of Contents
 
@@ -126,8 +126,8 @@ pnpm install
 DSH_CHECKOUT=/path/to/deepseek-harness pnpm run typecheck
 DSH_CHECKOUT=/path/to/deepseek-harness pnpm run build
 
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run setup --check
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run setup --install
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run setup --check
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run setup --install
 ```
 
 Install adds the viewer Bundle and the independent CodeMirror package in one profile operation. The viewer Bundle contributes the source-neutral Client service and editor renderer; the editor package remains a plain dependency and separate browser graph row. An external operator controls service activation.
@@ -140,8 +140,8 @@ Install adds the viewer Bundle and the independent CodeMirror package in one pro
 Removal deletes both profile dependencies in one operation. It does not change Harness source or restart a service.
 
 ```sh
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run uninstall --check
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run uninstall --remove
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run uninstall --check
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run uninstall --remove
 ```
 
 -----
@@ -158,4 +158,4 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_PROFILE=web pnpm run uninstall --remo
 <a id="dev-note"></a>
 ## Dev Note
 
-The tracked compatibility patch records an earlier cross-repository contribution. File-manager integration owns any remaining transfer of that patch and its private installation receipt; viewer setup and uninstall leave both untouched.
+The tracked compatibility patch and its historical receipt are outside viewer setup and uninstall. Current manager scripts also perform no receipt transfer; resource-links owns only its incremental adapter and matching receipt. See the [Host ownership limits](.intent/state/STATE.md#host-adaptation-and-ownership-limits) before adapting or removing an integrated Host.
