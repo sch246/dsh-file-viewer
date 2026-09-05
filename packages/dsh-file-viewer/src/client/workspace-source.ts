@@ -11,7 +11,8 @@ export interface WorkspaceSourceDependencies {
   readonly workspace: Pick<TypertClientRemote['fileViewerWorkspace'], 'load' | 'save'>
   readonly session: Pick<TypertClientRemote['session'], 'openWorkspacePath'>
   readonly cwdOf: (sessionId: SessionId) => string | undefined
-  readonly externalOpenSupported: boolean
+  /** Read the latest optional native-opener capability without gating source registration. */
+  readonly externalOpenSupported: () => boolean
 }
 
 function valueOf<T>(result: RemoteResult<T>): T {
@@ -30,7 +31,12 @@ function assertWorkspaceVersion(
 /** Create the built-in Session-workspace text source. */
 export function createWorkspaceSource(dependencies: WorkspaceSourceDependencies): FileViewerSource {
   const id = FileViewerSourceId('workspace')
-  return {
+  const openExternal: NonNullable<FileViewerSource['openExternal']> = async (ref, signal) => {
+    valueOf(await dependencies.session.openWorkspacePath({
+      path: resolveWorkspacePath(dependencies.cwdOf(ref.sessionId), ref.resourceId),
+    }, signal))
+  }
+  const source: FileViewerSource = {
     id,
     load: async (ref, signal) => {
       const value = valueOf(await dependencies.workspace.load({
@@ -49,14 +55,10 @@ export function createWorkspaceSource(dependencies: WorkspaceSourceDependencies)
       }, signal))
       return { version: value.version }
     },
-    ...(dependencies.externalOpenSupported
-      ? {
-          openExternal: async (ref, signal): Promise<void> => {
-            valueOf(await dependencies.session.openWorkspacePath({
-              path: resolveWorkspacePath(dependencies.cwdOf(ref.sessionId), ref.resourceId),
-            }, signal))
-          },
-        }
-      : {}),
   }
+  Object.defineProperty(source, 'openExternal', {
+    enumerable: true,
+    get: () => dependencies.externalOpenSupported() ? openExternal : undefined,
+  })
+  return source
 }

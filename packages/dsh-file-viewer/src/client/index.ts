@@ -63,10 +63,14 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     await ctx.remote.fileViewerWorkspace.openMode(),
   )
   let externalOpenSupported = false
-  try {
-    const capability = await ctx.remote.session.canOpenWorkspacePath()
-    externalOpenSupported = capability.ok && capability.value
-  } catch { /* External open capability does not gate the viewer. */ }
+  void Promise.resolve()
+    .then(() => ctx.remote.session.canOpenWorkspacePath())
+    .then((capability) => {
+      externalOpenSupported = capability.ok && capability.value
+    })
+    .catch(() => {
+      externalOpenSupported = false
+    })
 
   const runtime = new FileViewerService()
   const face: FileViewerClientService = createFileViewerClientService(runtime, ctx.rightSidebar)
@@ -75,7 +79,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     workspace: ctx.remote.fileViewerWorkspace,
     session: ctx.remote.session,
     cwdOf: (sessionId: SessionId) => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd,
-    externalOpenSupported,
+    externalOpenSupported: () => externalOpenSupported,
   })
   const unregisterWorkspace = face.registerSource(workspace)
 
@@ -131,7 +135,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(fileViewerRemote)
   const runtime = ctx.inject(
-    ['slots', 'locale', 'modules', 'sessions', 'rightSidebar', 'remote.fileViewerWorkspace'],
+    ['slots', 'locale', 'modules', 'sessions', 'rightSidebar', 'remote.fileViewerWorkspace', 'remote.session'],
     registerRuntime,
   )
   try {

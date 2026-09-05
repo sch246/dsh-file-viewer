@@ -14,6 +14,7 @@ Provide a session-scoped text document platform in DeepSeek Harness Web. Chat ca
 - The workspace source obtains cwd from the addressed Session header and performs containment, metadata, byte reads, UTF-8 validation, and guarded writes through `ctx.fs` only.
 - A save publishes only when the source accepts the loaded version. Failure retains dirty text. Refresh refuses dirty state.
 - Chat `openMode` is `preview`, `system`, or `preview-or-system`; the last value is the default. The native action remains the terminal waterfall behavior.
+- The optional native-opener probe never gates source, listener, or tab registration. A missing or failed probe degrades only the Files toolbar's system-open action.
 - The editor graph row is present in boot composition. CodeMirror module materialization and `EditorView` creation wait for a ready document mount; network-lazy delivery is not required.
 
 ## Acceptance criteria
@@ -41,4 +42,4 @@ Provide a session-scoped text document platform in DeepSeek Harness Web. Chat ca
 
 ## Evidence status
 
-Source and focused tests define the current implementation. A temporary private Harness Home has verified that one `dsh plugin add` operation records the viewer as a Bundle and the editor as a resolvable plain dependency with both local links. No live browser run, external profile mutation, service restart, or accepted realization is recorded here.
+Source and focused tests define the current implementation. A temporary private Harness Home verified the complete target package set and browser boot before installation. The live `web` profile then recorded the viewer Bundle and editor dependency, `dsh-web` restarted active, and Chromium observed one boot entry per package plus a selected Files tab with no console or request failures. This evidence records one local deployment, not a portable realization lock or user acceptance.

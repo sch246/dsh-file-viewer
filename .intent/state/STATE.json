@@ -1,13 +1,13 @@
 {
   "$schema": "dsh-file-viewer/current-state/1",
   "id": "dsh-file-viewer",
-  "revision": "0.1.0",
+  "revision": "0.1.1",
   "status": "source-defined",
   "document": "STATE.md",
   "decisionLog": "../logs/2026-09-05-file-viewer-platform.md",
   "protocol": null,
   "acceptedRealization": null,
-  "installationStatus": "not-recorded",
+  "installationStatus": "web-live-verified-2026-09-05",
   "packages": [
     "@dsh-external/dsh-file-viewer",
     "@dsh-external/dsh-file-viewer-editor"

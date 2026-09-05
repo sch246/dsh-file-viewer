@@ -79,6 +79,8 @@ Every load returns an opaque filesystem version after checking that the file did
 | `system` | Delegate directly to Chat's native operating-system opener. |
 | `preview-or-system` | Try the Files tab, then delegate when the viewer open rejects. This is the default. |
 
+The optional native-opener probe runs after the Files source and tab register. A missing, late, or rejected `remote.session` capability leaves the toolbar's system-open action unavailable without delaying browser preview; the `system` and `preview-or-system` Chat policies continue to control terminal fallback.
+
 The **Show in folder** action continues to use Chat's native `.` request and never enters the file-viewer waterfall.
 
 -----

@@ -93,7 +93,7 @@ describe('workspace source adapter', () => {
       workspace: { load, save },
       session: { openWorkspacePath: vi.fn() },
       cwdOf: () => '/workspace',
-      externalOpenSupported: false,
+      externalOpenSupported: () => false,
     })
 
     const loaded = await source.load(documentRef, new AbortController().signal)
@@ -115,10 +115,32 @@ describe('workspace source adapter', () => {
       },
       session: { openWorkspacePath: vi.fn() },
       cwdOf: () => undefined,
-      externalOpenSupported: false,
+      externalOpenSupported: () => false,
     })
 
     await expect(source.load(documentRef, new AbortController().signal))
       .resolves.toMatchObject({ text: 'hello', version })
+  })
+
+  it('exposes native opening only after the optional capability becomes ready', async () => {
+    let supported = false
+    const openWorkspacePath = vi.fn(async () => ({ ok: true as const, value: undefined }))
+    const source = createWorkspaceSource({
+      workspace: {
+        load: async () => { throw new Error('not used') },
+        save: async () => { throw new Error('not used') },
+      },
+      session: { openWorkspacePath },
+      cwdOf: () => '/workspace',
+      externalOpenSupported: () => supported,
+    })
+
+    expect(source.openExternal).toBeUndefined()
+    supported = true
+    await expect(source.openExternal!(documentRef, new AbortController().signal)).resolves.toBeUndefined()
+    expect(openWorkspacePath).toHaveBeenCalledWith(
+      { path: '/workspace/file.txt' },
+      expect.any(AbortSignal),
+    )
   })
 })
