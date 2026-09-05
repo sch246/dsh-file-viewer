@@ -136,7 +136,7 @@ function LocationRow({
       )}
       {location.segments?.map((segment, index) => (
         <span className="dsh-file-viewer-location-segment" key={`${index}:${segment.label}`}>
-          <span aria-hidden="true">/</span>
+          {index > 0 && <span aria-hidden="true">›</span>}
           {selectable
             ? (
               <button
@@ -184,7 +184,8 @@ function ReadyPanel({
   const [showDifferences, setShowDifferences] = useState(false)
   const dirty = isFileViewerDirty(state)
   const busy = state.operation !== 'idle'
-  const canSave = state.saveSupported && dirty && state.operation !== 'saving'
+  const canSave = state.saveSupported && dirty && !busy
+    && state.syncStatus !== 'diverged' && state.syncStatus !== 'source-ahead'
   const differencesAvailable = state.latestSourceText !== undefined
     && state.syncStatus !== 'synced'
   const confirmOverwrite = () => {
@@ -204,13 +205,13 @@ function ReadyPanel({
   return (
     <section className="dsh-file-viewer-root" onKeyDown={onKeyDown}>
       <header className="dsh-file-viewer-header">
+        <LocationRow state={state} selectLocation={selectLocation} t={t} />
         <div className="dsh-file-viewer-heading">
-          <div className="dsh-file-viewer-title" title={state.title}>{state.title}</div>
+          {state.location === undefined && <div className="dsh-file-viewer-title" title={state.title}>{state.title}</div>}
           <span className={`dsh-file-viewer-status is-${state.syncStatus}`}>{t(state.syncStatus)}</span>
           {!state.saveSupported && <span className="dsh-file-viewer-readonly">{t('readOnly')}</span>}
           {dirty && <span className="dsh-file-viewer-dirty">{t('dirty')}</span>}
         </div>
-        <LocationRow state={state} selectLocation={selectLocation} t={t} />
         <div className="dsh-file-viewer-toolbar">
           <div className="dsh-file-viewer-action-group">
             <button type="button" onClick={refresh} disabled={busy}>{state.operation === 'refreshing' ? t('updating') : t('update')}</button>
@@ -224,7 +225,7 @@ function ReadyPanel({
               {t('automatic')}
             </label>
           </div>
-          <div className="dsh-file-viewer-action-group">
+          {state.saveSupported && <div className="dsh-file-viewer-action-group">
             <button type="button" onClick={requestSave} disabled={!canSave}>{state.operation === 'saving' ? t('saving') : t('save')}</button>
             <label title={state.conditionalSaveSupported ? t('autoSave') : t('autoSaveUnsupported')}>
               <input
@@ -235,14 +236,14 @@ function ReadyPanel({
               />
               {t('automatic')}
             </label>
-          </div>
+          </div>}
           {state.externalOpenSupported && <button type="button" onClick={openExternal} disabled={busy}>{t('openExternal')}</button>}
         </div>
       </header>
       {state.automationPaused && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
       {state.sourceStale && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
       {state.failure !== undefined && <div className="dsh-file-viewer-failure" role="alert">{t(failureKey(state.failure))}</div>}
-      {(state.syncStatus === 'diverged' || state.syncStatus === 'source-ahead') && (
+      {state.syncStatus === 'diverged' && (
         <div className="dsh-file-viewer-conflict" role="alert">
           <strong>{t('conflict')}</strong>
           <span>{t('conflictHelp')}</span>
@@ -251,7 +252,7 @@ function ReadyPanel({
           <button type="button" onClick={confirmDiscard} disabled={state.latestSourceText === undefined}>{t('discardLocal')}</button>
         </div>
       )}
-      {state.syncStatus !== 'diverged' && state.syncStatus !== 'source-ahead' && differencesAvailable && (
+      {state.syncStatus !== 'diverged' && differencesAvailable && (
         <button className="dsh-file-viewer-differences-toggle" type="button" onClick={() => { setShowDifferences(value => !value) }}>{t('differences')}</button>
       )}
       {showDifferences && differencesAvailable && <Differences state={state} t={t} />}
@@ -284,6 +285,7 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
   }
   return (
     <ReadyPanel
+      key={props.instanceId}
       state={state}
       edit={text => { props.edit(props.instanceId, text) }}
       save={() => { props.save(props.instanceId) }}

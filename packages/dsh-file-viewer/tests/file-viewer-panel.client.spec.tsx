@@ -93,7 +93,7 @@ describe('FileViewerPanel', () => {
   })
 
   it('saves immediately on Ctrl+S and gates automatic controls by source capabilities', () => {
-    const input = props(ready({ watchSupported: false }))
+    const input = props(ready({ watchSupported: false, syncStatus: 'local-ahead', latestSourceText: 'base', latestSourceHash: 'base-hash' }))
     const { container } = render(<FileViewerPanel {...input} />)
     const checkboxes = screen.getAllByRole('checkbox')
     expect(checkboxes).toHaveLength(2)
