@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from 'vitest'
-import { createFileViewerEditor } from '../src/client.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { redo, undo } from '@codemirror/commands'
+import { EditorView } from '@codemirror/view'
+import { createFileViewerEditor, type FileViewerEditorHandle, type FileViewerEditorOptions } from '../src/client.ts'
+import { asFileViewerEditorModule } from '../../dsh-file-viewer/src/client/editor-module.ts'
 
 class ResizeObserverStub {
   observe(): void {}
@@ -8,20 +11,32 @@ class ResizeObserverStub {
   disconnect(): void {}
 }
 
-Object.defineProperty(globalThis, 'ResizeObserver', { value: ResizeObserverStub, configurable: true })
+const handles = new Set<FileViewerEditorHandle>()
 
-afterEach(() => { document.body.replaceChildren() })
+beforeEach(() => { vi.stubGlobal('ResizeObserver', ResizeObserverStub) })
+
+afterEach(() => {
+  try {
+    for (const handle of handles) handle.destroy()
+  } finally {
+    handles.clear()
+    document.body.replaceChildren()
+    vi.unstubAllGlobals()
+  }
+})
+
+function mount(options: Partial<Omit<FileViewerEditorOptions, 'parent'>> = {}) {
+  const parent = document.createElement('div')
+  document.body.appendChild(parent)
+  const handle = createFileViewerEditor({ parent, text: 'before', readOnly: false, onChange: () => {}, ...options })
+  handles.add(handle)
+  const view = EditorView.findFromDOM(parent.querySelector('.cm-editor')!)!
+  return { handle, parent, view }
+}
 
 describe('CodeMirror editor handle', () => {
   it('updates source state without rebuilding the view and disposes its DOM', () => {
-    const parent = document.createElement('div')
-    document.body.appendChild(parent)
-    const handle = createFileViewerEditor({
-      parent,
-      text: 'before',
-      readOnly: false,
-      onChange: () => {},
-    })
+    const { parent, handle } = mount()
     const editor = parent.querySelector('.cm-editor')
 
     handle.setText('after')
@@ -30,5 +45,118 @@ describe('CodeMirror editor handle', () => {
 
     handle.destroy()
     expect(parent.childElementCount).toBe(0)
+  })
+
+  it('restores independent selection, scroll and undo history with current callbacks', () => {
+    const oldChange = vi.fn()
+    const first = mount({ text: 'first', onChange: oldChange })
+    first.view.dispatch({ changes: { from: 5, insert: ' edit' }, selection: { anchor: 1, head: 8 } })
+    first.view.scrollDOM.scrollTop = 137
+    first.view.scrollDOM.scrollLeft = 19
+    const firstState = first.handle.captureViewState()
+    first.handle.destroy()
+
+    const second = mount({ text: 'second' })
+    second.view.dispatch({ changes: { from: 6, insert: ' draft' }, selection: { anchor: 3 } })
+    second.view.scrollDOM.scrollTop = 52
+    const secondState = second.handle.captureViewState()
+    second.handle.destroy()
+
+    oldChange.mockClear()
+    const newChange = vi.fn()
+    const restoredFirst = mount({ text: 'first edit', viewState: firstState, onChange: newChange })
+    const restoredSecond = mount({ text: 'second draft', viewState: secondState })
+    expect(restoredFirst.view.state.selection.main).toMatchObject({ anchor: 1, head: 8 })
+    expect(restoredFirst.view.scrollDOM.scrollTop).toBe(137)
+    expect(restoredFirst.view.scrollDOM.scrollLeft).toBe(19)
+    expect(restoredSecond.view.state.selection.main.head).toBe(3)
+    expect(restoredSecond.view.scrollDOM.scrollTop).toBe(52)
+
+    expect(undo(restoredFirst.view)).toBe(true)
+    expect(restoredFirst.view.state.doc.toString()).toBe('first')
+    expect(newChange).toHaveBeenLastCalledWith('first')
+    expect(oldChange).not.toHaveBeenCalled()
+    expect(restoredSecond.view.state.doc.toString()).toBe('second draft')
+    expect(undo(restoredSecond.view)).toBe(true)
+    expect(restoredSecond.view.state.doc.toString()).toBe('second')
+    expect(redo(restoredFirst.view)).toBe(true)
+    expect(restoredFirst.view.state.doc.toString()).toBe('first edit')
+  })
+
+  it('uses current text and read-only permission when restoring a stale snapshot', () => {
+    const first = mount()
+    first.view.dispatch({ changes: { from: 6, insert: ' edit' }, selection: { anchor: 2, head: 6 } })
+    const viewState = first.handle.captureViewState()
+    first.handle.destroy()
+    const onChange = vi.fn()
+    const restored = mount({ text: 'new', readOnly: true, viewState, onChange })
+    expect(restored.view.state.doc.toString()).toBe('new')
+    expect(restored.view.state.selection.main).toMatchObject({ anchor: 2, head: 3 })
+    expect(restored.view.state.readOnly).toBe(true)
+    expect(onChange).not.toHaveBeenCalled()
+    const editable = mount({ text: 'new', viewState: restored.handle.captureViewState() })
+    expect(editable.view.state.readOnly).toBe(false)
+    expect(undo(editable.view)).toBe(false)
+  })
+
+  it('excludes external replacements from undo history and retains subsequent edits across remounts', () => {
+    const onChange = vi.fn()
+    const first = mount({ onChange })
+    first.view.dispatch({ selection: { anchor: 6 } })
+    first.handle.setText('new')
+    first.handle.setText('new')
+    expect(first.view.state.selection.main.head).toBe(3)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(undo(first.view)).toBe(false)
+    first.view.dispatch({ changes: { from: 3, insert: ' edit' } })
+    const restored = mount({ text: 'new edit', viewState: first.handle.captureViewState() })
+    expect(undo(restored.view)).toBe(true)
+    expect(restored.view.state.doc.toString()).toBe('new')
+    expect(undo(restored.view)).toBe(false)
+  })
+
+  it('reports selection, document and scroll updates and captures final offsets before disposal', () => {
+    const onViewStateChange = vi.fn()
+    const first = mount({ onViewStateChange })
+    first.view.dispatch({ selection: { anchor: 4 } })
+    expect(onViewStateChange).toHaveBeenCalledTimes(1)
+    first.handle.setText('updated')
+    expect(onViewStateChange).toHaveBeenCalledTimes(2)
+    first.view.scrollDOM.scrollTop = 81
+    first.view.scrollDOM.dispatchEvent(new Event('scroll'))
+    expect(onViewStateChange).toHaveBeenCalledTimes(3)
+    first.view.scrollDOM.scrollTop = 92
+    first.handle.destroy()
+    expect(onViewStateChange).toHaveBeenCalledTimes(4)
+    const restored = mount({ text: 'updated', viewState: onViewStateChange.mock.lastCall![0] })
+    expect(restored.view.state.selection.main.head).toBe(4)
+    expect(restored.view.scrollDOM.scrollTop).toBe(92)
+    first.view.scrollDOM.dispatchEvent(new Event('scroll'))
+    first.handle.destroy()
+    expect(onViewStateChange).toHaveBeenCalledTimes(4)
+    expect(first.parent.childElementCount).toBe(0)
+  })
+
+  it('disposes the view even when the final state callback throws', () => {
+    const first = mount({ onViewStateChange: () => { throw new Error('callback failed') } })
+    expect(() => first.handle.destroy()).toThrow('callback failed')
+    expect(first.parent.childElementCount).toBe(0)
+    expect(() => first.view.scrollDOM.dispatchEvent(new Event('scroll'))).not.toThrow()
+  })
+
+  it('rejects foreign view state before attaching an editor', () => {
+    const parent = document.createElement('div')
+    expect(() => createFileViewerEditor({
+      parent, text: 'source', readOnly: false, onChange: () => {}, viewState: {},
+    })).toThrow('invalid editor view state')
+    expect(parent.childElementCount).toBe(0)
+  })
+
+  it('validates the lazy module export before returning its factory', () => {
+    for (const invalid of [null, undefined, {}, { createFileViewerEditor: true }]) {
+      expect(() => asFileViewerEditorModule(invalid)).toThrow('does not export createFileViewerEditor')
+    }
+    const module = { createFileViewerEditor }
+    expect(asFileViewerEditorModule(module)).toBe(module)
   })
 })

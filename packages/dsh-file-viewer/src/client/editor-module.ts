@@ -1,12 +1,15 @@
-/** Direct CodeMirror factory shape supplied by the independent editor graph row. */
+/** Editor factory supplied by the independent graph row; view state stays opaque to the viewer. */
 export interface FileViewerEditorModule {
   createFileViewerEditor(options: {
     readonly parent: HTMLElement
     readonly text: string
     readonly readOnly: boolean
     readonly onChange: (text: string) => void
+    readonly viewState?: unknown
+    readonly onViewStateChange?: (state: unknown) => void
   }): {
     setText(text: string): void
+    captureViewState(): unknown
     destroy(): void
   }
 }
