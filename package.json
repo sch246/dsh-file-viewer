@@ -10,7 +10,8 @@
     "test": "vitest run packages/dsh-file-viewer/tests packages/dsh-file-viewer-editor/tests",
     "setup": "bash scripts/setup-host.sh",
     "uninstall": "bash scripts/uninstall-host.sh",
-    "install:local": "node scripts/install-local.mjs"
+    "install:local": "node scripts/install-local.mjs",
+    "test:setup": "node --test scripts/profile-peers.test.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.0-rc",

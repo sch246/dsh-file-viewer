@@ -5,7 +5,10 @@ import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { RightSidebarService } from '@dsh-external/dsh-right-sidebar/client'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
-vi.mock('@deepseek-ai/dsh-client-ui-chat/client', () => ({ openWorkspaceFile: vi.fn(async () => {}) }))
+vi.mock('@deepseek-ai/dsh-client-ui-chat/client', async () => {
+  const { openWorkspaceFile } = await import('../../../harness/packages/client/ui-chat/src/client/open-workspace-file.ts')
+  return { openWorkspaceFile: vi.fn(openWorkspaceFile) }
+})
 import { openWorkspaceFile } from '@deepseek-ai/dsh-client-ui-chat/client'
 import { apply, inject } from '../src/client/index.ts'
 import { RESOURCE_WORKBENCH_VIEW_ID } from '../src/client/workbench.ts'
@@ -43,7 +46,10 @@ describe('file viewer browser plugin', () => {
     const resolve = vi.fn(async () => ({ ok: true, value: { path: '/workspace/file.txt', name: 'file.txt', kind: 'file', mediaType: 'text/plain' } }))
     const fileViewer = { metadata: async () => ({ ok: true, value: { resourcePollIntervalMs: 2000 } }) }
     const userFiles = { resolve, readText }
-    ctx.provide('remote', { $mount: vi.fn(async () => async () => {}), fileViewer, userFiles } as never)
+    const session = { openWorkspacePath: vi.fn(async () => ({ ok: true, value: undefined })) }
+    ctx.provide('sessions', { list: { getSnapshot: () => ({ byId: { 'standalone-viewer': { cwd: '/workspace' } } }) } } as never)
+    ctx.provide('remote.session', session as never)
+    ctx.provide('remote', { $mount: vi.fn(async () => async () => {}), fileViewer, userFiles, session } as never)
     ctx.provide('remote.fileViewer', fileViewer as never)
     ctx.provide('remote.userFiles', userFiles as never)
     const plugin = ctx.plugin({ inject: [...inject], apply })
@@ -65,10 +71,13 @@ describe('file viewer browser plugin', () => {
     }), { preview: true, target: { fromInstanceId: 'tree', direction: 'right' } })
     expect(importModule).not.toHaveBeenCalled()
     const filesystemView = vi.mocked(rightSidebar.openInstance).mock.calls[0]![1].id
+    resolve.mockResolvedValueOnce({ ok: true, value: { path: '/workspace', name: 'workspace', kind: 'directory', mediaType: 'inode/directory' } })
     await ctx.resourceWorkbench.selectLocation(filesystemView, { path: '/workspace' })
     expect(openWorkspaceFile).toHaveBeenLastCalledWith(expect.anything(), { sessionId, path: '/workspace' })
+    expect(session.openWorkspacePath).toHaveBeenLastCalledWith({ path: '/workspace' }, undefined)
     await ctx.resourceWorkbench.openExternal(filesystemView)
     expect(openWorkspaceFile).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ sessionId, path: '/workspace/file.txt', mode: 'system', signal: expect.any(AbortSignal) }))
+    expect(session.openWorkspacePath).toHaveBeenLastCalledWith({ path: '/workspace/file.txt' }, expect.any(AbortSignal))
     const next = vi.fn(async () => {})
     const offNext = ctx.on('chat/open-workspace-file', next)
     resolve.mockResolvedValueOnce({ ok: true, value: { path: '/workspace', name: 'workspace', kind: 'directory', mediaType: 'inode/directory' } })

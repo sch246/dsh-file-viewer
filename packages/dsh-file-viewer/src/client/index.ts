@@ -215,7 +215,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
 /** @param ctx Browser Client context. @returns Plugin disposer after registration completes. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(fileViewerRemote)
-  const runtime = ctx.inject(['slots', 'locale', 'modules', 'rightSidebar', 'remote.userFiles', 'remote.fileViewer'], registerRuntime)
+  const runtime = ctx.inject(['slots', 'locale', 'modules', 'rightSidebar', 'sessions', 'remote.session', 'remote.userFiles', 'remote.fileViewer'], registerRuntime)
   try {
     await runtime
   } catch (error: unknown) {

@@ -122,9 +122,9 @@ Filesystem locations set `selectable: true`; their source `selectLocation` callb
 Select an explicit compatible `DSH_CHECKOUT` providing authenticated Remotes, `openWorkspaceFile`, and external-project Typert generation. Build its declarations and generator first, then build the independently distributed shared provider and sidebar. This checkout selects Host APIs, not build tools: this repository pins pnpm 10.17.1, TypeScript 5.9.3, tsdown 0.22.14 and Vitest 4.1.8. Setup defaults to inspection and never patches or restarts the Host.
 
 ```sh
-# Published dependencies:
+# Once compatible feature dependencies are published; generates pnpm-lock.yaml:
 pnpm install
-# For explicit local packages or versioned tarballs:
+# Prerelease route without a lockfile, using explicit local packages or tarballs:
 DSH_USER_FILES=/path/to/dsh-user-files DSH_SIDEBAR=/path/to/dsh-right-sidebar pnpm run install:local
 DSH_CHECKOUT=/path/to/deepseek-harness pnpm run typecheck
 DSH_CHECKOUT=/path/to/deepseek-harness pnpm run build
@@ -133,7 +133,9 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=we
 DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run setup --install
 ```
 
-Setup reuses installed shared-provider and sidebar versions satisfying the viewer peer ranges. For an absent shared provider, setup uses the distributed provider resolved by this development installation; `DSH_USER_FILES` selects that resolution during `install:local`. Supply `DSH_SIDEBAR` as a package directory or tarball for an absent sidebar. Setup adds missing peers in the same plugin transaction. Incompatible installed versions fail before mutation so their existing consumers can be reconciled. Build generates viewer Host metadata, Remote declarations, Client code and editor artifacts with repository-local executables. `resourcePollIntervalMs` belongs to the viewer Bundle and defaults to 2000 ms there; provider read limits remain provider configuration. Install adds the viewer Bundle and the independent CodeMirror package in one profile operation. The viewer Bundle contributes the source-neutral Client service and editor renderer; the editor package remains a plain dependency and separate browser graph row. An external operator controls service activation.
+The prerelease `install:local` command uses `--lockfile=false`; it does not create a portable dependency lock. Normal `pnpm install` regenerates a lockfile after compatible dependencies are available from the registry. Tarballs are installation inputs and are not tracked in this repository.
+
+Setup reuses installed shared-provider and sidebar versions satisfying the viewer peer ranges. For an absent shared provider, setup uses the distributed provider resolved by this development installation; `DSH_USER_FILES` selects that resolution during `install:local`. Supply `DSH_SIDEBAR` as a package directory or tarball for an absent sidebar. Setup adds missing peers in the same plugin transaction. Sidebar package directories and tarballs are checked for their package name and compatible version before the transaction. Incompatible installed versions fail before mutation so their existing consumers can be reconciled. Build generates viewer Host metadata, Remote declarations, Client code and editor artifacts with repository-local executables. `resourcePollIntervalMs` belongs to the viewer Bundle and defaults to 2000 ms there; provider read limits remain provider configuration. Install adds the viewer Bundle and the independent CodeMirror package in one profile operation. The viewer Bundle contributes the source-neutral Client service and editor renderer; the editor package remains a plain dependency and separate browser graph row. An external operator controls service activation.
 
 -----
 
