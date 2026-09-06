@@ -7,7 +7,7 @@ kind: "package-bundle"
 
 ## Summary
 
-This Bundle adds a generic resource-opening service and one reusable right-sidebar renderer to a Web profile. Client plugins can register content providers, lazy handlers and independent resource views. Add the Bundle together with its text-editor dependency through the repository setup command; the file-manager plugin independently provides filesystem sources and navigation.
+This Bundle adds a generic resource-opening service and one reusable right-sidebar renderer to a Web profile. Client plugins can register content providers, lazy handlers and independent resource views. Add the Bundle together with its text-editor dependency through the repository setup command; the shared `@dsh-external/dsh-user-files` provider supplies authenticated file access while manager directory navigation is optional.
 
 ## Table of Contents
 
@@ -35,7 +35,7 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=we
 
 The Bundle inserts the browser `@dsh-external/dsh-file-viewer` row and the independent `@dsh-external/dsh-file-viewer-editor` graph row. The browser service exposes generic source, handler and opening actions through `ctx.resourceWorkbench`. Each resource view uses the static `resource-workbench` sidebar renderer; its selected text, image or contributed handler module loads on demand.
 
-The Bundle registers no file source or right-sidebar launcher. A provider independently supplies text or bytes, optional guarded writes and watches, opaque revisions, and optional source-location selection. The file-manager plugin owns the user filesystem provider, native-open capability and Files launcher; resource-links owns Chat opening policy.
+The Bundle registers the `filesystem` source before restoration and file-opening consumers. Its shared provider supplies bounded text/bytes and revision-guarded saves independently of Links enablement. Viewer handles supported files through `chat/open-workspace-file`; directories and unsupported handlers delegate. Breadcrumbs and explicit system opening use the same Host helper. The viewer metadata Remote supplies `resourcePollIntervalMs` (2000 ms in the Bundle); provider limits and manager directory polling stay with their respective owners. Other sources can still register independent content capabilities and source-owned location selection.
 
 Synchronization defaults initialize newly opened text documents; changes leave existing document choices intact. Exact document references share automation across views, while separate documents own independent choices. Draft restoration retains those choices. See [synchronization](../../README.md#synchronize-a-document) for source defaults, capability requirements and global-default subscriptions.
 

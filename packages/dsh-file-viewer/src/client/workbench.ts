@@ -175,6 +175,7 @@ function jsonSafeLocation(location: ResourceDescriptor['location']): ResourceDes
     return {
       ...(location.label === undefined ? {} : { label: location.label }),
       ...(location.selectorId === undefined ? {} : { selectorId: location.selectorId }),
+      ...(location.selectable === undefined ? {} : { selectable: location.selectable }),
       ...(location.segments === undefined ? {} : {
         segments: location.segments.map(segment => ({ label: segment.label })),
       }),
@@ -219,6 +220,7 @@ function parsePersistedLocation(value: unknown): ResourceDescriptor['location'] 
   const row = value as Record<string, unknown>
   if ((row.label !== undefined && typeof row.label !== 'string')
     || (row.selectorId !== undefined && typeof row.selectorId !== 'string')
+    || (row.selectable !== undefined && typeof row.selectable !== 'boolean')
     || (row.segments !== undefined && !Array.isArray(row.segments))) return false
   const segments: { label: string; selectionHint?: unknown }[] = []
   if (Array.isArray(row.segments)) {
@@ -235,6 +237,7 @@ function parsePersistedLocation(value: unknown): ResourceDescriptor['location'] 
   return {
     ...(row.label === undefined ? {} : { label: row.label }),
     ...(row.selectorId === undefined ? {} : { selectorId: row.selectorId }),
+    ...(row.selectable === undefined ? {} : { selectable: row.selectable }),
     ...(row.segments === undefined ? {} : { segments }),
   }
 }
@@ -747,12 +750,17 @@ export class ResourceWorkbenchRuntime {
     this.#views.get(viewId)?.handlerStates.set(handlerId, state)
   }
 
-  /** Delegate a source-owned location to its registered sidebar selector. */
+  /** Delegate source-owned selection or launch its registered sidebar selector. */
   async selectLocation(viewId: string, selection?: unknown): Promise<void> {
     const view = this.#view(viewId)
     view.failure = undefined
     this.#notify(view)
     try {
+      const source = this.#sources.get(view.descriptor.ref.sourceId)
+      if (source?.selectLocation !== undefined) {
+        await source.selectLocation(view.descriptor.ref, selection)
+        return
+      }
       const location = view.descriptor.location
       if (location?.selectorId !== undefined) {
         await this.#host.launch(view.descriptor.ref.sessionId, location.selectorId, selection)

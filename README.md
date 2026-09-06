@@ -2,7 +2,7 @@
 
 ## Summary
 
-This repository adds generic resource opening to the DeepSeek Harness Web right-sidebar workbench. Client plugins register sources and lazy handlers through `ctx.resourceWorkbench`; text, bytes and source metadata remain separate capabilities. The built-in text editor keeps exact Base, Local and Source state, while the image handler reads bytes without decoding them as text. The separate file-manager plugin supplies user filesystem access and navigation; resource-links owns Chat path recognition and opening policy.
+This repository adds generic resource opening to the DeepSeek Harness Web right-sidebar workbench. Client plugins register sources and lazy handlers through `ctx.resourceWorkbench`; text, bytes and source metadata remain separate capabilities. The built-in text editor keeps exact Base, Local and Source state, while the image handler reads bytes without decoding them as text. The viewer owns the `filesystem` source over `@dsh-external/dsh-user-files`. Sidebar and that shared authenticated provider are required; manager directory navigation and Links recognition are independent optional features. All filesystem clicks use the Host `openWorkspaceFile` helper and its common opening policy.
 
 ## Table of Contents
 
@@ -112,17 +112,20 @@ Base and Local text can contain sensitive source content. Retention stays in the
 
 A resource descriptor or loaded content can include a plain location label and segments. When it also includes a `selectorId`, selecting the label or a segment launches that registered right-sidebar selector with the source-owned `selectionHint`. The workbench treats labels and hints as opaque values and assumes no path syntax.
 
-The file-manager plugin uses this mechanism for filesystem locations. Memory, generated and remote-backed sources can omit selectors or register their own launcher.
+Filesystem locations set `selectable: true`; their source `selectLocation` callback routes breadcrumb paths through the common Host helper. Manager handles directories when installed; otherwise Host can use its native opener. Other sources can supply `selectLocation`, register a sidebar selector, or omit selection. Persisted source hints remain JSON-safe and opaque to the generic workbench.
 
 -----
 
 <a id="build-and-install"></a>
 ## Build and install
 
-Use an explicit DeepSeek Harness `0.1.2-alpha.2` checkout. Setup defaults to read-only inspection and does not patch Harness source or restart a service.
+Select an explicit compatible `DSH_CHECKOUT` providing authenticated Remotes, `openWorkspaceFile`, and external-project Typert generation. Build its declarations and generator first, then build the independently distributed shared provider and sidebar. This checkout selects Host APIs, not build tools: this repository pins pnpm 10.17.1, TypeScript 5.9.3, tsdown 0.22.14 and Vitest 4.1.8. Setup defaults to inspection and never patches or restarts the Host.
 
 ```sh
+# Published dependencies:
 pnpm install
+# For explicit local packages or versioned tarballs:
+DSH_USER_FILES=/path/to/dsh-user-files DSH_SIDEBAR=/path/to/dsh-right-sidebar pnpm run install:local
 DSH_CHECKOUT=/path/to/deepseek-harness pnpm run typecheck
 DSH_CHECKOUT=/path/to/deepseek-harness pnpm run build
 
@@ -130,14 +133,14 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=we
 DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run setup --install
 ```
 
-Install adds the viewer Bundle and the independent CodeMirror package in one profile operation. The viewer Bundle contributes the source-neutral Client service and editor renderer; the editor package remains a plain dependency and separate browser graph row. An external operator controls service activation.
+Setup reuses installed shared-provider and sidebar versions satisfying the viewer peer ranges. For an absent shared provider, setup uses the distributed provider resolved by this development installation; `DSH_USER_FILES` selects that resolution during `install:local`. Supply `DSH_SIDEBAR` as a package directory or tarball for an absent sidebar. Setup adds missing peers in the same plugin transaction. Incompatible installed versions fail before mutation so their existing consumers can be reconciled. Build generates viewer Host metadata, Remote declarations, Client code and editor artifacts with repository-local executables. `resourcePollIntervalMs` belongs to the viewer Bundle and defaults to 2000 ms there; provider read limits remain provider configuration. Install adds the viewer Bundle and the independent CodeMirror package in one profile operation. The viewer Bundle contributes the source-neutral Client service and editor renderer; the editor package remains a plain dependency and separate browser graph row. An external operator controls service activation.
 
 -----
 
 <a id="remove-the-packages"></a>
 ## Remove the packages
 
-Removal deletes both profile dependencies in one operation. It does not change Harness source or restart a service.
+Removal deletes viewer and editor profile dependencies in one operation and retains sidebar and the shared provider for other consumers. It does not change Harness source or restart a service.
 
 ```sh
 DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run uninstall --check
@@ -158,4 +161,4 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=we
 <a id="dev-note"></a>
 ## Dev Note
 
-The tracked compatibility patch and its historical receipt are outside viewer setup and uninstall. Current manager scripts also perform no receipt transfer; resource-links owns only its incremental adapter and matching receipt. See the [Host ownership limits](.intent/state/STATE.md#host-adaptation-and-ownership-limits) before adapting or removing an integrated Host.
+The Host owns the common opening helper; external-project Typert support remains owned by its existing capability provider. Viewer distributes no Host patch and setup/uninstall never reverse historical adaptations. Inspect existing receipts when adapting an older Host; preserve skill-manager support and unrelated Host changes. Current build and installation evidence belongs in the [local log](.intent/logs/2026-09-06-independent-feature-dependencies.md).

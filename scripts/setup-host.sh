@@ -23,6 +23,7 @@ run_plugin() {
 }
 
 verify_profile_install() {
+  node "$ROOT/scripts/profile-peers.mjs" verify "$PROFILE_DIR"
   run_plugin why "$VIEWER_NAME"
   run_plugin why "$EDITOR_NAME"
   node - "$PROFILE_DIR/package.json" <<'NODE'
@@ -54,7 +55,10 @@ case "$MODE" in
     ;;
   --install)
     DSH_CHECKOUT="$CHECKOUT" bash "$ROOT/scripts/build-host.sh"
-    run_plugin add "$VIEWER_PACKAGE" "$EDITOR_PACKAGE"
+    peer_sources="$(node "$ROOT/scripts/profile-peers.mjs" prepare "$PROFILE_DIR")"
+    peer_packages=()
+    if [ -n "$peer_sources" ]; then mapfile -t peer_packages <<<"$peer_sources"; fi
+    run_plugin add "${peer_packages[@]}" "$VIEWER_PACKAGE" "$EDITOR_PACKAGE"
     verify_profile_install
     echo "setup: installed viewer bundle and editor dependency into profile $PROFILE"
     echo 'setup: no Harness source or service was changed; Bundle membership activates at the next externally managed start'

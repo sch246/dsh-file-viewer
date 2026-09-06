@@ -35,6 +35,8 @@ export interface ResourceLocation {
   readonly label?: string
   readonly segments?: readonly { readonly label: string; readonly selectionHint?: unknown }[]
   readonly selectorId?: string
+  /** The source supplies location selection without a sidebar launcher. */
+  readonly selectable?: boolean
 }
 
 /** Metadata used for handler selection and workbench presentation. */
@@ -80,6 +82,8 @@ export type TextDocumentSnapshot = FileViewerInstanceSnapshot
 export interface ResourceSource {
   readonly id: ResourceSourceId
   readonly defaults?: Partial<ResourceAutomationPreferences>
+  /** @param ref Exact resource identity. @param selection Persisted source-owned hint. @returns Nothing after opening the location. */
+  selectLocation?(ref: ResourceRef, selection?: unknown): Promise<void>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Canonical source text and revision. */
   readText?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedText>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Opaque source bytes and revision. */

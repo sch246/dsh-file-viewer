@@ -19,7 +19,7 @@ function ResourceLocation({
   if (location === undefined || (location.label === undefined && location.segments === undefined)) {
     return <nav className="dsh-file-viewer-location" aria-label={label}>{service.snapshot(viewId).descriptor.name}</nav>
   }
-  const selectable = location.selectorId !== undefined
+  const selectable = location.selectable === true || location.selectorId !== undefined
   return (
     <nav className="dsh-file-viewer-location" aria-label={label}>
       {location.label !== undefined && (

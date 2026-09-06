@@ -1,0 +1,17 @@
+import type { Context } from '@deepseek-ai/cordis'
+import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import type { FileViewerMetadata } from './types.ts'
+
+/** Authenticated metadata for the viewer's filesystem source. */
+export class FileViewerRemote extends TypertRemoteService {
+  /** @param ctx Host context. @param config Validated viewer configuration. */
+  constructor(ctx: Context, private readonly config: FileViewerMetadata) {
+    super(ctx, 'fileViewer', { namespace: 'fileViewer' })
+  }
+
+  /** @returns Delay between completed resource polls while subscribed. */
+  @Remote('metadata')
+  metadata(): FileViewerMetadata {
+    return this.config
+  }
+}

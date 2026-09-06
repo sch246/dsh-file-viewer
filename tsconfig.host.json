@@ -1,0 +1,18 @@
+{
+  "extends": "./harness/tsconfig.base.json",
+  "files": [],
+  "references": [
+    {
+      "path": "./harness/vendor/cordis"
+    },
+    {
+      "path": "./harness/vendor/schemastery"
+    },
+    {
+      "path": "./harness/packages/typert/protocol"
+    },
+    {
+      "path": "./packages/dsh-file-viewer/tsconfig.host.json"
+    }
+  ]
+}

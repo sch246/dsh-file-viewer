@@ -1,4 +1,10 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type {} from '@dsh-external/dsh-user-files/remote'
+import { openWorkspaceFile } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import fileViewerRemote from '@dsh-external/dsh-file-viewer/remote'
+import { FilesystemResourceSource } from './filesystem-source.ts'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-modules/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
@@ -66,7 +72,7 @@ export type {
 } from './service.ts'
 
 /** Client services required by generic resource views. */
-export const inject = ['slots', 'locale', 'modules', 'rightSidebar']
+export const inject = ['remote']
 
 function textMatch(
   descriptor: ResourceDescriptor,
@@ -93,7 +99,13 @@ function imageMatch(
     : false
 }
 
+function valueOf<T>(result: RemoteResult<T>): T {
+  if (result.ok) return result.value
+  throw result.error
+}
+
 async function registerRuntime(ctx: Context): Promise<() => void> {
+  const metadata = valueOf(await ctx.remote.fileViewer.metadata())
   const t = ctx.locale.bind(NS)
   const host = createResourceViewHost(ctx.rightSidebar)
   const runtime = new ResourceWorkbenchRuntime({
@@ -135,7 +147,35 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   }
   const offTextHandler = runtime.registerHandler(textHandler)
   const offImageHandler = runtime.registerHandler(imageHandler)
+  const source = new FilesystemResourceSource({
+    readText: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.readText({ sessionId, path }, signal)),
+    readBytes: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.readBytes({ sessionId, path }, signal)),
+    saveText: async (sessionId, path, text, version, signal) => valueOf(await ctx.remote.userFiles.saveText({ sessionId, path, text, version }, signal)),
+    saveBytes: async (sessionId, path, dataBase64, version, signal) => valueOf(await ctx.remote.userFiles.saveBytes({ sessionId, path, dataBase64, version }, signal)),
+    openLocation: async (sessionId, path) => { await openWorkspaceFile(ctx, { sessionId, path }) },
+    openExternal: async (sessionId, path, signal) => {
+      signal.throwIfAborted()
+      await openWorkspaceFile(ctx, { sessionId, path, mode: 'system', signal })
+    },
+  }, metadata.resourcePollIntervalMs)
+  const offSource = runtime.registerSource(source)
   const offRestorer = runtime.registerRestorer()
+  const offOpen = ctx.on('chat/open-workspace-file', async (request, next) => {
+    const resolved = valueOf(await ctx.remote.userFiles.resolve({ sessionId: request.sessionId, path: request.path }, request.signal))
+    if (resolved.kind !== 'file') return next()
+    const descriptor: ResourceDescriptor = {
+      ref: { sessionId: request.sessionId, sourceId: source.id, resourceId: resolved.path },
+      name: resolved.name,
+      kind: resolved.kind,
+      ...(resolved.mediaType === undefined ? {} : { mediaType: resolved.mediaType }),
+      ...(resolved.size === undefined ? {} : { size: resolved.size }),
+    }
+    if (runtime.listOpenWith(descriptor).length === 0) return next()
+    await runtime.open(descriptor, {
+      ...(request.preview === undefined ? {} : { preview: request.preview }),
+      ...(request.target === undefined ? {} : { target: request.target }),
+    })
+  })
 
   const offPagePersistence = ctx.effect(() => {
     const flush = () => { runtime.flushDrafts() }
@@ -160,24 +200,28 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   }, ResourceWorkbenchPanel))
 
   return () => {
+    offOpen()
     offPagePersistence()
     offRestorer()
     offView()
     offPresentation()
     offImageHandler()
     offTextHandler()
+    offSource()
     runtime.dispose()
   }
 }
 
 /** @param ctx Browser Client context. @returns Plugin disposer after registration completes. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
-  const runtime = ctx.inject(['slots', 'locale', 'modules', 'rightSidebar'], registerRuntime)
+  const disposeRemote = await ctx.remote.$mount(fileViewerRemote)
+  const runtime = ctx.inject(['slots', 'locale', 'modules', 'rightSidebar', 'remote.userFiles', 'remote.fileViewer'], registerRuntime)
   try {
     await runtime
   } catch (error: unknown) {
     await runtime.dispose()
+    await disposeRemote()
     throw error
   }
-  return async () => { await runtime.dispose() }
+  return async () => { await runtime.dispose(); await disposeRemote() }
 }
