@@ -9,6 +9,7 @@ import type {
   FileViewerInstanceSnapshot,
 } from './service.ts'
 import { isFileViewerDirty } from './service.ts'
+import { useSyncAge } from './sync-age.ts'
 import { usePendingDots } from './pending-dots.ts'
 import { defaultLineNumbers, setDefaultLineNumbers, subscribeLineNumberDefault } from './line-number-default.ts'
 
@@ -280,6 +281,7 @@ function ReadyPanel({
   const { updating, saving } = state.activities
   const updateDots = usePendingDots(updating)
   const saveDots = usePendingDots(saving)
+  const syncAge = useSyncAge(state.lastSyncedAt, ready !== undefined && !state.automation.autoUpdate, t)
   const collapse = () => { changePresentation({ expanded: false }) }
   useEffect(() => {
     const outside = (event: PointerEvent) => {
@@ -293,7 +295,7 @@ function ReadyPanel({
   const dirty = isFileViewerDirty(state)
   const busy = state.operation !== 'idle'
   const canSave = ready?.saveSupported && dirty && !busy && state.loadConfirmation === undefined
-    && ready?.syncStatus !== 'diverged' && ready?.syncStatus !== 'source-ahead'
+    && (ready?.deltaSaveSupported || (ready?.syncStatus !== 'diverged' && ready?.syncStatus !== 'source-ahead'))
   const confirmOverwrite = () => {
     if (confirm(t('confirmOverwrite'))) overwriteSource()
   }
@@ -338,6 +340,7 @@ function ReadyPanel({
           {state.sizeTier !== 'normal' && <span className="dsh-file-viewer-warning" role="img"
             aria-label={t(state.sizeTier === 'huge' ? 'hugeDocument' : 'largeDocument')} title={t(state.sizeTier === 'huge' ? 'hugeDocument' : 'largeDocument')}>!</span>}
           <span role="status">{t(ready?.syncStatus)}</span>
+          {syncAge !== undefined && <span>{syncAge}</span>}
           {updating && <span className="dsh-file-viewer-activity" role="status">
             {t('updating')}<span className="dsh-file-viewer-pending-dots" aria-hidden="true">{updateDots}</span>
           </span>}
@@ -371,6 +374,7 @@ function ReadyPanel({
         </div>
       </div>
       <LoadConfirmation state={state} onLoad={confirmLoad} t={t} />
+      {ready?.savedWithOtherChanges && <div className="dsh-file-viewer-notice" role="status">{t('savedOtherChanges')}</div>}
       {ready?.automationPaused && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
       {ready?.sourceStale && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
       {state.failure !== undefined && <div className="dsh-file-viewer-failure" role="alert">
@@ -381,7 +385,7 @@ function ReadyPanel({
         <div className="dsh-file-viewer-conflict" role="alert">
           <strong>{t('conflict')}</strong>
           <span>{t('conflictHelp')}</span>
-          {ready?.saveSupported && <button type="button" onClick={confirmOverwrite}>{t('overwriteSource')}</button>}
+          {ready?.saveSupported && <button type="button" onClick={confirmOverwrite} disabled={ready.deltaSaveSupported && (ready.sourceStale || ready.latestSourceText === undefined)}>{t('overwriteSource')}</button>}
           <button type="button" onClick={confirmDiscard} disabled={ready?.latestSourceText === undefined}>{t('discardLocal')}</button>
         </div>
       )}

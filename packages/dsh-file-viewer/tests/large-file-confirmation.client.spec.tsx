@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { webcrypto } from 'node:crypto'
+import { diffTextLines } from '../../dsh-file-viewer-editor/src/line-diff.ts'
+import { hashFileViewerText } from '../src/client/service.ts'
+import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { ResourceWorkbenchPanel } from '../src/client/ResourceWorkbenchPanel.tsx'
 import { formatFileSize } from '../src/client/file-size.ts'
 import type { ResourceTextAccess } from '../src/client/resource.ts'
@@ -11,7 +14,8 @@ import { FilesystemResourceSource, type FilesystemSourceGateway } from '../src/c
 import { en } from '../src/client/locales.ts'
 
 const runtimes: ResourceWorkbenchRuntime[] = []
-afterEach(() => { cleanup(); for (const runtime of runtimes.splice(0)) runtime.dispose(); vi.useRealTimers() })
+beforeEach(() => { vi.stubGlobal('crypto', webcrypto) })
+afterEach(() => { cleanup(); for (const runtime of runtimes.splice(0)) runtime.dispose(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeFileBytes?: number } = {}, initialSize = initial.length, streamText?: FilesystemSourceGateway['streamText']) {
   const hosted = new Map<string, Parameters<ResourceViewHost['open']>[1]>()
@@ -49,18 +53,25 @@ function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeF
       contentRead()
       return { path, text: disk, version: revision, sizeBytes: diskSize }
     }),
-    saveText: vi.fn(async (_session, _path, text, version, signal, access) => {
+    patchText: vi.fn(async (_session, _path, ranges, signal, access) => {
+      const lines = disk.match(/[^\n]*\n|[^\n]+$/g) ?? []
+      let text = '', end = 0
+      for (const range of ranges) {
+        if (await hashFileViewerText(lines.slice(range.startLine, range.startLine + range.lineCount).join('')) !== range.expectedHash) throw new Error('conflict')
+        text += lines.slice(end, range.startLine).join('') + range.replacement
+        end = range.startLine + range.lineCount
+      }
+      text += lines.slice(end).join('')
       signal.throwIfAborted()
       gate(diskSize, access)
-      if (version !== revision) throw new Error('conflict')
       disk = text
       diskSize = text.length
       revision += 's'
-      return { version: revision, sizeBytes: diskSize }
+      return { version: revision, sizeBytes: diskSize, canonicalHash: disk }
     }),
     readBytes: vi.fn(), saveBytes: vi.fn(),
   }
-  const source = new FilesystemResourceSource(gateway, 50)
+  const source = new FilesystemResourceSource(gateway, 50, async (base, text) => diffTextLines(base, text))
   const offSource = runtime.registerSource(source)
   runtime.registerHandler({ id: TEXT_RESOURCE_HANDLER_ID, label: 'text', match: () => ({ role: 'default' }), load: async () => ({ View: () => null }) })
   const service = createResourceWorkbenchClientService(runtime)
@@ -97,7 +108,7 @@ it('shows a neutral size prompt and only fetches, hashes, creates an editor and 
   expect(f.storage.setItem).toHaveBeenCalledTimes(1)
   await act(async () => { f.service.editText(viewId, 'edited large text') })
   await act(async () => { await f.service.saveText(viewId) })
-  expect(f.gateway.saveText).toHaveBeenCalledWith('session', '/file.txt', 'edited large text', 'v1', expect.any(AbortSignal), { allowLargeFile: true })
+  expect(f.gateway.patchText).toHaveBeenCalledWith('session', '/file.txt', [expect.objectContaining({ replacement: 'edited large text', expectedHash: expect.stringMatching(/^[a-f0-9]{64}$/) })], expect.any(AbortSignal), { allowLargeFile: true })
   expect(f.service.textSnapshot(viewId)).toMatchObject({ syncStatus: 'synced', text: 'edited large text' })
 })
 
@@ -142,7 +153,7 @@ it('pauses polls on growth, retains local text, and resumes authorized polling a
   await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
   await act(async () => { await f.service.saveText(view) })
   expect(f.gateway.readText).toHaveBeenCalledTimes(calls)
-  expect(f.gateway.saveText).not.toHaveBeenCalled()
+  expect(f.gateway.patchText).not.toHaveBeenCalled()
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.loadFile })) })
   expect(f.createEditor).toHaveBeenCalledTimes(1)
   expect(f.service.textSnapshot(view)).toMatchObject({ status: 'ready', text: 'local edit', latestSourceText: 'external growth', syncStatus: 'diverged' })
@@ -162,7 +173,7 @@ it('saves already-local growth without a loading prompt or content reload', asyn
   expect(f.service.textSnapshot(view)).toMatchObject({ text: 'long local edits', syncStatus: 'synced', sizeBytes: 16, draftPersistence: false })
   expect(f.service.textSnapshot(view).loadConfirmation).toBeUndefined()
   expect(f.contentRead).toHaveBeenCalledTimes(1)
-  expect(f.gateway.saveText).toHaveBeenCalledTimes(1)
+  expect(f.gateway.patchText).toHaveBeenCalledTimes(1)
 })
 
 it('aborts an approved in-flight read when its last view closes and ignores a source that completes late', async () => {
@@ -340,7 +351,7 @@ it('shows the first stream chunk immediately, coalesces appends, and only enable
   await f.service.overwriteSourceText(view)
   expect(f.hashText).not.toHaveBeenCalled()
   expect(f.storage.setItem).not.toHaveBeenCalled()
-  expect(f.gateway.saveText).not.toHaveBeenCalled()
+  expect(f.gateway.patchText).not.toHaveBeenCalled()
   await act(async () => { end.resolve(); await loading })
   expect(f.service.textSnapshot(view)).toMatchObject({ status: 'ready', text: 'first last', baseVersion: 'v1' })
   expect(f.hashText).toHaveBeenCalledTimes(1)
@@ -381,5 +392,5 @@ it('keeps stopped or failed partial text read-only, retries from the start and p
   expect(f.storage.removeItem).not.toHaveBeenCalled()
   await act(async () => { await f.service.refreshText(view) })
   expect(f.service.textSnapshot(view)).toMatchObject({ status: 'ready', text: 'saved edits', latestSourceText: 'first last' })
-  expect(f.gateway.saveText).not.toHaveBeenCalled()
+  expect(f.gateway.patchText).not.toHaveBeenCalled()
 })

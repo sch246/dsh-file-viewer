@@ -1,5 +1,6 @@
 /** Editable local text and a readonly source pane share baseline rows and measured wrap heights. */
 import { Compartment, EditorSelection, EditorState, StateEffect, StateField, Text, Transaction, type Range } from '@codemirror/state'
+export { diffTextLines } from './line-diff.ts'
 import { history, historyKeymap } from '@codemirror/commands'
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, keymap, lineNumbers, type DecorationSet } from '@codemirror/view'
 import { buildComparison, type ComparisonCell, type ComparisonSide } from './alignment.ts'

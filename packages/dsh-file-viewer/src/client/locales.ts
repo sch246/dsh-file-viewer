@@ -17,6 +17,7 @@ export type FileViewerLocaleKey =
   | 'unsupportedResource' | 'handlerFailed' | 'textHandler' | 'imageHandler'
   | 'handlerLoading'
   | 'globalAutoUpdate' | 'globalAutoSave'
+  | 'syncedJustNow' | 'syncedSecondsAgo' | 'syncedMinutesAgo' | 'syncedHoursAgo' | 'syncedDaysAgo' | 'savedOtherChanges'
   | 'incompleteFile' | 'stopLoading' | 'retryLoading'
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
@@ -31,6 +32,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const en: Record<FileViewerLocaleKey, string> = {
+  syncedJustNow: 'Synced just now',
+  syncedSecondsAgo: 'Synced {seconds}s ago',
+  syncedMinutesAgo: 'Synced {minutes}m ago',
+  syncedHoursAgo: 'Synced {hours}h {minutes}m ago',
+  syncedDaysAgo: 'Synced {days}d ago',
+  savedOtherChanges: 'Your changes were saved. The source also contains other changes; refresh to view them. Automatic synchronization is paused.',
   incompleteFile: 'Incomplete file — read-only. Editing becomes available after loading finishes.',
   stopLoading: 'Stop loading',
   retryLoading: 'Retry loading',
@@ -107,6 +114,12 @@ export const en: Record<FileViewerLocaleKey, string> = {
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
+  syncedJustNow: '刚刚同步',
+  syncedSecondsAgo: '同步于{seconds}秒前',
+  syncedMinutesAgo: '同步于{minutes}分钟前',
+  syncedHoursAgo: '同步于{hours}小时{minutes}分前',
+  syncedDaysAgo: '同步于{days}天前',
+  savedOtherChanges: '你的修改已保存，源文件还包含其他变化。可更新查看；自动同步已暂停。',
   incompleteFile: '文件尚未加载完整，当前只读。加载完成后可编辑。',
   stopLoading: '停止加载',
   retryLoading: '重新加载',

@@ -7,6 +7,9 @@ export interface FileViewerComparison {
 
 /** Editor factory supplied by the independent graph row; view state stays opaque to the viewer. */
 export interface FileViewerEditorModule {
+  /** @param base Canonical Base. @param local Captured Local. @returns Original-coordinate line changes with guarded insertion context. */
+  diffTextLines(base: string, local: string): readonly { readonly startLine: number; readonly lineCount: number; readonly oldText: string; readonly replacement: string }[]
+
   createFileViewerEditor(options: {
     readonly parent: HTMLElement
     readonly text: string

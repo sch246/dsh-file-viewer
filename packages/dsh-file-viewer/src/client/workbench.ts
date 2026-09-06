@@ -323,6 +323,9 @@ export class ResourceWorkbenchRuntime {
             }
           },
         }),
+        ...(source.saveTextDelta === undefined ? {} : {
+          saveDelta: (ref, baseText, text, signal, access) => source.saveTextDelta!(ref as unknown as ResourceRef, baseText, text, signal, access),
+        }),
         ...(source.saveText === undefined ? {} : {
           save: (ref, text, version, signal, access) => source.saveText!(ref as unknown as ResourceRef, text, version, signal, access),
         }),

@@ -96,6 +96,25 @@ describe('FileViewerPanel', () => {
     await waitFor(() => { expect(container.querySelector('[data-editor="mounted"]')).toBeTruthy() })
   })
 
+  it('permits guarded manual saves across source relationships and keeps synchronization age beside status', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(11_000)
+    for (const syncStatus of ['source-ahead', 'diverged', 'unknown'] as const) {
+      const input = props(ready({ syncStatus, deltaSaveSupported: true, lastSyncedAt: 1000,
+        savedWithOtherChanges: syncStatus === 'unknown', sourceStale: syncStatus === 'unknown' }))
+      const view = render(<FileViewerPanel {...input} />)
+      await act(async () => { await Promise.resolve() })
+      fireEvent.focus(screen.getByTitle(en.synchronization))
+      expect(screen.getByText('Synced 10s ago')).toBeTruthy()
+      expect(screen.getByText(en[syncStatus])).toBeTruthy()
+      const save = screen.getByRole('button', { name: en.save }) as HTMLButtonElement
+      expect(save.disabled).toBe(false)
+      fireEvent.click(save)
+      expect(input.save).toHaveBeenCalledWith(instanceId)
+      if (syncStatus === 'unknown') expect(screen.getByText(en.savedOtherChanges)).toBeTruthy()
+      view.unmount()
+    }
+  })
+
   it('marks a long document in the permanent status without withholding any control', async () => {
     const comparisons: unknown[] = []
     const base = props(ready({

@@ -2,6 +2,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
   ResourceSourceId,
   ResourceMissingError,
+  ResourceSaveConflictError,
   ResourceConfirmationRequiredError,
   type ResourceTextAccess,
   type ResourceBytesWatchEvent,
@@ -11,9 +12,10 @@ import {
   type ResourceSource,
   type ResourceTextWatchEvent,
 } from './resource.ts'
-import { isMissingResourceError, isConfirmationRequiredError } from './service.ts'
+import type { FileViewerEditorModule } from './editor-module.ts'
+import { hashFileViewerText, isMissingResourceError, isConfirmationRequiredError } from './service.ts'
 import type {
-  UserFileBytesDocument, UserFileRevision, UserFileTextDocument, UserFileSaveResult, UserFileTextStreamEvent,
+  UserFileBytesDocument, UserFileRevision, UserFileTextDocument, UserFileSaveResult, UserFileTextStreamEvent, UserFileTextPatch, UserFilePatchResult,
 } from '@dsh-external/dsh-user-files/types'
 
 /** Filesystem-source operations implemented by the generated Remote adapter. */
@@ -21,14 +23,7 @@ export interface FilesystemSourceGateway {
   streamText?(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): AsyncIterable<UserFileTextStreamEvent>
   readText(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileTextDocument>
   readBytes(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileBytesDocument>
-  saveText(
-    sessionId: SessionId,
-    path: string,
-    text: string,
-    version: UserFileRevision,
-    signal: AbortSignal,
-    access?: ResourceTextAccess,
-  ): Promise<UserFileSaveResult>
+  patchText(sessionId: SessionId, path: string, ranges: readonly UserFileTextPatch[], signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFilePatchResult>
   saveBytes(
     sessionId: SessionId,
     path: string,
@@ -158,17 +153,18 @@ function watchLoaded<T extends { readonly version?: unknown }>(
 /** Generic resource source backed by the authenticated user-filesystem Remote. */
 export class FilesystemResourceSource implements ResourceSource {
   readonly id = ResourceSourceId('filesystem')
-  readonly supportsConditionalTextSave = true
   readonly supportsConditionalByteSave = true
   readonly openExternal?: (ref: ResourceRef, signal: AbortSignal) => Promise<void>
   readonly streamText?: NonNullable<ResourceSource['streamText']>
+  readonly #diffTextLines: (base: string, text: string) => Promise<ReturnType<FileViewerEditorModule['diffTextLines']>>
   readonly #gateway: FilesystemSourceGateway
   readonly #pollIntervalMs: number
   readonly #textVersions = new Map<string, unknown>()
   readonly #byteVersions = new Map<string, unknown>()
 
-  /** @param gateway - Remote and optional native-open operations. @param pollIntervalMs - Delay between completed resource polls. */
-  constructor(gateway: FilesystemSourceGateway, pollIntervalMs: number) {
+  /** @param gateway - Remote and optional native-open operations. @param pollIntervalMs - Delay between completed resource polls. @param diffTextLines Lazy editor-owned line differ. */
+  constructor(gateway: FilesystemSourceGateway, pollIntervalMs: number, diffTextLines: (base: string, text: string) => Promise<ReturnType<FileViewerEditorModule['diffTextLines']>>) {
+    this.#diffTextLines = diffTextLines
     this.#gateway = gateway
     this.#pollIntervalMs = pollIntervalMs
     if (gateway.streamText !== undefined) {
@@ -220,23 +216,21 @@ export class FilesystemResourceSource implements ResourceSource {
     return loaded
   }
 
-  /** Publish text with the opaque revision supplied by the text document owner. */
-  async saveText(
-    ref: ResourceRef,
-    text: string,
-    version: unknown,
-    signal: AbortSignal,
-    access?: ResourceTextAccess,
-  ): Promise<UserFileSaveResult> {
-    if (typeof version !== 'string' || version === '') throw new Error('file-viewer: save requires a filesystem revision')
-    const result = await readResource(() => this.#gateway.saveText(
-      ref.sessionId,
-      ref.resourceId,
-      text,
-      version as UserFileRevision,
-      signal,
-      access,
-    ))
+  /** @param ref Resource identity. @param baseText Original canonical Base. @param text Captured Local. @param signal Cancellation. @param access Disk-read approval. @returns Actual source revision/hash after guarded range publication. */
+  async saveTextDelta(ref: ResourceRef, baseText: string, text: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFilePatchResult> {
+    const changes = await this.#diffTextLines(baseText, text)
+    const ranges = await Promise.all(changes.map(async change => ({ startLine: change.startLine, lineCount: change.lineCount,
+      expectedHash: await hashFileViewerText(change.oldText), replacement: change.replacement })))
+    signal.throwIfAborted()
+    let result: UserFilePatchResult
+    try {
+      result = await readResource(() => this.#gateway.patchText(ref.sessionId, ref.resourceId, ranges, signal, access))
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'user-files/stale-version') {
+        throw new ResourceSaveConflictError(error instanceof Error ? error.message : 'filesystem patch range changed', { cause: error })
+      }
+      throw error
+    }
     this.#textVersions.set(refKey(ref), result.version)
     return result
   }

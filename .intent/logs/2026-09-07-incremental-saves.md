@@ -1,0 +1,20 @@
+# Incremental saves and synchronization age evidence
+
+The user selected line-range saves with strong mandatory hashes and an elapsed synchronization label. The inspected references `/root/bot/mods/tools/host.py:162` and `/root/bot/mods/file.py:45` supply the range/digest idea; their weak optional digest, clamping, newline rewriting and direct overwrite are not used. The source-neutral delta capability passes Base/Local only in process; filesystem requests contain original-coordinate line ranges, SHA-256 hashes and replacements.
+
+The maintained CodeMirror diff already owned by the lazy editor package constructs line changes without adding a dependency or loading CodeMirror during browser registration. LF-terminated line tokens preserve terminal-newline distinctions and have no phantom final empty line. Pure insertion expands an existing neighbor; overlapping expanded changes coalesce. Provider commit `0b20c9f07e6e06d211b505c58ab2a90bd07ebb27` validates every range against one current server snapshot, retains untouched BOM/EOL bytes, and shares staging/recheck/rename with existing publication. The independently versioned provider is 0.1.3; the viewer requires ^0.1.3. The production filesystem bulk caller was removed. The provider retains that API for earlier independently installed viewers, not as a patch-failure fallback.
+
+Review clarified that successful publication with an unequal actual canonical hash must allow later manual deltas without requiring a full refresh. The viewer advances virtual Base to captured saved Local, retains edits made during the request, invalidates invented Source content and displays saved-with-other-changes while pausing automation. Further range saves use the advanced Base. Equal-hash publication, actual loads and pulls update the runtime timestamp; edits, observations, failed saves and no-op saves do not. A followup short-circuits an immediate undo back to Base even while the local hash is pending.
+
+Work stayed in `/root/dsh-incremental-save/viewer` and `/root/dsh-incremental-save/user-files`; earlier trees are live and were not modified or built. `DSH_USER_FILES=/root/dsh-incremental-save/user-files/packages/dsh-user-files DSH_SIDEBAR=/root/dsh-decoupling-apply/sidebar/packages/dsh-right-sidebar pnpm run install:local` installed independent dependencies from cached packages. `DSH_CHECKOUT=/root/deepseek-harness pnpm run build` and `DSH_CHECKOUT=/root/deepseek-harness pnpm run typecheck` passed. `pnpm run test:setup` passed 3 cases, including rejection of the preceding provider API.
+
+The first command below passed 31 tests. The selected panel case passed for all three source relationships and the elapsed label; the selected retention case passed with a missing-source patch rejection. After the no-op correction, both delta-service tests passed again. No broad suite, browser automation, A/B check or performance benchmark was run.
+
+```sh
+pnpm exec vitest run packages/dsh-file-viewer-editor/tests/line-diff.spec.ts packages/dsh-file-viewer/tests/delta-save.client.spec.ts packages/dsh-file-viewer/tests/sync-age.client.spec.tsx packages/dsh-file-viewer/tests/filesystem-source.client.spec.ts packages/dsh-file-viewer/tests/large-file-confirmation.client.spec.tsx
+pnpm exec vitest run packages/dsh-file-viewer/tests/file-viewer-panel.client.spec.tsx -t 'guarded manual'
+pnpm exec vitest run packages/dsh-file-viewer/tests/resource-retention.client.spec.ts -t 'unrelated failures'
+pnpm exec vitest run packages/dsh-file-viewer/tests/delta-save.client.spec.ts
+```
+
+The provider worker reported passing build, typecheck, 30 focused patch/filesystem/Remote cases and generated schema/cancellation probes. Its implementation diff was reviewed. Parent owns pushing, proxy configuration and activation. Server-side disk reads, complete in-memory documents and the final external-writer race remain; incremental upload does not eliminate those costs. During this task the user selected a 1 MiB serialized-patch threshold for a future automatic delta-update design. That update protocol and policy are not implemented in this change, and automatic-update defaults remain unchanged.

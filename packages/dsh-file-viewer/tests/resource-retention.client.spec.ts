@@ -1,3 +1,4 @@
+import { diffTextLines } from '../../dsh-file-viewer-editor/src/line-diff.ts'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { FileViewerService, FileViewerSourceId } from '../src/client/service.ts'
@@ -5,6 +6,7 @@ import { ResourceMissingError, ResourceSourceId, type ResourceDescriptor, type R
 import { FilesystemResourceSource, type FilesystemSourceGateway } from '../src/client/filesystem-source.ts'
 import { ResourceWorkbenchRuntime, TEXT_RESOURCE_HANDLER_ID, IMAGE_RESOURCE_HANDLER_ID, type ResourceViewHost } from '../src/client/workbench.ts'
 
+const differ = async (base: string, text: string) => diffTextLines(base, text)
 const sessionId = SessionId('retention')
 const sourceId = ResourceSourceId('filesystem')
 const descriptor: ResourceDescriptor = { ref: { sessionId, sourceId, resourceId: '/file.txt' }, name: 'file.txt' }
@@ -27,7 +29,7 @@ function gateway(): FilesystemSourceGateway {
   return {
     readText: vi.fn(async (_id, path) => ({ path, text: 'base', version: 'v1' })),
     readBytes: vi.fn(async (_id, path) => ({ path, dataBase64: 'AP8=', version: 'v1' })),
-    saveText: vi.fn(async () => ({ version: 'v2' })),
+    patchText: vi.fn(async () => ({ version: 'v2', canonicalHash: 'base' })),
     saveBytes: vi.fn(async () => ({ version: 'v2' })),
   }
 }
@@ -55,7 +57,7 @@ describe('resource absence and retained text', () => {
   it.each(['readText', 'readBytes'] as const)('maps only confirmed absence from %s and recovers a same-revision watch', async method => {
     vi.useFakeTimers()
     const remote = gateway()
-    const source = new FilesystemResourceSource(remote, 10)
+    const source = new FilesystemResourceSource(remote, 10, differ)
     const listener = vi.fn()
     await source[method](descriptor.ref, signal())
     const dispose = method === 'readText' ? source.watchText(descriptor.ref, listener) : source.watchBytes(descriptor.ref, listener)
@@ -80,7 +82,7 @@ describe('resource absence and retained text', () => {
     vi.useFakeTimers()
     const { runtime, host } = bench()
     const remote = gateway()
-    runtime.registerSource(new FilesystemResourceSource(remote, 10))
+    runtime.registerSource(new FilesystemResourceSource(remote, 10, differ))
     const view = await runtime.open(descriptor)
     runtime.editText(view, 'unsaved')
     vi.mocked(remote.readText).mockRejectedValueOnce(missing)
@@ -90,9 +92,10 @@ describe('resource absence and retained text', () => {
     vi.mocked(remote.readText).mockRejectedValueOnce(new Error('offline'))
     await runtime.refreshText(view)
     expect(markings(host)).toEqual([true])
+    vi.mocked(remote.patchText).mockRejectedValueOnce(missing)
     await runtime.saveText(view)
     expect(markings(host)).toEqual([true])
-    expect(remote.saveText).not.toHaveBeenCalled()
+    expect(remote.patchText).toHaveBeenCalledTimes(1)
     await runtime.refreshText(view)
     expect(runtime.textSnapshot(view)).toMatchObject({ text: 'unsaved', resourceMissing: false, automationPaused: false })
     expect(markings(host)).toEqual([true, false])
@@ -102,7 +105,7 @@ describe('resource absence and retained text', () => {
     const { runtime, host, restore } = bench()
     const remote = gateway()
     vi.mocked(remote.readText).mockRejectedValue(missing)
-    const offSource = runtime.registerSource(new FilesystemResourceSource(remote, 10))
+    const offSource = runtime.registerSource(new FilesystemResourceSource(remote, 10, differ))
     runtime.registerRestorer()
     const result = await restore()({ sessionId, instanceId: 'restored', descriptor: { format: 1, ...descriptor, handlerId: TEXT_RESOURCE_HANDLER_ID } })
     expect(host.update).not.toHaveBeenCalled()
@@ -121,7 +124,7 @@ describe('resource absence and retained text', () => {
     const { runtime, host } = bench({ storage: browser })
     const remote = gateway()
     vi.mocked(remote.readText).mockRejectedValueOnce(missing)
-    runtime.registerSource(new FilesystemResourceSource(remote, 10))
+    runtime.registerSource(new FilesystemResourceSource(remote, 10, differ))
     const view = await runtime.open(descriptor)
     const snapshot = runtime.textSnapshot(view)
     expect(runtime.snapshot(view).descriptor.name).toBe(descriptor.name)
@@ -130,7 +133,7 @@ describe('resource absence and retained text', () => {
     expect(snapshot).not.toHaveProperty('latestSourceText')
     expect(snapshot).not.toHaveProperty('latestSourceVersion')
     expect(markings(host)).toEqual([true])
-    expect(remote.saveText).not.toHaveBeenCalled()
+    expect(remote.patchText).not.toHaveBeenCalled()
     await runtime.refreshText(view)
     expect(runtime.textSnapshot(view)).toMatchObject({ text: 'draft', baseVersion: 'v1', resourceMissing: false })
     expect(markings(host)).toEqual([true, false])
@@ -140,7 +143,7 @@ describe('resource absence and retained text', () => {
     vi.useFakeTimers()
     const { runtime, host } = bench()
     const remote = gateway()
-    runtime.registerSource(new FilesystemResourceSource(remote, 10))
+    runtime.registerSource(new FilesystemResourceSource(remote, 10, differ))
     const view = await runtime.open(descriptor, { handlerId: IMAGE_RESOURCE_HANDLER_ID })
     await runtime.loadHandler(view)
     vi.mocked(remote.readBytes).mockRejectedValueOnce(missing)

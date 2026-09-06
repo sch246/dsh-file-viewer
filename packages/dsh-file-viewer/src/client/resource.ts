@@ -3,6 +3,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   FileViewerInstanceSnapshot,
   FileViewerTextStreamEvent,
+  FileViewerSavedDelta,
   FileViewerTextAccess,
   FileViewerConfirmationRequiredError,
   FileViewerMissingResourceError,
@@ -14,6 +15,9 @@ import type {
  * The workbench keeps the view and its local text, marks the tab, and pauses automation.
  */
 export { FileViewerMissingResourceError as ResourceMissingError } from './service.ts'
+
+/** A source rejects a guarded save because an addressed range no longer matches. */
+export { FileViewerSaveConflictError as ResourceSaveConflictError } from './service.ts'
 
 /** Source request for a document-scoped decision before loading large text content. */
 export { FileViewerConfirmationRequiredError as ResourceConfirmationRequiredError } from './service.ts'
@@ -86,6 +90,9 @@ export interface ResourceLoadedBytes {
 /** Result of publishing text to a source. */
 export interface ResourceSavedText { readonly version?: unknown; readonly sizeBytes?: number }
 
+/** Actual canonical source hash after a guarded delta publication. */
+export type ResourceSavedDelta = FileViewerSavedDelta
+
 /** Result of publishing bytes to a source. */
 export interface ResourceSavedBytes { readonly version?: unknown }
 
@@ -112,6 +119,8 @@ export interface ResourceSource {
   readBytes?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes>
   /** @param ref Exact resource identity. @param text Canonical text to publish. @param version Caller-observed revision. @param signal Cancellation signal. @param access Explicit document permission, also covering large saves. @returns Published revision. */
   saveText?(ref: ResourceRef, text: string, version: unknown, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceSavedText>
+  /** @param ref Exact identity. @param baseText Canonical original Base held locally. @param text Captured Local. @param signal Cancellation. @param access Read approval. @returns Actual published hash; differing source content outside guarded changes may remain. */
+  saveTextDelta?(ref: ResourceRef, baseText: string, text: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceSavedDelta>
   /** Provider declaration that `saveText` rejects its recognized revision mismatch before publishing. */
   readonly supportsConditionalTextSave?: boolean
   /** @param ref Exact resource identity. @param listener Text notification receiver; confirmation-required pauses the subscription until explicit approval. @param access Permission retained by this document subscription. @returns Source watch disposer. */

@@ -41,6 +41,9 @@ export type FileViewerTextStreamEvent =
 /** Source save result. */
 export interface FileViewerSavedText { readonly version?: unknown; readonly sizeBytes?: number }
 
+/** Delta publication reports the actual canonical source hash without returning its complete text. */
+export interface FileViewerSavedDelta extends FileViewerSavedText { readonly canonicalHash: string }
+
 /** Source watch event. */
 export type FileViewerWatchEvent =
   | { readonly kind: 'confirmation-required'; readonly error: FileViewerConfirmationRequiredError }
@@ -69,6 +72,13 @@ export function isConfirmationRequiredError(error: unknown): error is FileViewer
     && (error as FileViewerConfirmationRequiredError).confirmationRequired === true
 }
 
+/** Guarded publication rejection supplied by a source without replacing its diagnostic. */
+export class FileViewerSaveConflictError extends Error { readonly saveConflict = true }
+
+function isSaveConflictError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'saveConflict' in error && error.saveConflict === true
+}
+
 /** One pluggable text source. */
 export interface FileViewerSource {
   readonly id: FileViewerSourceId
@@ -76,6 +86,8 @@ export interface FileViewerSource {
   load(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerLoadedText>
   stream?(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): AsyncIterable<FileViewerTextStreamEvent>
   save?(ref: FileViewerDocumentRef, text: string, version: unknown, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerSavedText>
+  /** @param ref Document identity. @param baseText Captured canonical Base. @param text Captured Local. @param signal Cancellation. @param access Existing-content approval. @returns Actual published canonical hash; unrelated source changes may remain. */
+  saveDelta?(ref: FileViewerDocumentRef, baseText: string, text: string, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerSavedDelta>
   /** True only when save rejects a revision mismatch without publishing. */
   readonly supportsConditionalSave?: boolean
   watch?(ref: FileViewerDocumentRef, listener: (event: FileViewerWatchEvent) => void, access?: FileViewerTextAccess): () => void
@@ -124,6 +136,9 @@ export interface FileViewerActivities {
 export interface FileViewerAutomationPreferences { readonly autoUpdate: boolean; readonly autoSave: boolean }
 
 interface CommonSnapshot {
+  /** Runtime-only instant of an actual load, pull, or equal-content publication. */
+  readonly lastSyncedAt?: number
+
   readonly loadProgress?: { readonly bytesRead: number; readonly totalBytes: number; readonly complete: boolean }
 
   /** Last exact source byte size; local edits do not re-encode the complete document. */
@@ -162,6 +177,8 @@ export type FileViewerInstanceSnapshot =
     readonly syncStatus: FileViewerSyncStatus
     readonly saveSupported: boolean
     readonly conditionalSaveSupported: boolean
+    readonly deltaSaveSupported?: boolean
+    readonly savedWithOtherChanges?: boolean
     readonly watchSupported: boolean
     readonly externalOpenSupported: boolean
     readonly location?: FileViewerLocation
@@ -957,8 +974,9 @@ export class FileViewerService {
         ...(loaded.version === undefined ? {} : { latestSourceVersion: loaded.version }),
         sourceStale: false,
         syncStatus: 'synced',
-        saveSupported: source.save !== undefined,
-        conditionalSaveSupported: source.save !== undefined && source.supportsConditionalSave === true,
+        saveSupported: source.save !== undefined || source.saveDelta !== undefined,
+        conditionalSaveSupported: source.saveDelta !== undefined || (source.save !== undefined && source.supportsConditionalSave === true),
+        deltaSaveSupported: source.saveDelta !== undefined,
         watchSupported: source.watch !== undefined,
         externalOpenSupported: source.openExternal !== undefined,
         ...(loaded.location === undefined ? {} : { location: loaded.location }),
@@ -972,8 +990,9 @@ export class FileViewerService {
         resourceMissing: false,
         title: loaded.title ?? previous.ref.resourceId,
         sourceStale: false,
-        saveSupported: source.save !== undefined,
-        conditionalSaveSupported: source.save !== undefined && source.supportsConditionalSave === true,
+        saveSupported: source.save !== undefined || source.saveDelta !== undefined,
+        conditionalSaveSupported: source.saveDelta !== undefined || (source.save !== undefined && source.supportsConditionalSave === true),
+        deltaSaveSupported: source.saveDelta !== undefined,
         watchSupported: source.watch !== undefined,
         externalOpenSupported: source.openExternal !== undefined,
       }, loaded, hash)
@@ -983,7 +1002,12 @@ export class FileViewerService {
       }
       next = deriveSync(next)
     }
-    record.pauseReason = missingFailure === undefined ? undefined : 'failure'
+    if (missingFailure === undefined && (previous.status !== 'ready' || (mode === 'manual' && next.syncStatus === 'synced'))) {
+      next = { ...next, lastSyncedAt: Date.now() }
+    }
+    const retainOtherChanges = mode === 'observe' && previous.status === 'ready' && previous.savedWithOtherChanges === true && next.syncStatus !== 'synced'
+    next = { ...next, savedWithOtherChanges: retainOtherChanges }
+    record.pauseReason = missingFailure !== undefined || retainOtherChanges ? 'failure' : undefined
     if (missingFailure !== undefined) {
       const { latestSourceText: _text, latestSourceHash: _hash, latestSourceVersion: _version, ...retained } = next
       next = { ...retained, sourceStale: true, syncStatus: 'unknown', resourceMissing: true, failure: missingFailure }
@@ -1100,7 +1124,7 @@ export class FileViewerService {
     const value = record.snapshot
     if (value.status !== 'ready' || value.loadConfirmation !== undefined) return
     const source = this.sources.get(value.ref.sourceId)
-    if (source?.save === undefined) {
+    if (source === undefined || (source.save === undefined && source.saveDelta === undefined)) {
       this.publishSaveBlock(record, { code: 'save-unsupported' })
       return
     }
@@ -1112,12 +1136,13 @@ export class FileViewerService {
       })
       return
     }
-    if (!overwrite && (value.sourceStale || value.latestSourceHash === undefined
+    if (!overwrite && source.saveDelta === undefined && (value.sourceStale || value.latestSourceHash === undefined
       || value.latestSourceHash !== value.baseHash)) {
       this.publishSaveBlock(record, { code: 'save-conflict', message: 'source changed since the local base was observed' })
       return
     }
-    if (!overwrite && !isFileViewerDirty(value)) return
+    if (!overwrite && (!isFileViewerDirty(value) || value.text === value.baseText)) return
+    if (overwrite && !value.sourceStale && value.text === value.latestSourceText) return
 
     const operation = this.begin(record.save, 'saving')
     this.clearTimer(record, 'autoSave')
@@ -1142,22 +1167,40 @@ export class FileViewerService {
     if (!this.current(record.save, operation) || record.snapshot.status !== 'ready') return
 
     const current = record.snapshot
-    if (!overwrite && (current.sourceStale || current.latestSourceHash === undefined
+    if (!overwrite && source.saveDelta === undefined && (current.sourceStale || current.latestSourceHash === undefined
       || current.latestSourceHash !== current.baseHash)) {
       if (this.complete(record.save, operation)) {
         this.publishSaveBlock(record, { code: 'save-conflict', message: 'source changed while preparing the save' })
       }
       return
     }
+    if (overwrite && source.saveDelta !== undefined && (current.sourceStale || current.latestSourceText === undefined)) {
+      if (this.complete(record.save, operation)) this.publishSaveBlock(record, { code: 'save-conflict', message: 'refresh the source before explicitly overwriting its changes' })
+      return
+    }
     const version = overwrite ? current.latestSourceVersion : current.baseVersion
     try {
-      const saved = await source.save(value.ref, savedText, version, operation.controller.signal, this.textAccess(record))
+      const saved = source.saveDelta !== undefined
+        ? await source.saveDelta(value.ref, overwrite ? current.latestSourceText! : value.baseText, savedText, operation.controller.signal, this.textAccess(record))
+        : await source.save!(value.ref, savedText, version, operation.controller.signal, this.textAccess(record))
       if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
       this.cancel(record.read, new Error('successful save superseded source read'))
       this.observeSize(record, saved.sizeBytes)
+      if ('canonicalHash' in saved && saved.canonicalHash !== savedHash) {
+        const { latestSourceText: _text, latestSourceHash: _hash, latestSourceVersion: _version, ...retained } = clearFailure(record.snapshot)
+        record.pauseReason = 'failure'
+        record.snapshot = replaceBase({ ...retained, resourceMissing: false, sourceStale: true,
+          syncStatus: 'unknown', savedWithOtherChanges: true, automationPaused: true }, savedText, savedHash, saved.version)
+        this.clearAutomationTimers(record)
+        this.scheduleDraftPersistence(record)
+        this.notify(record)
+        return
+      }
       record.pauseReason = undefined
       let next = replaceLatestSource({
         ...clearFailure(record.snapshot),
+        savedWithOtherChanges: false,
+        lastSyncedAt: Date.now(),
         resourceMissing: false,
         sourceStale: false,
       }, { text: savedText, version: saved.version }, savedHash)
@@ -1178,7 +1221,7 @@ export class FileViewerService {
       record.snapshot = {
         ...record.snapshot,
         automationPaused: true,
-        failure: toFailure('save-failed', error),
+        failure: toFailure(isSaveConflictError(error) ? 'save-conflict' : 'save-failed', error),
       }
       this.notify(record)
       this.clearAutomationTimers(record)
@@ -1204,6 +1247,8 @@ export class FileViewerService {
       text: value.latestSourceText,
       localHash: value.latestSourceHash,
       syncStatus: 'synced',
+      lastSyncedAt: Date.now(),
+      savedWithOtherChanges: false,
       automationPaused: false,
     }, value.latestSourceText, value.latestSourceHash, value.latestSourceVersion)
     next = this.reconcilePause(record, deriveSync(next))
