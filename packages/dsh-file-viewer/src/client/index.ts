@@ -54,7 +54,7 @@ export type {
   ResourceViewSnapshot,
   ResourceWorkbenchClientService,
 } from './resource.ts'
-export { ResourceHandlerId, ResourceSourceId } from './resource.ts'
+export { ResourceHandlerId, ResourceMissingError, ResourceSourceId } from './resource.ts'
 export {
   IMAGE_RESOURCE_HANDLER_ID,
   RESOURCE_WORKBENCH_VIEW_ID,
@@ -110,6 +110,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const host = createResourceViewHost(ctx.rightSidebar)
   const runtime = new ResourceWorkbenchRuntime({
     host,
+    largeDocumentCharacters: metadata.largeDocumentCharacters,
     confirmDiscard: () => window.confirm(t('confirmClose')),
     confirmHandlerSwitch: () => window.confirm(t('confirmHandlerSwitch')),
   })

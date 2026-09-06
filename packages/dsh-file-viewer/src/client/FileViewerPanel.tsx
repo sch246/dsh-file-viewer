@@ -50,6 +50,7 @@ export type FileViewerPanelProps = FileViewerPanelInjected & RightbarViewOwnerPr
 type FailureLocaleKey =
   | 'sourceUnavailable'
   | 'loadFailed'
+  | 'resourceMissing'
   | 'saveUnsupported'
   | 'saveFailed'
   | 'saveConflict'
@@ -63,6 +64,7 @@ function failureKey(failure: FileViewerFailure): FailureLocaleKey {
   const keys: Record<string, FailureLocaleKey> = {
     'source-unavailable': 'sourceUnavailable',
     'load-failed': 'loadFailed',
+    'resource-missing': 'resourceMissing',
     'save-unsupported': 'saveUnsupported',
     'save-failed': 'saveFailed',
     'save-conflict': 'saveConflict',
@@ -72,6 +74,15 @@ function failureKey(failure: FileViewerFailure): FailureLocaleKey {
     'external-open-failed': 'externalOpenFailed',
   }
   return keys[failure.code] ?? 'operationFailed'
+}
+
+/** Show the source's own diagnostic text so a refused load names its actual reason. */
+function FailureDetail({ failure, t }: {
+  readonly failure: FileViewerFailure
+  readonly t: FileViewerPanelProps['t']
+}) {
+  if (failure.message === undefined) return null
+  return <span className="dsh-file-viewer-failure-detail" title={t('failureDetail')}>{failure.message}</span>
 }
 
 interface EditorHostProps {
@@ -264,6 +275,8 @@ function ReadyPanel({
           onClick={() => {
             changePresentation({ expanded: !expanded })
           }}>
+          {state.large && <span className="dsh-file-viewer-warning" role="img"
+            aria-label={t('largeDocument')} title={t('largeDocument')}>!</span>}
           <span role="status">{t(state.syncStatus)}</span>
           {updating && <span className="dsh-file-viewer-activity" role="status">
             {t('updating')}<span className="dsh-file-viewer-pending-dots" aria-hidden="true">{updateDots}</span>
@@ -294,7 +307,10 @@ function ReadyPanel({
       </div>
       {state.automationPaused && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
       {state.sourceStale && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
-      {state.failure !== undefined && <div className="dsh-file-viewer-failure" role="alert">{t(failureKey(state.failure))}</div>}
+      {state.failure !== undefined && <div className="dsh-file-viewer-failure" role="alert">
+        {t(failureKey(state.failure))}
+        <FailureDetail failure={state.failure} t={t} />
+      </div>}
       {state.syncStatus === 'diverged' && (
         <div className="dsh-file-viewer-conflict" role="alert">
           <strong>{t('conflict')}</strong>
@@ -346,6 +362,7 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
     return (
       <div className="dsh-file-viewer-state" role="alert">
         {state.failure === undefined ? props.t('loadFailed') : props.t(failureKey(state.failure))}
+        {state.failure !== undefined && <FailureDetail failure={state.failure} t={props.t} />}
       </div>
     )
   }

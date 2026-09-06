@@ -53,6 +53,8 @@ export async function openMemoryDocument(ctx: Context, sessionId: SessionId): Pr
 }
 ```
 
+Sources report confirmed absence by rejecting reads with `ResourceMissingError` (or a rejection carrying `resourceMissing: true`) or emitting a `{ kind: 'missing', error }` watch event. The workbench retains the view and local text, pauses text automation, and marks the tab title with a strikethrough. Successful reads or watch snapshots clear the marking; unrelated failures and renderer availability do not establish resource existence. The filesystem source maps the shared provider’s `user-files/not-found` code; other errors retain their original diagnostics.
+
 Source ids are non-empty and unique while registered. `readText` and `readBytes` are optional and independent; a byte-only source is never decoded through the text editor. Guarded text and byte writes use `saveText` and `saveBytes` with opaque revisions. Source watching is also content-specific.
 
 Callers place a preview relative to a stable workbench instance, so a file tree can remain in its group while files open to its right:
@@ -92,6 +94,8 @@ Within pale red deleted rows, the exact removed character fragments have darker 
 
 Line-number visibility, expanded controls and comparison mode belong to each resource view and survive in-memory remounts. The browser remembers the default line-number preference; it initializes only new view presentations. Existing views keep their current setting when the default changes. Editor selection, scroll and undo stay with the same local editor across mode changes.
 
+Local text longer than the deployment’s `largeDocumentCharacters` shows one orange `!` in the permanent synchronization status. Its tooltip explains that whole-document work can take longer; it opens no warning popup. The validated Host Config defaults to 2,097,152 UTF-16 code units, and the mark clears at or below that length. Length does not disable comparison, limit browser drafts, delay hashing or alter synchronization. Source read limits remain source-owned, and failed operations show the source diagnostic beside the localized message.
+
 Sources define canonical text, including line endings and terminal newlines. The generic editor preserves the supplied text and never trims or normalizes it.
 
 -----
@@ -101,7 +105,9 @@ Sources define canonical text, including line endings and terminal newlines. The
 
 Each ready text document retains its exact Base and Local text and its automatic update/save choices in browser `localStorage`, keyed by the complete Session, source and resource identity. Version-1 drafts without automation choices remain readable and initialize those choices from current defaults. Workbench layout persistence stores a JSON-safe descriptor and handler id; JSON-safe selection hints can persist, while opaque revisions and handler memory do not. A later restoration freshly reads Source and reconnects any number of views to the shared document without resetting retained automation.
 
-A sidebar-committed instance close deletes its retained draft, while a vetoed or superseded close preserves the view and flushes its current edit. Storage parsing, access or quota failures do not replace the live editor text.
+If a source confirms absence during restoration, a valid stored draft still opens with Base and Local text, unknown Source and source revision, and paused automation. A successful source read reconnects that draft.
+
+A sidebar-committed instance close deletes its retained draft, while a vetoed or superseded close preserves the view and flushes its current edit. Storage parsing, access or quota failures do not replace the live editor text. Equal Base, Local and automation preferences skip an already successful draft write; failed writes remain retryable.
 
 Base and Local text can contain sensitive source content. Retention stays in the user's origin-local browser workspace: it is not written to the Session log, sent to the model or logged over the network. Other scripts served from the same origin can access `localStorage`; accepting the document close or clearing site data removes retained content when browser storage is available.
 

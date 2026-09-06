@@ -2,8 +2,15 @@ import type { ComponentType } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   FileViewerInstanceSnapshot,
+  FileViewerMissingResourceError,
   FileViewerWatchEvent,
 } from './service.ts'
+
+/**
+ * Rejection a source raises from `readText` or `readBytes` when its resource no longer exists.
+ * The workbench keeps the view and its local text, marks the tab, and pauses automation.
+ */
+export { FileViewerMissingResourceError as ResourceMissingError } from './service.ts'
 
 /** Stable source identifier contributed by a resource provider. */
 export type ResourceSourceId = string & { readonly __resourceSourceId: unique symbol }
@@ -107,11 +114,13 @@ export interface ResourceSource {
 /** Text watch notification with source-owned metadata. */
 export type ResourceTextWatchEvent =
   | { readonly kind: 'invalidate' }
+  | { readonly kind: 'missing'; readonly error: FileViewerMissingResourceError }
   | { readonly kind: 'snapshot'; readonly snapshot: ResourceLoadedText }
 
 /** Byte watch notification; invalidation never implies decoded content. */
 export type ResourceBytesWatchEvent =
   | { readonly kind: 'invalidate' }
+  | { readonly kind: 'missing'; readonly error: FileViewerMissingResourceError }
   | { readonly kind: 'snapshot'; readonly snapshot: ResourceLoadedBytes }
 
 /** Handler-visible source capabilities without exposing the source registry. */
@@ -271,7 +280,7 @@ declare module '@deepseek-ai/cordis' {
 
 /** @param event Resource text notification. @returns Shared text-document notification. */
 export function toFileViewerWatchEvent(event: ResourceTextWatchEvent): FileViewerWatchEvent {
-  if (event.kind === 'invalidate') return event
+  if (event.kind !== 'snapshot') return event
   return {
     kind: 'snapshot',
     snapshot: {

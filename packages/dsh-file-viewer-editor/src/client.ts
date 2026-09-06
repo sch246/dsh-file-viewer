@@ -47,7 +47,10 @@ class ViewState {
   ) {}
 }
 
-const bindings = new WeakMap<EditorView, { options: FileViewerEditorOptions; applying: boolean }>()
+/** Each local view retains its exact text so no presentation step reserializes the document. */
+interface Binding { options: FileViewerEditorOptions; applying: boolean; text: string }
+
+const bindings = new WeakMap<EditorView, Binding>()
 
 function captureViewState(view: EditorView): ViewState {
   return new ViewState(view.state, view.scrollDOM.scrollTop, view.scrollDOM.scrollLeft, view.scrollSnapshot())
@@ -60,7 +63,11 @@ function reportViewState(view: EditorView): void {
 // Captured states must not retain a disposed view or its callbacks.
 const updateListener = EditorView.updateListener.of((update) => {
   const binding = bindings.get(update.view)
-  if (update.docChanged && binding && !binding.applying) binding.options.onChange(update.state.doc.toString())
+  // Applied source text is already known, so only user and history changes are serialized, once.
+  if (update.docChanged && binding && !binding.applying) {
+    binding.text = update.state.doc.toString()
+    binding.options.onChange(binding.text)
+  }
   if (update.docChanged || update.selectionSet) reportViewState(update.view)
 })
 
@@ -249,7 +256,8 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   let state = prior ? prior.state.update({ effects: StateEffect.reconfigure.of(extensions) }).state
     : EditorState.create({ doc: Text.of(options.text.split('\n')), extensions })
   let scrollTo = prior?.scrollEffect
-  if (state.doc.toString() !== options.text) {
+  // A freshly created document already holds the exact text; only a restored state can differ.
+  if (prior && state.doc.toString() !== options.text) {
     const replacement = replaceText(state, options.text)
     state = replacement.state
     scrollTo = scrollTo?.map(replacement.changes)
@@ -260,7 +268,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
       if (transactions.some(transaction => transaction.docChanged)) refresh()
     },
   })
-  const binding = { options, applying: false }
+  const binding: Binding = { options, applying: false, text: options.text }
   bindings.set(view, binding)
   if (prior) { view.scrollDOM.scrollTop = prior.scrollTop; view.scrollDOM.scrollLeft = prior.scrollLeft }
 
@@ -360,7 +368,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
       view.dispatch({ effects: [numbering.reconfigure(numbersEnabled ? lineNumbers() : []), presentationEffect.of(emptyPresentation)] })
       return
     }
-    const localText = view.state.doc.toString()
+    const localText = binding.text
     const hasSource = comparison.sourceText !== undefined && comparison.sourceText !== comparison.baseText && comparison.sourceText !== localText
     onlySource = hasSource && localText === comparison.baseText
     localPane.element.hidden = onlySource
@@ -399,9 +407,18 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   refresh()
   return {
     setText: text => {
-      if (text === view.state.doc.toString()) return
+      if (text === binding.text) return
+      // The dispatch refreshes comparison synchronously, so the retained text leads it.
+      const previous = binding.text
+      const previousDocument = view.state.doc
       binding.applying = true
-      try { view.dispatch(replaceText(view.state, text)) } finally { binding.applying = false }
+      binding.text = text
+      try {
+        view.dispatch(replaceText(view.state, text))
+      } catch (error: unknown) {
+        binding.text = view.state.doc === previousDocument ? previous : view.state.doc.toString()
+        throw error
+      } finally { binding.applying = false }
     },
     setLineNumbers: enabled => {
       numbersEnabled = enabled

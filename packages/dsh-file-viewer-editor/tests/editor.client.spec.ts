@@ -115,6 +115,42 @@ describe('CodeMirror editor handle', () => {
     expect(undo(restored.view)).toBe(false)
   })
 
+  it('reuses the retained text so unchanged source state dispatches nothing', () => {
+    const onViewStateChange = vi.fn()
+    const { handle, view } = mount({ text: 'same', onViewStateChange })
+    handle.setText('same')
+    expect(onViewStateChange).not.toHaveBeenCalled()
+
+    view.dispatch({ changes: { from: 4, insert: ' edit' } })
+    expect(onViewStateChange).toHaveBeenCalledTimes(1)
+    handle.setText('same edit')
+    expect(onViewStateChange).toHaveBeenCalledTimes(1)
+
+    expect(undo(view)).toBe(true)
+    expect(onViewStateChange).toHaveBeenCalledTimes(2)
+    handle.setText('same')
+    expect(onViewStateChange).toHaveBeenCalledTimes(2)
+
+    handle.setText('other')
+    expect(view.state.doc.toString()).toBe('other')
+    expect(onViewStateChange).toHaveBeenCalledTimes(3)
+  })
+
+  it.each([false, true])('keeps exact text when a dispatch fails after commit=%s', committed => {
+    const { handle, view } = mount({ text: 'before' })
+    const dispatch = view.dispatch.bind(view)
+    const replacement = vi.spyOn(view, 'dispatch').mockImplementationOnce((...transactions) => {
+      if (committed) dispatch(...transactions)
+      throw new Error('dispatch failure')
+    })
+    expect(() => handle.setText('after')).toThrow('dispatch failure')
+    replacement.mockRestore()
+    handle.setText('before')
+    expect(view.state.doc.toString()).toBe('before')
+    handle.setText('after')
+    expect(view.state.doc.toString()).toBe('after')
+  })
+
   it('reports selection, document and scroll updates and captures final offsets before disposal', () => {
     const onViewStateChange = vi.fn()
     const first = mount({ onViewStateChange })

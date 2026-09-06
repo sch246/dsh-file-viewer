@@ -9,7 +9,7 @@ export class FileViewerRemote extends TypertRemoteService {
     super(ctx, 'fileViewer', { namespace: 'fileViewer' })
   }
 
-  /** @returns Delay between completed resource polls while subscribed. */
+  /** @returns Resource polling interval and editor advisory length. */
   @Remote('metadata')
   metadata(): FileViewerMetadata {
     return this.config

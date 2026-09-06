@@ -36,6 +36,14 @@ CodeMirror remains in `@dsh-external/dsh-file-viewer-editor` and loads only for 
 
 **Resolve text conflicts automatically.** Rejected because neither local nor source text has general precedence. Explicit overwrite and discard actions preserve the user's choice.
 
+## Source absence and retained drafts
+
+Resource absence is a source-owned fact, independent of renderer availability and the most recent operation error. The document retains that fact through unrelated failures and clears it only after successful source observation or publication. Sources reject reads with the generic missing signal or emit a missing watch event; the filesystem source translates the authenticated provider's stable not-found code. A same-revision snapshot after a failed poll still reports recovery. Sidebar receives only the optional presentation flag.
+
+A valid browser draft remains readable when its source is confirmed absent during restoration. Its saved Base and Local hashes can be recomputed without asserting a current Source or revision. Automation remains paused, so recovery does not recreate a deleted resource through automatic saving. Restoration defers sidebar updates until its commit acknowledgment to avoid invalidating the restoring instance.
+
+Document length controls an advisory only. The deployment Config owns its default threshold; editor text caching and equal-draft write suppression preserve exact text and existing synchronization timing. No measured performance result is implied by the advisory.
+
 ## Consequences
 
 Resource providers need no sidebar store access. All handlers share one open-with and lifecycle path, while format-specific draft models remain in their retained controllers. The viewer exposes `ctx.resourceWorkbench` and registers the `resource-workbench` sidebar view. Installation adds and removes the workbench and CodeMirror packages together and never mutates Harness source or restarts a service.

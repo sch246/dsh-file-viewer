@@ -6,6 +6,7 @@ import {
   type FileViewerDocumentRef,
   type FileViewerServiceOptions,
   isFileViewerDirty,
+  isMissingResourceError,
   type FileViewerSource,
 } from './service.ts'
 import {
@@ -41,6 +42,7 @@ export interface ResourceViewHost {
       readonly id: string
       readonly viewId: string
       readonly title: string
+      readonly resourceMissing?: boolean
       readonly restoreDescriptor?: unknown
       readonly onClose?: () => boolean | Promise<boolean>
       readonly onClosed?: () => void
@@ -48,7 +50,16 @@ export interface ResourceViewHost {
     options?: { readonly target?: ResourceOpenTarget; readonly preview?: boolean },
   ): Promise<string>
   activate(sessionId: SessionId, viewId: string): void
-  update(sessionId: SessionId, viewId: string, update: { readonly title?: string; readonly restoreDescriptor?: unknown }): void
+  update(
+    sessionId: SessionId,
+    viewId: string,
+    update: {
+      readonly title?: string
+      /** Marks the tab whose exact resource the source reports as gone. */
+      readonly resourceMissing?: boolean
+      readonly restoreDescriptor?: unknown
+    },
+  ): void
   pin(sessionId: SessionId, viewId: string): void
   group(sessionId: SessionId, viewId: string): string
   resolveTarget(sessionId: SessionId, target: ResourceOpenTarget): string | undefined
@@ -86,6 +97,7 @@ interface ViewRecord {
   byteWatchDisposers: Set<() => void>
   published: ResourceViewSnapshot | undefined
   textSubscription: (() => void) | undefined
+  resourceMissing: boolean
   transitionGeneration: number
   textAttachRequest: Promise<void> | undefined
   checkpointSuppressed: boolean
@@ -110,6 +122,8 @@ export interface ResourceWorkbenchOptions {
   readonly automationDebounceMs?: number
   readonly persistenceDebounceMs?: number
   readonly hashText?: (text: string) => Promise<string>
+  /** Code-unit length above which a document is reported as large; omission disables the advisory. */
+  readonly largeDocumentCharacters?: number
   readonly confirmHandlerSwitch?: (snapshot: ReturnType<FileViewerService['snapshot']>) => boolean | Promise<boolean>
 }
 
@@ -266,6 +280,9 @@ export class ResourceWorkbenchRuntime {
       ...(options.automationDebounceMs === undefined ? {} : { automationDebounceMs: options.automationDebounceMs }),
       ...(options.persistenceDebounceMs === undefined ? {} : { persistenceDebounceMs: options.persistenceDebounceMs }),
       ...(options.hashText === undefined ? {} : { hashText: options.hashText }),
+      ...(options.largeDocumentCharacters === undefined
+        ? {}
+        : { largeDocumentCharacters: options.largeDocumentCharacters }),
     })
     this.#readAssociations()
   }
@@ -305,7 +322,7 @@ export class ResourceWorkbenchRuntime {
                 this.#applyLoadedDescriptor(resourceRef, event.snapshot.descriptor)
               }
               const textEvent = toFileViewerWatchEvent(event)
-              if (textEvent.kind === 'invalidate' || textEvent.snapshot.title !== undefined) {
+              if (textEvent.kind !== 'snapshot' || textEvent.snapshot.title !== undefined) {
                 listener(textEvent)
                 return
               }
@@ -431,6 +448,7 @@ export class ResourceWorkbenchRuntime {
       byteWatchDisposers: new Set(),
       published: undefined,
       textSubscription: undefined,
+      resourceMissing: false,
       transitionGeneration: 0,
       textAttachRequest: undefined,
       checkpointSuppressed: false,
@@ -626,7 +644,19 @@ export class ResourceWorkbenchRuntime {
       view,
       source,
       signal,
-      combined => source.readBytes!(view.descriptor.ref, combined),
+      async combined => {
+        try {
+          const loaded = await source.readBytes!(view.descriptor.ref, combined)
+          if (!combined.aborted && this.#views.get(viewId) === view && this.#sources.get(source.id) === source) {
+            this.#syncResourceMissing(viewId, view, false)
+          }
+          return loaded
+        } catch (error: unknown) {
+          if (!combined.aborted && this.#views.get(viewId) === view && this.#sources.get(source.id) === source
+            && isMissingResourceError(error)) this.#syncResourceMissing(viewId, view, true)
+          throw error
+        }
+      },
     )
     if (loaded.descriptor !== undefined) this.#applyDescriptor(viewId, view, loaded.descriptor)
     return loaded
@@ -649,10 +679,14 @@ export class ResourceWorkbenchRuntime {
     const view = this.#view(viewId)
     const source = this.#sources.get(view.descriptor.ref.sourceId)
     if (source?.watchBytes === undefined) throw new Error('resource-workbench: byte watching is unavailable')
-    const disposeSource = source.watchBytes(view.descriptor.ref, event => {
-      if (this.#views.get(viewId) === view && this.#sources.get(source.id) === source) listener(event)
-    })
     let active = true
+    const generation = view.byteGeneration
+    const disposeSource = source.watchBytes(view.descriptor.ref, event => {
+      if (!active || view.byteGeneration !== generation || this.#views.get(viewId) !== view
+        || this.#sources.get(source.id) !== source) return
+      if (event.kind !== 'invalidate') this.#syncResourceMissing(viewId, view, event.kind === 'missing')
+      listener(event)
+    })
     const dispose = () => {
       if (!active) return
       active = false
@@ -881,6 +915,7 @@ export class ResourceWorkbenchRuntime {
         byteWatchDisposers: new Set(),
         published: undefined,
         textSubscription: undefined,
+        resourceMissing: false,
         transitionGeneration: 0,
         textAttachRequest: undefined,
         checkpointSuppressed: true,
@@ -966,6 +1001,7 @@ export class ResourceWorkbenchRuntime {
           this.#syncTextDescriptor(viewId, view)
         })
       }
+      this.#syncTextDescriptor(viewId, view)
       if (view.handlerId === TEXT_RESOURCE_HANDLER_ID) {
         view.handlerStatus = 'failed'
         view.failure = failureMessage(error)
@@ -1048,6 +1084,7 @@ export class ResourceWorkbenchRuntime {
     try {
       this.#host.update(view.descriptor.ref.sessionId, viewId, {
         title: view.descriptor.name,
+        resourceMissing: view.resourceMissing,
         restoreDescriptor: persistedDescriptor(view.descriptor, view.handlerId),
       })
     } catch (error: unknown) {
@@ -1058,12 +1095,28 @@ export class ResourceWorkbenchRuntime {
   #syncTextDescriptor(viewId: string, view: ViewRecord): void {
     if (view.documentId === undefined) return
     const snapshot = this.documents.snapshot(view.documentId)
-    if (snapshot.status !== 'ready') return
+    this.#syncResourceMissing(viewId, view, snapshot.resourceMissing)
+    if (snapshot.status !== 'ready' || snapshot.resourceMissing) return
     if (snapshot.title === view.descriptor.name && snapshot.location === view.descriptor.location) return
     this.#applyDescriptor(viewId, view, {
       name: snapshot.title,
       ...(snapshot.location === undefined ? {} : { location: snapshot.location }),
     })
+  }
+
+  /** Publish only actual changes, so an unrelated document notification never rewrites the tab. */
+  #syncResourceMissing(viewId: string, view: ViewRecord, missing: boolean): void {
+    if (view.resourceMissing === missing) return
+    if (view.checkpointSuppressed) {
+      view.resourceMissing = missing
+      return
+    }
+    try {
+      this.#host.update(view.descriptor.ref.sessionId, viewId, { resourceMissing: missing })
+      view.resourceMissing = missing
+    } catch (error: unknown) {
+      this.#publishActionFailure(view, failureMessage(error))
+    }
   }
 
   #applyLoadedDescriptor(ref: ResourceRef, update: Partial<Omit<ResourceDescriptor, 'ref'>>): void {

@@ -1,6 +1,7 @@
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
   ResourceSourceId,
+  ResourceMissingError,
   type ResourceBytesWatchEvent,
   type ResourceLoadedBytes,
   type ResourceLoadedText,
@@ -8,6 +9,7 @@ import {
   type ResourceSource,
   type ResourceTextWatchEvent,
 } from './resource.ts'
+import { isMissingResourceError } from './service.ts'
 import type {
   UserFileBytesDocument, UserFileRevision, UserFileTextDocument,
 } from '@dsh-external/dsh-user-files/types'
@@ -32,6 +34,18 @@ export interface FilesystemSourceGateway {
   ): Promise<{ version: UserFileRevision }>
   openLocation?(sessionId: SessionId, path: string): Promise<void>
   openExternal?(sessionId: SessionId, path: string, signal: AbortSignal): Promise<void>
+}
+
+async function readResource<T>(read: () => Promise<T>): Promise<T> {
+  try {
+    return await read()
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'user-files/not-found') {
+      const message = 'message' in error && typeof error.message === 'string' ? error.message : undefined
+      throw new ResourceMissingError(message, { cause: error })
+    }
+    throw error
+  }
 }
 
 function refKey(ref: ResourceRef): string {
@@ -88,22 +102,29 @@ function watchLoaded<T extends { readonly version?: unknown }>(
   initialVersion: unknown,
   read: (signal: AbortSignal) => Promise<T>,
   onVersion: (version: unknown) => void,
-  listener: (event: { readonly kind: 'invalidate' } | { readonly kind: 'snapshot'; readonly snapshot: T }) => void,
+  listener: (event: { readonly kind: 'invalidate' } | { readonly kind: 'missing'; readonly error: ResourceMissingError } | { readonly kind: 'snapshot'; readonly snapshot: T }) => void,
 ): () => void {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   let lastVersion = initialVersion
+  let invalidated = false
   const poll = async (): Promise<void> => {
     try {
       const document = await read(controller.signal)
       if (controller.signal.aborted) return
-      if (document.version !== lastVersion) {
+      if (invalidated || document.version !== lastVersion) {
+        invalidated = false
         lastVersion = document.version
         onVersion(document.version)
         listener({ kind: 'snapshot', snapshot: document })
       }
-    } catch {
-      if (!controller.signal.aborted) listener({ kind: 'invalidate' })
+    } catch (error: unknown) {
+      if (!controller.signal.aborted) {
+        invalidated = true
+        listener(isMissingResourceError(error)
+          ? { kind: 'missing', error: error as ResourceMissingError }
+          : { kind: 'invalidate' })
+      }
     } finally {
       if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, pollIntervalMs)
     }
@@ -147,14 +168,14 @@ export class FilesystemResourceSource implements ResourceSource {
 
   /** Load canonical LF text and retain its revision for the first watch comparison. */
   async readText(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedText> {
-    const document = await this.#gateway.readText(ref.sessionId, ref.resourceId, signal)
+    const document = await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal))
     this.#textVersions.set(refKey(ref), document.version)
     return loadedText(document)
   }
 
   /** Load exact bounded bytes without decoding or text rejection. */
   async readBytes(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes> {
-    const loaded = loadedBytes(await this.#gateway.readBytes(ref.sessionId, ref.resourceId, signal))
+    const loaded = loadedBytes(await readResource(() => this.#gateway.readBytes(ref.sessionId, ref.resourceId, signal)))
     this.#byteVersions.set(refKey(ref), loaded.version)
     return loaded
   }
@@ -203,7 +224,7 @@ export class FilesystemResourceSource implements ResourceSource {
     return watchLoaded(
       this.#pollIntervalMs,
       this.#textVersions.get(key),
-      async signal => loadedText(await this.#gateway.readText(ref.sessionId, ref.resourceId, signal)),
+      async signal => loadedText(await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal))),
       version => { this.#textVersions.set(key, version) },
       listener,
     )
@@ -215,7 +236,7 @@ export class FilesystemResourceSource implements ResourceSource {
     return watchLoaded(
       this.#pollIntervalMs,
       this.#byteVersions.get(key),
-      async signal => loadedBytes(await this.#gateway.readBytes(ref.sessionId, ref.resourceId, signal)),
+      async signal => loadedBytes(await readResource(() => this.#gateway.readBytes(ref.sessionId, ref.resourceId, signal))),
       version => { this.#byteVersions.set(key, version) },
       listener,
     )

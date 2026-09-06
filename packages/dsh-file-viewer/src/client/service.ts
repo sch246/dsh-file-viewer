@@ -37,6 +37,7 @@ export interface FileViewerSavedText { readonly version?: unknown }
 /** Source watch event. */
 export type FileViewerWatchEvent =
   | { readonly kind: 'invalidate' }
+  | { readonly kind: 'missing'; readonly error: FileViewerMissingResourceError }
   | { readonly kind: 'snapshot'; readonly snapshot: FileViewerLoadedText }
 
 /** One pluggable text source. */
@@ -52,9 +53,25 @@ export interface FileViewerSource {
 }
 
 /** Stable operation failure codes. */
-export type FileViewerErrorCode = 'source-unavailable' | 'load-failed' | 'hash-failed'
+export type FileViewerErrorCode = 'source-unavailable' | 'load-failed' | 'resource-missing' | 'hash-failed'
   | 'save-unsupported' | 'save-conflict' | 'save-failed' | 'watch-failed'
   | 'external-open-unsupported' | 'external-open-failed'
+
+/** Rejection a source raises when its resource no longer exists. */
+export class FileViewerMissingResourceError extends Error {
+  /** Duck-typed marker so any source can report absence without sharing this class instance. */
+  readonly resourceMissing = true
+  constructor(message = 'file-viewer: the resource no longer exists', options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'FileViewerMissingResourceError'
+  }
+}
+
+/** @param error Source rejection. @returns True when the source reported that its resource is gone. */
+export function isMissingResourceError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null
+    && (error as { resourceMissing?: unknown }).resourceMissing === true
+}
 
 /** One retained operation failure. */
 export interface FileViewerFailure { readonly code: FileViewerErrorCode; readonly message?: string }
@@ -83,6 +100,8 @@ interface CommonSnapshot {
   readonly operation: FileViewerOperation
   readonly activities: FileViewerActivities
   readonly failure?: FileViewerFailure
+  /** Last confirmed resource absence; unrelated operation failures do not clear it. */
+  readonly resourceMissing: boolean
   readonly automation: FileViewerAutomationPreferences
 }
 
@@ -107,6 +126,8 @@ export type FileViewerInstanceSnapshot =
     readonly externalOpenSupported: boolean
     readonly location?: FileViewerLocation
     readonly automationPaused: boolean
+    /** True when the exact text is long enough that whole-document actions may be slow. Advisory only. */
+    readonly large: boolean
   })
 
 type ReadySnapshot = Extract<FileViewerInstanceSnapshot, { status: 'ready' }>
@@ -155,6 +176,8 @@ interface InstanceRecord {
   autoUpdateTimer: ReturnType<typeof setTimeout> | undefined
   autoSaveTimer: ReturnType<typeof setTimeout> | undefined
   draftTimer: ReturnType<typeof setTimeout> | undefined
+  /** Last successfully persisted draft; equal text and preferences need no rewrite. */
+  persistedDraft: { readonly baseText: string; readonly localText: string; readonly automation: FileViewerAutomationPreferences } | undefined
 }
 
 /** Optional browser dependencies and timing policy. */
@@ -166,9 +189,12 @@ export interface FileViewerServiceOptions {
   readonly confirmDiscard?: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   /** Injectable only to make hashing failures and completion order deterministic in tests. */
   readonly hashText?: (text: string) => Promise<string>
+  /** Code-unit length above which a document is reported as large; omission disables the advisory. */
+  readonly largeDocumentCharacters?: number
 }
 
 const DEFAULT_AUTOMATION = Object.freeze({ autoUpdate: false, autoSave: false })
+
 const GLOBAL_AUTOMATION_KEY = 'dsh-resource-workbench:automation-defaults:1'
 const DRAFT_FORMAT_VERSION = 1
 
@@ -196,7 +222,8 @@ export function isFileViewerDirty(snapshot: FileViewerInstanceSnapshot): boolean
 }
 
 function errorMessage(error: unknown): string | undefined {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string'
+    ? error.message : String(error)
   return message === '' ? undefined : message
 }
 
@@ -308,6 +335,7 @@ export class FileViewerService {
   private readonly persistenceDebounceMs: number
   private readonly confirmDiscard: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   private readonly hashText: (text: string) => Promise<string>
+  private readonly largeDocumentCharacters: number | undefined
   private globalAutomation: FileViewerAutomationPreferences
   private readonly automationDefaultListeners = new Set<() => void>()
   private nextInstance = 0
@@ -319,6 +347,7 @@ export class FileViewerService {
     this.persistenceDebounceMs = options.persistenceDebounceMs ?? 700
     this.confirmDiscard = options.confirmDiscard ?? (() => false)
     this.hashText = options.hashText ?? hashFileViewerText
+    this.largeDocumentCharacters = options.largeDocumentCharacters
     this.globalAutomation = this.readGlobalAutomation(options.globalAutomationDefaults)
   }
 
@@ -378,7 +407,7 @@ export class FileViewerService {
     const instanceId = `text-editor-${++this.nextInstance}`
     const record: InstanceRecord = {
       snapshot: {
-        instanceId, ref, title: ref.resourceId, status: 'loading', operation: 'loading',
+        instanceId, ref, title: ref.resourceId, status: 'loading', operation: 'loading', resourceMissing: false,
         activities: { updating: false, saving: false },
         automation: this.readDraft(ref)?.automation ?? {
           ...this.globalAutomation,
@@ -399,6 +428,7 @@ export class FileViewerService {
       autoUpdateTimer: undefined,
       autoSaveTimer: undefined,
       draftTimer: undefined,
+      persistedDraft: undefined,
     }
     this.instances.set(instanceId, record)
     this.refs.set(keyOf(ref), instanceId)
@@ -434,32 +464,10 @@ export class FileViewerService {
     if (record.snapshot.status !== 'ready') return
     record.editGeneration += 1
     const generation = ++record.hashGeneration
-    record.snapshot = deriveSync(replaceLocalTextWithoutHash(record.snapshot, text))
+    record.snapshot = deriveSync(this.applySize(replaceLocalTextWithoutHash(record.snapshot, text)))
     this.scheduleDraftPersistence(record)
     this.notify(record)
-    void this.hashText(text).then(
-      hash => {
-        if (!this.hashCurrent(instanceId, record, generation)) return
-        let next = deriveSync({ ...record.snapshot, localHash: hash })
-        next = this.reconcilePause(record, next)
-        record.snapshot = next
-        this.scheduleDraftPersistence(record)
-        this.notify(record)
-        this.scheduleAutomation(record, true)
-      },
-      error => {
-        if (!this.hashCurrent(instanceId, record, generation)) return
-        record.pauseReason = 'failure'
-        record.snapshot = {
-          ...record.snapshot,
-          syncStatus: 'unknown',
-          automationPaused: true,
-          failure: toFailure('hash-failed', error),
-        }
-        this.notify(record)
-        this.clearAutomationTimers(record)
-      },
-    )
+    this.hashLocalText(instanceId, record, generation, text)
   }
 
   /** Save local text only through a conditional source write. */
@@ -623,6 +631,32 @@ export class FileViewerService {
     this.sources.clear()
   }
 
+  private hashLocalText(instanceId: string, record: InstanceRecord, generation: number, text: string): void {
+    void this.hashText(text).then(
+      hash => {
+        if (!this.hashCurrent(instanceId, record, generation)) return
+        let next = deriveSync({ ...record.snapshot, localHash: hash })
+        next = this.reconcilePause(record, next)
+        record.snapshot = next
+        this.scheduleDraftPersistence(record)
+        this.notify(record)
+        this.scheduleAutomation(record, true)
+      },
+      error => {
+        if (!this.hashCurrent(instanceId, record, generation)) return
+        record.pauseReason = 'failure'
+        record.snapshot = {
+          ...record.snapshot,
+          syncStatus: 'unknown',
+          automationPaused: true,
+          failure: toFailure('hash-failed', error),
+        }
+        this.notify(record)
+        this.clearAutomationTimers(record)
+      },
+    )
+  }
+
   private async read(
     record: InstanceRecord,
     operationName: 'loading' | 'refreshing',
@@ -641,8 +675,28 @@ export class FileViewerService {
     try {
       loaded = await source.load(record.snapshot.ref, operation.controller.signal)
     } catch (error: unknown) {
+      if (!this.current(record.read, operation)) return undefined
+      const missing = isMissingResourceError(error)
+      const failure = toFailure(missing ? 'resource-missing' : 'load-failed', error)
+      const draft = missing && record.snapshot.status !== 'ready' ? this.readDraft(record.snapshot.ref) : undefined
+      if (draft !== undefined) {
+        let restored: RestoredDraft
+        try {
+          const baseHash = await this.hashText(draft.baseText)
+          const localHash = draft.localText === draft.baseText ? baseHash : await this.hashText(draft.localText)
+          restored = { ...draft, baseHash, localHash }
+        } catch (hashError: unknown) {
+          if (!this.complete(record.read, operation)) return undefined
+          record.snapshot = { ...record.snapshot, resourceMissing: true }
+          const hashFailure = toFailure('hash-failed', hashError)
+          this.publishReadFailure(record, hashFailure)
+          return hashFailure
+        }
+        if (!this.complete(record.read, operation)) return undefined
+        this.applyObserved(record, source, { text: draft.baseText }, restored.baseHash, mode, restored, failure)
+        return undefined
+      }
       if (!this.complete(record.read, operation)) return undefined
-      const failure = toFailure('load-failed', error)
       this.publishReadFailure(record, failure)
       return failure
     }
@@ -687,17 +741,20 @@ export class FileViewerService {
 
   private publishReadFailure(record: InstanceRecord, failure: FileViewerFailure): void {
     record.pauseReason = 'failure'
+    const resourceMissing = failure.code === 'resource-missing' || record.snapshot.resourceMissing
     record.snapshot = record.snapshot.status === 'ready'
       ? {
         ...record.snapshot,
         sourceStale: true,
         syncStatus: 'unknown',
         automationPaused: true,
+        resourceMissing,
         failure,
       }
       : {
         ...record.snapshot,
         status: 'failed',
+        resourceMissing,
         failure,
       }
     this.notify(record)
@@ -711,6 +768,7 @@ export class FileViewerService {
     hash: string,
     mode: 'initial' | 'manual' | 'observe',
     restored?: RestoredDraft,
+    missingFailure?: FileViewerFailure,
   ): void {
     const previous = record.snapshot
     let next: ReadySnapshot
@@ -719,6 +777,7 @@ export class FileViewerService {
         instanceId: previous.instanceId,
         ref: previous.ref,
         status: 'ready',
+        resourceMissing: false,
         title: loaded.title ?? previous.ref.resourceId,
         operation: previous.operation,
         activities: previous.activities,
@@ -739,11 +798,13 @@ export class FileViewerService {
         ...(loaded.location === undefined ? {} : { location: loaded.location }),
         automation: previous.automation,
         automationPaused: false,
+        large: false,
       })
     } else {
       const pull = mode === 'manual' && !isFileViewerDirty(previous)
       next = replaceLatestSource({
         ...clearFailure(previous),
+        resourceMissing: false,
         title: loaded.title ?? previous.ref.resourceId,
         sourceStale: false,
         saveSupported: source.save !== undefined,
@@ -757,7 +818,11 @@ export class FileViewerService {
       }
       next = deriveSync(next)
     }
-    record.pauseReason = undefined
+    record.pauseReason = missingFailure === undefined ? undefined : 'failure'
+    if (missingFailure !== undefined) {
+      const { latestSourceText: _text, latestSourceHash: _hash, latestSourceVersion: _version, ...retained } = next
+      next = { ...retained, sourceStale: true, syncStatus: 'unknown', resourceMissing: true, failure: missingFailure }
+    }
     next = this.reconcilePause(record, next)
     record.snapshot = next
     this.scheduleDraftPersistence(record)
@@ -802,6 +867,11 @@ export class FileViewerService {
 
   private async onWatch(record: InstanceRecord, source: FileViewerSource, event: FileViewerWatchEvent): Promise<void> {
     if (!this.watchCurrent(record, source)) return
+    if (event.kind === 'missing') {
+      this.cancel(record.read, event.error)
+      this.publishReadFailure(record, toFailure('resource-missing', event.error))
+      return
+    }
     if (event.kind === 'invalidate') {
       record.snapshot = { ...record.snapshot, sourceStale: true, syncStatus: 'unknown' }
       this.notify(record)
@@ -906,6 +976,7 @@ export class FileViewerService {
       record.pauseReason = undefined
       let next = replaceLatestSource({
         ...clearFailure(record.snapshot),
+        resourceMissing: false,
         sourceStale: false,
       }, { text: savedText, version: saved.version }, savedHash)
       next = replaceBase(next, savedText, savedHash, saved.version)
@@ -996,16 +1067,23 @@ export class FileViewerService {
 
   private persistDraft(record: InstanceRecord): void {
     if (this.storage === undefined || record.snapshot.status !== 'ready') return
-    const value: PersistedDraft = {
-      format: DRAFT_FORMAT_VERSION,
+    const written = {
       baseText: record.snapshot.baseText,
       localText: record.snapshot.text,
       automation: record.snapshot.automation,
     }
+    const value: PersistedDraft = { format: DRAFT_FORMAT_VERSION, ...written }
+    const persisted = record.persistedDraft
+    if (persisted !== undefined && persisted.baseText === written.baseText
+      && persisted.localText === written.localText
+      && persisted.automation.autoUpdate === written.automation.autoUpdate
+      && persisted.automation.autoSave === written.automation.autoSave) return
     try {
       this.storage.setItem(draftKey(record.snapshot.ref), JSON.stringify(value))
+      record.persistedDraft = written
     } catch {
       // The in-memory Base and Local text remain authoritative when browser quota or storage is unavailable.
+      record.persistedDraft = undefined
     }
   }
 
@@ -1016,6 +1094,7 @@ export class FileViewerService {
 
   private discardDraft(record: InstanceRecord): void {
     this.clearDraftTimer(record)
+    record.persistedDraft = undefined
     try {
       this.storage?.removeItem(draftKey(record.snapshot.ref))
     } catch {
@@ -1064,7 +1143,14 @@ export class FileViewerService {
       && value.latestSourceHash === value.baseHash
   }
 
-  private reconcilePause(record: InstanceRecord, value: ReadySnapshot): ReadySnapshot {
+  /** Classify the exact local text against the advisory length without copying it. */
+  private applySize(value: ReadySnapshot): ReadySnapshot {
+    const large = this.largeDocumentCharacters !== undefined && value.text.length > this.largeDocumentCharacters
+    return value.large === large ? value : { ...value, large }
+  }
+
+  private reconcilePause(record: InstanceRecord, snapshot: ReadySnapshot): ReadySnapshot {
+    const value = this.applySize(snapshot)
     if (value.syncStatus === 'diverged') {
       if (record.pauseReason !== 'failure') record.pauseReason = 'conflict'
     } else if (record.pauseReason === 'conflict' && value.syncStatus !== 'unknown') {

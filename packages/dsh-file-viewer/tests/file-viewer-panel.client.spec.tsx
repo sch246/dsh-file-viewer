@@ -15,6 +15,7 @@ function ready(
 ): Extract<FileViewerInstanceSnapshot, { status: 'ready' }> {
   return {
     instanceId,
+    resourceMissing: false,
     ref: { sessionId: 'session' as never, sourceId, resourceId: 'one' },
     title: 'One',
     status: 'ready',
@@ -34,6 +35,7 @@ function ready(
     externalOpenSupported: false,
     automation: { autoUpdate: false, autoSave: false },
     automationPaused: true,
+    large: false,
     location: {
       label: 'Memory',
       segments: [{ label: 'One', selectionHint: { resourceId: 'one' } }],
@@ -90,6 +92,71 @@ describe('FileViewerPanel', () => {
     expect(input.overwriteSource).toHaveBeenCalledWith(instanceId)
     expect(input.discardLocal).toHaveBeenCalledWith(instanceId)
     await waitFor(() => { expect(container.querySelector('[data-editor="mounted"]')).toBeTruthy() })
+  })
+
+  it('marks a long document in the permanent status without withholding any control', async () => {
+    const comparisons: unknown[] = []
+    const base = props(ready({
+      large: true,
+      syncStatus: 'local-ahead',
+      automationPaused: false,
+      failure: { code: 'load-failed', message: 'path "/root/bot/app.log" exceeds the configured resource limit' },
+    }))
+    const input: typeof base = {
+      ...base,
+      loadEditor: async () => ({
+        createFileViewerEditor: ({ parent, comparison }) => {
+          parent.dataset.editor = 'mounted'
+          comparisons.push(comparison)
+          return { setText: vi.fn(), setComparison: value => { comparisons.push(value) }, setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+        },
+      }),
+    }
+    const { container } = render(<FileViewerPanel {...input} />)
+
+    // One mark inside the permanent status, with its detail on hover; no notice occupies the editor.
+    const warning = container.querySelector('.dsh-file-viewer-warning')!
+    expect(warning.closest('.dsh-file-viewer-status')).not.toBeNull()
+    expect(warning.getAttribute('title')).toBe(en.largeDocument)
+    expect(warning.getAttribute('aria-label')).toBe(en.largeDocument)
+    expect(screen.queryByText(en.largeDocument)).toBeNull()
+    expect(screen.getByText('path "/root/bot/app.log" exceeds the configured resource limit')).toBeTruthy()
+
+    await waitFor(() => { expect(container.querySelector('[data-editor="mounted"]')).toBeTruthy() })
+    fireEvent.focus(screen.getByTitle(en.synchronization))
+    const differences = screen.getByRole('button', { name: en.differences }) as HTMLButtonElement
+    expect(differences.disabled).toBe(false)
+    fireEvent.click(differences)
+    expect(screen.getByRole('button', { name: en.backToEditor })).toBeTruthy()
+    expect(comparisons.at(-1)).toMatchObject({ baseText: 'base', sourceText: 'source' })
+
+    const unmarked = render(<FileViewerPanel {...props(ready({ large: false }))} />)
+    expect(unmarked.container.querySelector('.dsh-file-viewer-warning')).toBeNull()
+  })
+
+  it('reports the source diagnostic of a failed load', () => {
+    const failed: FileViewerInstanceSnapshot = {
+      instanceId,
+      resourceMissing: false,
+      ref: { sessionId: 'session' as never, sourceId, resourceId: 'one' },
+      title: 'One',
+      status: 'failed',
+      operation: 'idle',
+      activities: { updating: false, saving: false },
+      automation: defaults,
+      failure: { code: 'load-failed', message: 'the file is not UTF-8 text' },
+    }
+    const view = render(<FileViewerPanel {...props(failed)} />)
+    expect(screen.getByRole('alert').textContent).toBe(`${en.loadFailed}the file is not UTF-8 text`)
+
+    // A deleted resource is a distinct state, not a generic load failure.
+    const missing: FileViewerInstanceSnapshot = {
+      ...failed,
+      failure: { code: 'resource-missing', message: 'path "/root/bot/test.txt" was not found' },
+    }
+    view.rerender(<FileViewerPanel {...props(missing)} />)
+    expect(screen.getByRole('alert').textContent)
+      .toBe(`${en.resourceMissing}path "/root/bot/test.txt" was not found`)
   })
 
   it('saves immediately on Ctrl+S and gates automatic controls by source capabilities', () => {

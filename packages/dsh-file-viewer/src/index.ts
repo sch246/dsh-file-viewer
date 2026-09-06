@@ -11,10 +11,13 @@ export const name = 'file-viewer'
 export interface Config {
   /** Delay between completed filesystem source polls while subscribed. */
   resourcePollIntervalMs: number
+  /** Text length in UTF-16 code units above which the editor shows an advisory. */
+  largeDocumentCharacters: number
 }
 
-/** Validated viewer polling configuration. */
+/** Validated viewer polling and presentation configuration. */
 export const Config: z<Config> = z.object({
+  largeDocumentCharacters: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(2_097_152),
   resourcePollIntervalMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),
 })
 

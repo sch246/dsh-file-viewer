@@ -44,7 +44,7 @@ describe('file viewer browser plugin', () => {
     ctx.provide('rightSidebar', rightSidebar)
     const readText = vi.fn(async () => ({ ok: true, value: { path: '/workspace/file.txt', text: 'remote text', version: 'v1' } }))
     const resolve = vi.fn(async () => ({ ok: true, value: { path: '/workspace/file.txt', name: 'file.txt', kind: 'file', mediaType: 'text/plain' } }))
-    const fileViewer = { metadata: async () => ({ ok: true, value: { resourcePollIntervalMs: 2000 } }) }
+    const fileViewer = { metadata: async () => ({ ok: true, value: { resourcePollIntervalMs: 2000, largeDocumentCharacters: 8 } }) }
     const userFiles = { resolve, readText }
     const session = { openWorkspacePath: vi.fn(async () => ({ ok: true, value: undefined })) }
     ctx.provide('sessions', { list: { getSnapshot: () => ({ byId: { 'standalone-viewer': { cwd: '/workspace' } } }) } } as never)
@@ -71,6 +71,7 @@ describe('file viewer browser plugin', () => {
     }), { preview: true, target: { fromInstanceId: 'tree', direction: 'right' } })
     expect(importModule).not.toHaveBeenCalled()
     const filesystemView = vi.mocked(rightSidebar.openInstance).mock.calls[0]![1].id
+    expect(ctx.resourceWorkbench.textSnapshot(filesystemView)).toMatchObject({ large: true })
     resolve.mockResolvedValueOnce({ ok: true, value: { path: '/workspace', name: 'workspace', kind: 'directory', mediaType: 'inode/directory' } })
     await ctx.resourceWorkbench.selectLocation(filesystemView, { path: '/workspace' })
     expect(openWorkspaceFile).toHaveBeenLastCalledWith(expect.anything(), { sessionId, path: '/workspace' })

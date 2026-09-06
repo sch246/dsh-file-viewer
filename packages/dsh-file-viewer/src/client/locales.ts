@@ -7,7 +7,7 @@ export type FileViewerLocaleKey =
   | 'save' | 'saving' | 'saveUnsupported' | 'update' | 'updating'
   | 'autoUpdate' | 'autoUpdateUnsupported' | 'autoSave' | 'autoSaveUnsupported'
   | 'openExternal' | 'openExternalUnsupported' | 'readOnly' | 'location'
-  | 'sourceUnavailable' | 'loadFailed' | 'saveFailed' | 'saveConflict' | 'hashFailed'
+  | 'sourceUnavailable' | 'loadFailed' | 'resourceMissing' | 'saveFailed' | 'saveConflict' | 'hashFailed'
   | 'watchFailed' | 'externalOpenFailed' | 'operationFailed'
   | 'synced' | 'local-ahead' | 'source-ahead' | 'diverged' | 'unknown'
   | 'automationPaused' | 'sourceStale' | 'conflict' | 'conflictHelp' | 'differences'
@@ -20,6 +20,7 @@ export type FileViewerLocaleKey =
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
   | 'lineNumbers' | 'defaultLineNumbers' | 'synchronization'
+  | 'largeDocument' | 'failureDetail'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -50,6 +51,7 @@ export const en: Record<FileViewerLocaleKey, string> = {
   location: 'Source location',
   sourceUnavailable: 'This document source is unavailable. Local text is retained.',
   loadFailed: 'The document could not be loaded.',
+  resourceMissing: 'This resource no longer exists at its source. Local text is retained.',
   saveFailed: 'The document could not be saved.',
   saveConflict: 'The source changed. Compare the versions before choosing what to keep.',
   hashFailed: 'The document could not be compared safely.',
@@ -87,6 +89,8 @@ export const en: Record<FileViewerLocaleKey, string> = {
   globalAutoSave: 'Default automatic save',
   imageDecodeFailed: 'The image data could not be decoded.',
   confirmHandlerSwitch: 'Keep the unsaved text draft and pause its automation while opening another viewer?',
+  largeDocument: 'Large document. Every action stays available; whole-document work such as differences, hashing and browser draft retention can take longer here.',
+  failureDetail: 'Reported by the source',
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
@@ -111,6 +115,7 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   location: '来源位置',
   sourceUnavailable: '文档来源当前不可用，已保留本地文本。',
   loadFailed: '无法加载文档。',
+  resourceMissing: '该资源在来源中已不存在，本地文本已保留。',
   saveFailed: '无法保存文档。',
   saveConflict: '来源已有变化，请比较版本后再选择保留内容。',
   hashFailed: '无法安全比较文档内容。',
@@ -148,4 +153,6 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   globalAutoSave: '默认自动保存',
   imageDecodeFailed: '无法解码图片数据。',
   confirmHandlerSwitch: '保留未保存的文本草稿并暂停自动同步，然后改用其它查看器吗？',
+  largeDocument: '文档较大。所有功能仍然可用；差异对比、哈希与浏览器草稿保留等整篇操作可能变慢。',
+  failureDetail: '来源返回的信息',
 }
