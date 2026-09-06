@@ -17,6 +17,7 @@ export type FileViewerLocaleKey =
   | 'unsupportedResource' | 'handlerFailed' | 'textHandler' | 'imageHandler'
   | 'handlerLoading'
   | 'globalAutoUpdate' | 'globalAutoSave'
+  | 'incompleteFile' | 'stopLoading' | 'retryLoading'
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
   | 'lineNumbers' | 'defaultLineNumbers' | 'synchronization'
@@ -30,6 +31,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const en: Record<FileViewerLocaleKey, string> = {
+  incompleteFile: 'Incomplete file — read-only. Editing becomes available after loading finishes.',
+  stopLoading: 'Stop loading',
+  retryLoading: 'Retry loading',
   hugeFilePrompt: 'This file is very large. Loading it may use much more browser memory than the file size and make the page unresponsive. Continue to load the complete file.',
   continueLoading: 'Continue loading',
   hugeDocument: 'Very large file. Browser memory use may greatly exceed the file size and the page may become unresponsive. Background synchronization, drafts and differences start off; each can be enabled in the controls.',
@@ -103,6 +107,9 @@ export const en: Record<FileViewerLocaleKey, string> = {
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
+  incompleteFile: '文件尚未加载完整，当前只读。加载完成后可编辑。',
+  stopLoading: '停止加载',
+  retryLoading: '重新加载',
   hugeFilePrompt: '此文件很大。加载后的浏览器内存占用可能远超文件大小，并可能导致页面无响应。继续后将加载完整文件。',
   continueLoading: '继续加载',
   hugeDocument: '超大文件的浏览器内存占用可能远超文件大小，页面可能无响应。后台同步、草稿和差异对比默认关闭，可在控件中分别开启。',

@@ -43,7 +43,7 @@ function show(service: FileViewerService, instanceId: string) {
     setGlobalAutoSave={enabled => service.setGlobalAutomation('autoSave', enabled)}
     confirm={() => true} t={key => en[key]}
     loadEditor={async () => ({ createFileViewerEditor: () => ({
-      setText: () => {}, setComparison: () => {}, setLineNumbers: () => {}, captureViewState: () => undefined, destroy: () => {},
+      appendText: () => {}, setReadOnly: () => {}, setText: () => {}, setComparison: () => {}, setLineNumbers: () => {}, captureViewState: () => undefined, destroy: () => {},
     }) })}
   />)
 }

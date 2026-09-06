@@ -32,6 +32,12 @@ export interface FileViewerLoadedText {
   readonly location?: FileViewerLocation
 }
 
+/** Sequential canonical text; only complete supplies a usable revision. */
+export type FileViewerTextStreamEvent =
+  | { readonly kind: 'start'; readonly sizeBytes: number; readonly title?: string; readonly location?: FileViewerLocation }
+  | { readonly kind: 'chunk'; readonly text: string; readonly bytesRead: number }
+  | { readonly kind: 'complete'; readonly version: unknown; readonly sizeBytes: number }
+
 /** Source save result. */
 export interface FileViewerSavedText { readonly version?: unknown; readonly sizeBytes?: number }
 
@@ -68,6 +74,7 @@ export interface FileViewerSource {
   readonly id: FileViewerSourceId
   readonly defaults?: Partial<FileViewerAutomationPreferences>
   load(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerLoadedText>
+  stream?(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): AsyncIterable<FileViewerTextStreamEvent>
   save?(ref: FileViewerDocumentRef, text: string, version: unknown, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerSavedText>
   /** True only when save rejects a revision mismatch without publishing. */
   readonly supportsConditionalSave?: boolean
@@ -117,6 +124,8 @@ export interface FileViewerActivities {
 export interface FileViewerAutomationPreferences { readonly autoUpdate: boolean; readonly autoSave: boolean }
 
 interface CommonSnapshot {
+  readonly loadProgress?: { readonly bytesRead: number; readonly totalBytes: number; readonly complete: boolean }
+
   /** Last exact source byte size; local edits do not re-encode the complete document. */
   readonly sizeBytes?: number
   readonly sizeTier: 'normal' | 'large' | 'huge'
@@ -137,6 +146,7 @@ interface CommonSnapshot {
 
 /** Immutable state for one editor instance. */
 export type FileViewerInstanceSnapshot =
+  | (CommonSnapshot & { readonly status: 'partial'; readonly text: string; readonly streamId: number })
   | (CommonSnapshot & { readonly status: 'loading' | 'failed' | 'confirmation-required' })
   | (CommonSnapshot & {
     readonly status: 'ready'
@@ -214,6 +224,7 @@ interface InstanceRecord {
 export interface FileViewerServiceOptions {
   readonly storage?: FileViewerBrowserStorage
   readonly automationDebounceMs?: number
+  readonly progressiveFlushIntervalMs?: number
   readonly persistenceDebounceMs?: number
   readonly globalAutomationDefaults?: Partial<FileViewerAutomationPreferences>
   readonly confirmDiscard?: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
@@ -363,6 +374,7 @@ export class FileViewerService {
   private readonly refs = new Map<string, string>()
   private readonly storage: FileViewerBrowserStorage | undefined
   private readonly debounceMs: number
+  private readonly progressiveFlushIntervalMs: number
   private readonly persistenceDebounceMs: number
   private readonly confirmDiscard: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   private readonly hashText: (text: string) => Promise<string>
@@ -376,6 +388,7 @@ export class FileViewerService {
   constructor(options: FileViewerServiceOptions = {}) {
     this.storage = options.storage ?? defaultBrowserStorage()
     this.debounceMs = options.automationDebounceMs ?? 700
+    this.progressiveFlushIntervalMs = options.progressiveFlushIntervalMs ?? 300
     this.persistenceDebounceMs = options.persistenceDebounceMs ?? 700
     this.confirmDiscard = options.confirmDiscard ?? (() => false)
     this.hashText = options.hashText ?? hashFileViewerText
@@ -411,6 +424,8 @@ export class FileViewerService {
             automationPaused: true,
             failure: { code: 'source-unavailable' },
           }
+        } else if (record.snapshot.status === 'partial') {
+          record.snapshot = { ...record.snapshot, failure: { code: 'source-unavailable' } }
         } else {
           record.snapshot = {
             ...record.snapshot,
@@ -514,7 +529,8 @@ export class FileViewerService {
 
   /** Read and manually pull latest source text when local text is clean. */
   async refresh(instanceId: string): Promise<void> {
-    await this.read(this.record(instanceId), 'refreshing', 'manual')
+    const record = this.record(instanceId)
+    await this.read(record, record.snapshot.status === 'ready' ? 'refreshing' : 'loading', record.snapshot.status === 'ready' ? 'manual' : 'initial')
   }
 
   /** @param instanceId Shared document whose current large-file prompt the user accepted. @returns Nothing after loading. */
@@ -526,6 +542,14 @@ export class FileViewerService {
     const { loadConfirmation: _confirmation, ...snapshot } = record.snapshot
     record.snapshot = snapshot.status === 'ready' ? snapshot : { ...snapshot, status: 'loading' }
     await this.read(record, snapshot.status === 'ready' ? 'refreshing' : 'loading', snapshot.status === 'ready' ? 'manual' : 'initial')
+  }
+
+  /** @param instanceId Document whose partial read should stop without discarding received text. */
+  cancelLoad(instanceId: string): void {
+    const record = this.record(instanceId)
+    if (record.snapshot.status !== 'partial') return
+    this.cancel(record.read, new Error('file load stopped'))
+    this.notify(record)
   }
 
   /** Publish local text through the explicit overwrite path. */
@@ -735,7 +759,9 @@ export class FileViewerService {
 
     let loaded: FileViewerLoadedText
     try {
-      loaded = await source.load(record.snapshot.ref, operation.controller.signal, this.textAccess(record))
+      loaded = mode === 'initial' && record.allowLargeFile && source.stream !== undefined
+        ? await this.readStream(record, source, operation)
+        : await source.load(record.snapshot.ref, operation.controller.signal, this.textAccess(record))
     } catch (error: unknown) {
       if (!this.current(record.read, operation)) return undefined
       if (isConfirmationRequiredError(error)) {
@@ -807,6 +833,60 @@ export class FileViewerService {
     return undefined
   }
 
+  private async readStream(record: InstanceRecord, source: FileViewerSource, operation: ActiveOperation): Promise<FileViewerLoadedText> {
+    const signal = operation.controller.signal
+    let text = ''
+    let pending: string[] = []
+    let bytesRead = 0
+    let metadata: Extract<FileViewerTextStreamEvent, { kind: 'start' }> | undefined
+    let completed: Extract<FileViewerTextStreamEvent, { kind: 'complete' }> | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let first = true
+    const flush = () => {
+      timer = undefined
+      if (!this.current(record.read, operation) || metadata === undefined) return
+      text += pending.join('')
+      pending = []
+      record.snapshot = { ...clearFailure(record.snapshot), status: 'partial', text, streamId: operation.generation,
+        loadProgress: { bytesRead, totalBytes: metadata.sizeBytes, complete: false } }
+      this.notify(record)
+    }
+    try {
+      for await (const event of source.stream!(record.snapshot.ref, signal, this.textAccess(record))) {
+        signal.throwIfAborted()
+        if (!this.current(record.read, operation)) throw new Error('file-viewer: stale text stream')
+        if (completed !== undefined) throw new Error('file-viewer: text stream continued after completion')
+        if (event.kind === 'start') {
+          if (metadata !== undefined) throw new Error('file-viewer: duplicate text stream start')
+          metadata = event
+          this.observeSize(record, event.sizeBytes)
+          record.snapshot = { ...record.snapshot, loadProgress: { bytesRead: 0, totalBytes: event.sizeBytes, complete: false } }
+          this.notify(record)
+        } else if (event.kind === 'chunk') {
+          if (metadata === undefined || event.bytesRead < bytesRead || event.bytesRead > metadata.sizeBytes) throw new Error('file-viewer: invalid text stream progress')
+          bytesRead = event.bytesRead
+          pending.push(event.text)
+          if (first && event.text !== '') { first = false; flush() }
+          else if (!first) timer ??= setTimeout(flush, this.progressiveFlushIntervalMs)
+        } else {
+          if (metadata === undefined || bytesRead !== metadata.sizeBytes || event.sizeBytes !== metadata.sizeBytes) throw new Error('file-viewer: incomplete text stream')
+          completed = event
+        }
+      }
+      signal.throwIfAborted()
+      if (metadata === undefined || completed === undefined) throw new Error('file-viewer: text stream ended before completion')
+      clearTimeout(timer)
+      flush()
+      return { text, sizeBytes: completed.sizeBytes, version: completed.version,
+        ...(metadata.title === undefined ? {} : { title: metadata.title }),
+        ...(metadata.location === undefined ? {} : { location: metadata.location }) }
+    } catch (error: unknown) {
+      clearTimeout(timer)
+      flush()
+      throw error
+    } finally { clearTimeout(timer) }
+  }
+
   private requireConfirmation(record: InstanceRecord, error: FileViewerLoadConfirmation): void {
     record.pauseReason = 'confirmation'
     this.cancel(record.read, new Error('load confirmation required'))
@@ -833,7 +913,7 @@ export class FileViewerService {
         resourceMissing,
         failure,
       }
-      : {
+      : record.snapshot.status === 'partial' ? { ...record.snapshot, resourceMissing, failure } : {
         ...record.snapshot,
         status: 'failed',
         resourceMissing,
@@ -859,6 +939,7 @@ export class FileViewerService {
       next = deriveSync({
         ...(previous.sizeBytes === undefined ? {} : { sizeBytes: previous.sizeBytes }),
         sizeTier: previous.sizeTier, largeDefaultsApplied: previous.largeDefaultsApplied, draftPersistence: previous.draftPersistence,
+        ...(previous.loadProgress === undefined ? {} : { loadProgress: { ...previous.loadProgress, complete: true } }),
         instanceId: previous.instanceId,
         ref: previous.ref,
         status: 'ready',

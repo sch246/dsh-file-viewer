@@ -12,7 +12,7 @@ import { isFileViewerDirty } from './service.ts'
 import { usePendingDots } from './pending-dots.ts'
 import { defaultLineNumbers, setDefaultLineNumbers, subscribeLineNumberDefault } from './line-number-default.ts'
 
-type ReadySnapshot = Extract<FileViewerInstanceSnapshot, { status: 'ready' }>
+type EditorSnapshot = Extract<FileViewerInstanceSnapshot, { status: 'ready' | 'partial' }>
 
 /** Presentation retained by the resource view, independently of shared document synchronization. */
 class TextPresentation {
@@ -31,6 +31,7 @@ export interface FileViewerPanelInjected {
   save(instanceId: string): void
   refresh(instanceId: string): void
   confirmLoad(instanceId: string): void
+  cancelLoad(instanceId: string): void
   setDraftPersistence(instanceId: string, enabled: boolean): void
   overwriteSource(instanceId: string): void
   discardLocal(instanceId: string): void
@@ -91,6 +92,7 @@ function FailureDetail({ failure, t }: {
 
 interface EditorHostProps {
   readonly text: string
+  readonly appendKey?: number
   readonly readOnly: boolean
   readonly comparison?: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]['comparison']
   readonly lineNumbers: boolean
@@ -104,17 +106,20 @@ interface EditorHostProps {
 
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
-  text, readOnly, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
+  text, appendKey, readOnly, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<FileViewerEditorModule['createFileViewerEditor']>>()
   const textRef = useRef(text)
+  const readOnlyRef = useRef(readOnly)
+  const appliedRef = useRef({ text, appendKey })
   const comparisonRef = useRef(comparison)
   const lineNumbersRef = useRef(lineNumbers)
   const viewStateRef = useRef(viewState)
   const onChangeRef = useRef(onChange)
   const onViewStateChangeRef = useRef(onViewStateChange)
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
+  readOnlyRef.current = readOnly
   textRef.current = text
   comparisonRef.current = comparison
   lineNumbersRef.current = lineNumbers
@@ -129,7 +134,7 @@ export function EditorHost({
       const handle = editor.createFileViewerEditor({
         parent: parentRef.current,
         text: textRef.current,
-        readOnly,
+        readOnly: readOnlyRef.current,
         ...(comparisonRef.current === undefined ? {} : { comparison: comparisonRef.current }),
         lineNumbers: lineNumbersRef.current,
         onChange: value => { onChangeRef.current(value) },
@@ -140,6 +145,7 @@ export function EditorHost({
         handle.destroy()
         return
       }
+      appliedRef.current = { text: textRef.current, appendKey }
       handleRef.current = handle
       setState('ready')
     }, () => {
@@ -150,9 +156,19 @@ export function EditorHost({
       handleRef.current?.destroy()
       handleRef.current = undefined
     }
-  }, [loadEditor, readOnly])
+  }, [loadEditor])
 
-  useEffect(() => { handleRef.current?.setText(text) }, [text])
+  useEffect(() => {
+    const handle = handleRef.current
+    if (handle === undefined) return
+    const previous = appliedRef.current
+    const finishing = appendKey === undefined && previous.appendKey !== undefined && text.startsWith(previous.text)
+    if (finishing || (appendKey !== undefined && previous.appendKey === appendKey && text.length >= previous.text.length)) {
+      handle.appendText(text.slice(previous.text.length))
+    } else handle.setText(text)
+    appliedRef.current = { text, appendKey }
+  }, [text, appendKey])
+  useEffect(() => { handleRef.current?.setReadOnly(readOnly) }, [readOnly])
   useEffect(() => {
     handleRef.current?.setComparison(comparison)
   }, [comparison])
@@ -191,6 +207,16 @@ function PreferenceAction({ label, currentLabel, defaultLabel, checked, defaultC
   </div>
 }
 
+function LoadProgress({ state, label }: { readonly state: FileViewerInstanceSnapshot; readonly label: string }) {
+  const progress = state.loadProgress
+  if (progress === undefined) return null
+  const percent = progress.complete ? 100 : progress.totalBytes === 0 ? 0 : Math.min(99, 100 * progress.bytesRead / progress.totalBytes)
+  return <div className={`dsh-file-viewer-progress${progress.complete ? ' is-complete' : ''}`}
+    role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)}>
+    <div style={{ width: `${percent}%` }} />
+  </div>
+}
+
 function LoadConfirmation({ state, onLoad, t }: {
   readonly state: FileViewerInstanceSnapshot
   readonly onLoad: () => void
@@ -205,15 +231,16 @@ function LoadConfirmation({ state, onLoad, t }: {
 }
 
 function ReadyPanel({
-  state, edit, save, refresh, confirmLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
+  state, edit, save, refresh, confirmLoad, cancelLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
   automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
   presentation, retainPresentation, onViewStateChange, t,
 }: {
-  readonly state: ReadySnapshot
+  readonly state: EditorSnapshot
   readonly edit: (text: string) => void
   readonly save: () => void
   readonly refresh: () => void
   readonly confirmLoad: () => void
+  readonly cancelLoad: () => void
   readonly setDraftPersistence: (enabled: boolean) => void
   readonly overwriteSource: () => void
   readonly discardLocal: () => void
@@ -229,6 +256,7 @@ function ReadyPanel({
   readonly onViewStateChange?: (state: unknown) => void
   readonly t: FileViewerPanelProps['t']
 }) {
+  const ready = state.status === 'ready' ? state : undefined
   const [, redraw] = useState(0)
   const changePresentation = (change: Partial<TextPresentation>) => {
     Object.assign(presentation, change)
@@ -240,11 +268,11 @@ function ReadyPanel({
     presentation.largeDefaultsApplied = true
   }
   const showDifferences = presentation.differences
-  const comparison = useMemo(() => showDifferences ? {
-    baseText: state.baseText,
-    ...(state.latestSourceText === undefined ? {} : { sourceText: state.latestSourceText }),
+  const comparison = useMemo(() => ready !== undefined && showDifferences ? {
+    baseText: ready?.baseText ?? '',
+    ...(ready?.latestSourceText === undefined ? {} : { sourceText: ready?.latestSourceText }),
     labels: { local: t('local'), source: t('source'), noDifferences: t('noDifferences') },
-  } : undefined, [showDifferences, state.baseText, state.latestSourceText, t])
+  } : undefined, [showDifferences, ready?.baseText, ready?.latestSourceText, t])
   const lineNumberDefault = useSyncExternalStore(subscribeLineNumberDefault, defaultLineNumbers, defaultLineNumbers)
   const controlsRef = useRef<HTMLDivElement>(null)
   const statusRef = useRef<HTMLButtonElement>(null)
@@ -264,12 +292,12 @@ function ReadyPanel({
   }, [presentation, retainPresentation])
   const dirty = isFileViewerDirty(state)
   const busy = state.operation !== 'idle'
-  const canSave = state.saveSupported && dirty && !busy && state.loadConfirmation === undefined
-    && state.syncStatus !== 'diverged' && state.syncStatus !== 'source-ahead'
+  const canSave = ready?.saveSupported && dirty && !busy && state.loadConfirmation === undefined
+    && ready?.syncStatus !== 'diverged' && ready?.syncStatus !== 'source-ahead'
   const confirmOverwrite = () => {
     if (confirm(t('confirmOverwrite'))) overwriteSource()
   }
-  const requestSave = state.conditionalSaveSupported ? save : confirmOverwrite
+  const requestSave = ready?.conditionalSaveSupported ? save : confirmOverwrite
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.defaultPrevented || event.altKey || (!event.ctrlKey && !event.metaKey)
       || event.key.toLowerCase() !== 's') return
@@ -282,6 +310,15 @@ function ReadyPanel({
 
   return (
     <section className="dsh-file-viewer-root" onKeyDown={onKeyDown}>
+      <LoadProgress state={state} label={t('loading')} />
+      {state.status === 'partial' && <div className="dsh-file-viewer-notice" role="status">
+        {t('incompleteFile')}
+        {state.operation !== 'idle'
+          ? <button type="button" onClick={cancelLoad}>{t('stopLoading')}</button>
+          : <button type="button" onClick={refresh}>{t('retryLoading')}</button>}
+        {state.failure !== undefined && <FailureDetail failure={state.failure} t={t} />}
+      </div>}
+      {ready !== undefined && <>
       <div className="dsh-file-viewer-float" ref={controlsRef}
         onMouseEnter={() => { changePresentation({ expanded: true }) }}
         onFocus={() => { changePresentation({ expanded: true }) }}
@@ -293,32 +330,32 @@ function ReadyPanel({
           }
         }}>
         <button type="button" ref={statusRef}
-          className={`dsh-file-viewer-status is-${state.failure !== undefined ? 'error' : state.syncStatus}`}
+          className={`dsh-file-viewer-status is-${state.failure !== undefined ? 'error' : ready?.syncStatus}`}
           aria-expanded={expanded} title={t('synchronization')}
           onClick={() => {
             changePresentation({ expanded: !expanded })
           }}>
           {state.sizeTier !== 'normal' && <span className="dsh-file-viewer-warning" role="img"
             aria-label={t(state.sizeTier === 'huge' ? 'hugeDocument' : 'largeDocument')} title={t(state.sizeTier === 'huge' ? 'hugeDocument' : 'largeDocument')}>!</span>}
-          <span role="status">{t(state.syncStatus)}</span>
+          <span role="status">{t(ready?.syncStatus)}</span>
           {updating && <span className="dsh-file-viewer-activity" role="status">
             {t('updating')}<span className="dsh-file-viewer-pending-dots" aria-hidden="true">{updateDots}</span>
           </span>}
           {saving && <span className="dsh-file-viewer-activity" role="status">
             {t('saving')}<span className="dsh-file-viewer-pending-dots" aria-hidden="true">{saveDots}</span>
           </span>}
-          {!state.saveSupported && <span> · {t('readOnly')}</span>}
+          {!ready?.saveSupported && <span> · {t('readOnly')}</span>}
         </button>
         <div className="dsh-file-viewer-toolbar">
           <PreferenceAction hidden={!expanded} label={t('update')}
-            currentLabel={state.watchSupported ? t('autoUpdate') : t('autoUpdateUnsupported')}
+            currentLabel={ready?.watchSupported ? t('autoUpdate') : t('autoUpdateUnsupported')}
             defaultLabel={t('globalAutoUpdate')} checked={state.automation.autoUpdate}
-            defaultChecked={automationDefaults.autoUpdate} disabled={!state.watchSupported} actionDisabled={busy || state.loadConfirmation !== undefined}
+            defaultChecked={automationDefaults.autoUpdate} disabled={!ready?.watchSupported} actionDisabled={busy || state.loadConfirmation !== undefined}
             onChange={setAutoUpdate} onDefaultChange={setGlobalAutoUpdate} onAction={refresh} />
-          {state.saveSupported && <PreferenceAction hidden={!expanded} label={t('save')}
-            currentLabel={state.conditionalSaveSupported ? t('autoSave') : t('autoSaveUnsupported')}
+          {ready?.saveSupported && <PreferenceAction hidden={!expanded} label={t('save')}
+            currentLabel={ready?.conditionalSaveSupported ? t('autoSave') : t('autoSaveUnsupported')}
             defaultLabel={t('globalAutoSave')} checked={state.automation.autoSave}
-            defaultChecked={automationDefaults.autoSave} disabled={!state.conditionalSaveSupported} actionDisabled={!canSave}
+            defaultChecked={automationDefaults.autoSave} disabled={!ready?.conditionalSaveSupported} actionDisabled={!canSave}
             onChange={setAutoSave} onDefaultChange={setGlobalAutoSave} onAction={requestSave} />}
           <PreferenceAction hidden={!expanded} label={t('lineNumbers')} currentLabel={t('lineNumbers')}
             defaultLabel={t('defaultLineNumbers')} checked={presentation.lineNumbers} defaultChecked={lineNumberDefault}
@@ -334,24 +371,26 @@ function ReadyPanel({
         </div>
       </div>
       <LoadConfirmation state={state} onLoad={confirmLoad} t={t} />
-      {state.automationPaused && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
-      {state.sourceStale && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
+      {ready?.automationPaused && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
+      {ready?.sourceStale && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
       {state.failure !== undefined && <div className="dsh-file-viewer-failure" role="alert">
         {t(failureKey(state.failure))}
         <FailureDetail failure={state.failure} t={t} />
       </div>}
-      {state.syncStatus === 'diverged' && (
+      {ready?.syncStatus === 'diverged' && (
         <div className="dsh-file-viewer-conflict" role="alert">
           <strong>{t('conflict')}</strong>
           <span>{t('conflictHelp')}</span>
-          {state.saveSupported && <button type="button" onClick={confirmOverwrite}>{t('overwriteSource')}</button>}
-          <button type="button" onClick={confirmDiscard} disabled={state.latestSourceText === undefined}>{t('discardLocal')}</button>
+          {ready?.saveSupported && <button type="button" onClick={confirmOverwrite}>{t('overwriteSource')}</button>}
+          <button type="button" onClick={confirmDiscard} disabled={ready?.latestSourceText === undefined}>{t('discardLocal')}</button>
         </div>
       )}
+      </>}
       <div className="dsh-file-viewer-primary-editor">
         <EditorHost
           text={state.text}
-          readOnly={!state.saveSupported}
+          {...(state.status === 'partial' ? { appendKey: state.streamId } : {})}
+          readOnly={!ready?.saveSupported}
           loadEditor={loadEditor}
           onChange={edit}
           lineNumbers={presentation.lineNumbers}
@@ -386,10 +425,10 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
     () => props.snapshot(props.instanceId),
     () => props.snapshot(props.instanceId),
   )
-  if (state.status !== 'ready') {
+  if (state.status !== 'ready' && state.status !== 'partial') {
     if (state.status === 'confirmation-required') return <LoadConfirmation state={state}
       onLoad={() => { props.confirmLoad(props.instanceId) }} t={props.t} />
-    if (state.status === 'loading') return <div className="dsh-file-viewer-state" role="status">{props.t('loading')}</div>
+    if (state.status === 'loading') return <section className="dsh-file-viewer-root"><LoadProgress state={state} label={props.t('loading')} /><div className="dsh-file-viewer-state" role="status">{props.t('loading')}</div></section>
     return (
       <div className="dsh-file-viewer-state" role="alert">
         {state.failure === undefined ? props.t('loadFailed') : props.t(failureKey(state.failure))}
@@ -405,6 +444,7 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
       save={() => { props.save(props.instanceId) }}
       refresh={() => { props.refresh(props.instanceId) }}
       confirmLoad={() => { props.confirmLoad(props.instanceId) }}
+      cancelLoad={() => { props.cancelLoad(props.instanceId) }}
       setDraftPersistence={enabled => { props.setDraftPersistence(props.instanceId, enabled) }}
       overwriteSource={() => { props.overwriteSource(props.instanceId) }}
       discardLocal={() => { props.discardLocal(props.instanceId) }}

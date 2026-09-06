@@ -2,6 +2,7 @@ import type { ComponentType } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   FileViewerInstanceSnapshot,
+  FileViewerTextStreamEvent,
   FileViewerTextAccess,
   FileViewerConfirmationRequiredError,
   FileViewerMissingResourceError,
@@ -71,6 +72,10 @@ export interface ResourceLoadedText {
   readonly descriptor?: Partial<Omit<ResourceDescriptor, 'ref'>>
 }
 
+/** Sequential text events with source-owned opening metadata. */
+export type ResourceTextStreamEvent = Exclude<FileViewerTextStreamEvent, { kind: 'start' }>
+  | { readonly kind: 'start'; readonly sizeBytes: number; readonly descriptor?: Partial<Omit<ResourceDescriptor, 'ref'>> }
+
 /** Source bytes with an opaque revision and optional refreshed metadata. */
 export interface ResourceLoadedBytes {
   readonly bytes: Uint8Array
@@ -99,7 +104,9 @@ export interface ResourceSource {
   readonly defaults?: Partial<ResourceAutomationPreferences>
   /** @param ref Exact resource identity. @param selection Persisted source-owned hint. @returns Nothing after opening the location. */
   selectLocation?(ref: ResourceRef, selection?: unknown): Promise<void>
-  /** @param ref Exact resource identity. @param signal Cancellation signal. @param access Explicit document permission; sources reject with ResourceConfirmationRequiredError before reading content when approval is needed. @returns Canonical source text and revision. */
+  /** @param ref Exact resource identity. @param signal Cancellation signal. @param access Explicit document permission. @returns Ordered provisional chunks and a completion revision, used for approved initial loads. */
+  streamText?(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): AsyncIterable<ResourceTextStreamEvent>
+  /** @param ref Exact resource identity. @param signal Cancellation signal. @param access Explicit document permission; approval rejection precedes content reads. @returns Complete canonical source text and revision. */
   readText?(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceLoadedText>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Opaque source bytes and revision. */
   readBytes?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes>
@@ -258,6 +265,8 @@ export interface ResourceWorkbenchClientService {
   refreshText(viewId: string): Promise<void>
   /** @param viewId Text view showing a large-file prompt. @returns Nothing after the explicitly approved load. */
   confirmTextLoad(viewId: string): Promise<void>
+  /** @param viewId Text view whose in-progress initial load should stop. */
+  cancelTextLoad(viewId: string): void
   /** @param viewId Text view. @param enabled Whether its shared document writes browser drafts; disabling retains existing records. */
   setTextDraftPersistence(viewId: string, enabled: boolean): void
   /** @param viewId Text resource view. @returns Nothing after explicit publication. */

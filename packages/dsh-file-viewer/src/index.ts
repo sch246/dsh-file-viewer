@@ -11,6 +11,8 @@ export const name = 'file-viewer'
 export interface Config {
   /** Delay between completed filesystem source polls while subscribed. */
   resourcePollIntervalMs: number
+  /** Minimum interval between buffered progressive appends after the first chunk. */
+  progressiveFlushIntervalMs: number
   /** File bytes above which background work defaults off for a new document. */
   largeFileBytes: number
   /** File bytes above which loading requires stronger explicit confirmation. */
@@ -19,6 +21,7 @@ export interface Config {
 
 /** Validated viewer polling and presentation configuration. */
 const fields: z<Config> = z.object({
+  progressiveFlushIntervalMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(300),
   largeFileBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(10 * 1024 * 1024),
   hugeFileBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(100 * 1024 * 1024),
   resourcePollIntervalMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),

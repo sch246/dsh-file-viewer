@@ -180,6 +180,26 @@ describe('CodeMirror editor handle', () => {
     expect(() => first.view.scrollDOM.dispatchEvent(new Event('scroll'))).not.toThrow()
   })
 
+  it('appends read-only source chunks and enables editing without moving selection, scroll or adding undo', () => {
+    const onChange = vi.fn()
+    const { parent, handle, view } = mount({ text: 'first', readOnly: true, onChange })
+    const editor = parent.querySelector('.cm-editor')
+    view.dispatch({ selection: { anchor: 1, head: 4 } })
+    view.scrollDOM.scrollTop = 137
+    handle.appendText('\nsecond')
+    expect(view.state.doc.toString()).toBe('first\nsecond')
+    expect(view.state.selection.main).toMatchObject({ anchor: 1, head: 4 })
+    expect(view.scrollDOM.scrollTop).toBe(137)
+    expect(onChange).not.toHaveBeenCalled()
+    handle.setReadOnly(false)
+    expect(parent.querySelector('.cm-editor')).toBe(editor)
+    expect(view.state.readOnly).toBe(false)
+    expect(undo(view)).toBe(false)
+    view.dispatch({ changes: { from: 12, insert: ' edited' } })
+    expect(undo(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe('first\nsecond')
+  })
+
   it('rejects foreign view state before attaching an editor', () => {
     const parent = document.createElement('div')
     expect(() => createFileViewerEditor({

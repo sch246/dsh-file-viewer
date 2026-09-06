@@ -29,6 +29,10 @@ export interface FileViewerEditorOptions {
 export interface FileViewerEditorHandle {
   /** Replace source text without recording an undo step or invoking onChange. */
   setText(text: string): void
+  /** Append canonical source text without moving selection, recording undo or invoking onChange. */
+  appendText(text: string): void
+  /** Reconfigure editing permission without replacing the view or its history. */
+  setReadOnly(readOnly: boolean): void
   /** Toggle ordinary line numbers or both baseline/current columns in every comparison pane. */
   setLineNumbers(enabled: boolean): void
   /** Toggle or update comparison without replacing the local view, selection or undo history. */
@@ -242,6 +246,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   }
   const localPane = pane('local')
   const numbering = new Compartment()
+  const editing = new Compartment()
   let numbersEnabled = options.lineNumbers ?? true
   let comparison = options.comparison
   let sourcePane: ReturnType<typeof pane> | undefined
@@ -250,7 +255,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   let onlySource = false
   let destroyed = false
   let frame: number | undefined
-  const extensions = [theme, history(), EditorState.readOnly.of(options.readOnly), EditorView.lineWrapping,
+  const extensions = [theme, history(), editing.of(EditorState.readOnly.of(options.readOnly)), EditorView.lineWrapping,
     keymap.of(historyKeymap), updateListener, presentation,
     numbering.of(numbersEnabled ? lineNumbers() : [])]
   let state = prior ? prior.state.update({ effects: StateEffect.reconfigure.of(extensions) }).state
@@ -420,6 +425,24 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
         throw error
       } finally { binding.applying = false }
     },
+    appendText: text => {
+      if (text === '') return
+      const previous = binding.text
+      const previousDocument = view.state.doc
+      const top = view.scrollDOM.scrollTop, left = view.scrollDOM.scrollLeft
+      binding.applying = true
+      binding.text += text
+      try {
+        view.dispatch({ changes: { from: view.state.doc.length, insert: Text.of(text.split('\n')) },
+          selection: view.state.selection, annotations: Transaction.addToHistory.of(false) })
+        view.scrollDOM.scrollTop = top
+        view.scrollDOM.scrollLeft = left
+      } catch (error: unknown) {
+        binding.text = view.state.doc === previousDocument ? previous : view.state.doc.toString()
+        throw error
+      } finally { binding.applying = false }
+    },
+    setReadOnly: readOnly => { view.dispatch({ effects: editing.reconfigure(EditorState.readOnly.of(readOnly)) }) },
     setLineNumbers: enabled => {
       numbersEnabled = enabled
       view.dispatch({ effects: numbering.reconfigure(enabled ? comparison ? comparisonGutter : lineNumbers() : []) })

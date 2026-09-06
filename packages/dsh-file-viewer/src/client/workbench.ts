@@ -120,6 +120,7 @@ export interface ResourceWorkbenchOptions {
   readonly storage?: FileViewerBrowserStorage
   readonly confirmDiscard?: FileViewerServiceOptions['confirmDiscard']
   readonly automationDebounceMs?: number
+  readonly progressiveFlushIntervalMs?: number
   readonly persistenceDebounceMs?: number
   readonly hashText?: (text: string) => Promise<string>
   /** Validated byte tiers for background defaults and explicit huge-file loading. */
@@ -280,6 +281,7 @@ export class ResourceWorkbenchRuntime {
       ...(options.confirmDiscard === undefined ? {} : { confirmDiscard: options.confirmDiscard }),
       ...(options.automationDebounceMs === undefined ? {} : { automationDebounceMs: options.automationDebounceMs }),
       ...(options.persistenceDebounceMs === undefined ? {} : { persistenceDebounceMs: options.persistenceDebounceMs }),
+      ...(options.progressiveFlushIntervalMs === undefined ? {} : { progressiveFlushIntervalMs: options.progressiveFlushIntervalMs }),
       ...(options.hashText === undefined ? {} : { hashText: options.hashText }),
       ...(options.largeFileBytes === undefined ? {} : { largeFileBytes: options.largeFileBytes }),
       ...(options.hugeFileBytes === undefined ? {} : { hugeFileBytes: options.hugeFileBytes }),
@@ -310,6 +312,17 @@ export class ResourceWorkbenchRuntime {
             ...(loaded.descriptor?.location === undefined ? {} : { location: loaded.descriptor.location }),
           }
         },
+        ...(source.streamText === undefined ? {} : {
+          stream: async function* (ref, signal, access) {
+            for await (const event of source.streamText!(ref as unknown as ResourceRef, signal, access)) {
+              signal.throwIfAborted()
+              if (event.kind !== 'start') { yield event; continue }
+              yield { kind: 'start' as const, sizeBytes: event.sizeBytes,
+                ...(event.descriptor?.name === undefined ? {} : { title: event.descriptor.name }),
+                ...(event.descriptor?.location === undefined ? {} : { location: event.descriptor.location }) }
+            }
+          },
+        }),
         ...(source.saveText === undefined ? {} : {
           save: (ref, text, version, signal, access) => source.saveText!(ref as unknown as ResourceRef, text, version, signal, access),
         }),
@@ -749,6 +762,9 @@ export class ResourceWorkbenchRuntime {
   confirmTextLoad(viewId: string): Promise<void> {
     return this.documents.confirmLoad(this.#documentId(viewId))
   }
+
+  /** @param viewId Text view whose initial load should stop. */
+  cancelTextLoad(viewId: string): void { this.documents.cancelLoad(this.#documentId(viewId)) }
 
   /** @param viewId Text view. @param enabled Shared document browser draft writing choice. */
   setTextDraftPersistence(viewId: string, enabled: boolean): void {

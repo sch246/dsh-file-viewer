@@ -63,6 +63,7 @@ export function createResourceWorkbenchClientService(
     editText: (viewId: string, text: string) => { runtime.editText(viewId, text) },
     saveText: (viewId: string) => runtime.saveText(viewId),
     refreshText: (viewId: string) => runtime.refreshText(viewId),
+    cancelTextLoad: (viewId: string) => runtime.cancelTextLoad(viewId),
     confirmTextLoad: (viewId: string) => runtime.confirmTextLoad(viewId),
     setTextDraftPersistence: (viewId: string, enabled: boolean) => { runtime.setTextDraftPersistence(viewId, enabled) },
     overwriteSourceText: (viewId: string) => runtime.overwriteSourceText(viewId),

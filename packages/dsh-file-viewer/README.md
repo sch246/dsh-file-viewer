@@ -37,7 +37,9 @@ The Bundle inserts the browser `@dsh-external/dsh-file-viewer` row and the indep
 
 The Bundle registers the `filesystem` source before restoration and file-opening consumers. Its shared provider supplies text with explicit large-file confirmation, bounded bytes and revision-guarded saves independently of Links enablement. Viewer handles supported files through `chat/open-workspace-file`; directories and unsupported handlers delegate. Breadcrumbs and explicit system opening use the same Host helper; the viewer waits for `sessions` and `remote.session` before registering its runtime. The viewer metadata Remote supplies `resourcePollIntervalMs` (2000 ms in the Bundle); validated Host Config supplies ordered `largeFileBytes` (10 MiB) and `hugeFileBytes` (100 MiB) policy tiers. Above the large tier, automatic synchronization, browser draft writes and differences default off once and remain manually enableable; content polling stops while both automation choices are off. Above the huge tier, Continue loading gives stronger inline confirmation. Provider thresholds/byte limits and manager directory polling stay with their respective owners. Other sources can still register independent content capabilities and source-owned location selection.
 
-The initial file panel scales exact bytes into IEC units and displays Load file or Continue loading without creating an editor or fetching content. Viewer requires user-files ^0.1.1 to enforce the current approval ceiling before disk reads. Confirmation belongs to one shared open text document and is passed to its reads, watches and saves. Growth pauses further reads while retaining the current editor text. See [source approval and synchronization](../../README.md#synchronize-a-document).
+The initial file panel scales exact bytes into IEC units and displays Load file or Continue loading without creating an editor or fetching content. Viewer requires user-files ^0.1.2 for sequential text streaming with enforced approval ceilings. Confirmation belongs to one shared open text document and is passed to its reads, watches and saves. Growth pauses further reads while retaining the current editor text. See [source approval and synchronization](../../README.md#synchronize-a-document).
+
+Approved initial filesystem loads progressively show read-only text, with Stop loading, Retry loading and a black byte-progress line. Only complete validation enables editing and browser draft retention. Appends coalesce at `progressiveFlushIntervalMs` (300 ms by default); ordinary refreshes stage complete observations.
 
 Synchronization defaults initialize newly opened text documents, subject to one-time large-tier defaults; changes leave existing document choices intact. Exact document references share automation across views, while separate documents own independent choices. Draft restoration retains those choices. See [synchronization](../../README.md#synchronize-a-document) for source defaults, capability requirements and global-default subscriptions.
 
@@ -53,7 +55,7 @@ The [handler dropdown](../../README.md#choose-a-handler) separates current-view 
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-[`cordis.patch.yml`](cordis.patch.yml) inserts the workbench and editor Client rows. [`src/client/workbench.ts`](src/client/workbench.ts) owns resource views, handlers, associations and sidebar restoration. [`src/client/service.ts`](src/client/service.ts) owns shared text documents, exact hashes and guarded asynchronous operations. The CodeMirror implementation stays in the sibling editor package and materializes only after a ready text view mounts.
+[`cordis.patch.yml`](cordis.patch.yml) inserts the workbench and editor Client rows. [`src/client/workbench.ts`](src/client/workbench.ts) owns resource views, handlers, associations and sidebar restoration. [`src/client/service.ts`](src/client/service.ts) owns shared text documents, exact hashes and guarded asynchronous operations. The CodeMirror implementation stays in the sibling editor package and materializes after a ready or partial text view mounts.
 
 </details>
 
@@ -75,7 +77,7 @@ None. This Bundle changes human browser presentation and adds no model-visible i
 <a id="known-limitations-and-deferred-work"></a>
 ## Known Limitations and Deferred Work
 
-- The editor presents complete plain text. Filesystem text above the configured threshold requires a document-scoped Load file action; approval retains all editor capabilities. Sources own confirmation thresholds, partial-loading policy and canonical line representation.
+- The editor progressively previews initial loads and edits complete plain text. Filesystem text above the configured threshold requires a document-scoped Load file action; approval retains all editor capabilities. Sources own confirmation thresholds, canonical line representation and completion integrity.
 - Workbench descriptors and text drafts survive Client recreation; selection, scroll, undo and custom handler state are memory-only.
 - The image handler displays bytes but does not edit images. Custom byte handlers own their draft and revision model through the generic byte and close-guard APIs.
 - Inline comparisons retain the editable Local document and show Source read-only, using common Base-aligned rows, paired line numbers and linked scrolling. Deleted baseline text and visual padding never enter the document or clipboard. The separate editor package owns alignment and rendering; providers own source-observation latency.

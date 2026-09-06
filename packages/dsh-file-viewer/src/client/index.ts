@@ -52,6 +52,7 @@ export type {
   ResourceSource,
   ResourceTextWatchEvent,
   ResourceTextAccess,
+  ResourceTextStreamEvent,
   ResourceViewSnapshot,
   ResourceWorkbenchClientService,
 } from './resource.ts'
@@ -112,6 +113,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const runtime = new ResourceWorkbenchRuntime({
     host,
     largeFileBytes: metadata.largeFileBytes,
+    progressiveFlushIntervalMs: metadata.progressiveFlushIntervalMs,
     hugeFileBytes: metadata.hugeFileBytes,
     confirmDiscard: () => window.confirm(t('confirmClose')),
     confirmHandlerSwitch: () => window.confirm(t('confirmHandlerSwitch')),
@@ -151,6 +153,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const offTextHandler = runtime.registerHandler(textHandler)
   const offImageHandler = runtime.registerHandler(imageHandler)
   const source = new FilesystemResourceSource({
+    streamText: (sessionId, path, signal, access) => ctx.remote.userFiles.streamText({ sessionId, path, ...access }, signal),
     readText: async (sessionId, path, signal, access) => valueOf(await ctx.remote.userFiles.readText({ sessionId, path, ...access }, signal)),
     readBytes: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.readBytes({ sessionId, path }, signal)),
     saveText: async (sessionId, path, text, version, signal, access) => valueOf(await ctx.remote.userFiles.saveText({ sessionId, path, text, version, ...access }, signal)),

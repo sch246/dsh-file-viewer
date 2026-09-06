@@ -9,6 +9,11 @@ export const FILE_VIEWER_CSS = `
 .dsh-resource-workbench-content{min-height:0;flex:1}.dsh-resource-handler-choice{display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;padding:16px}.dsh-resource-handler-choice strong{flex-basis:100%}
 .dsh-resource-image-wrap{display:grid;place-items:center;height:100%;min-height:0;overflow:auto;padding:12px;background:repeating-conic-gradient(var(--dsw-alias-bg-layer-2) 0 25%,var(--dsw-alias-bg-layer-1) 0 50%) 0/20px 20px}
 .dsh-resource-image-wrap img{display:block;max-width:100%;max-height:100%;object-fit:contain}
+@keyframes dsh-file-progress-fade{from{opacity:1}to{opacity:0}}
+.dsh-file-viewer-progress{position:absolute;top:0;left:0;right:0;height:3px;z-index:25;pointer-events:none;border-radius:0}
+.dsh-file-viewer-progress>div{height:100%;background:#000;border-radius:0}
+.dsh-file-viewer-progress.is-complete{animation:dsh-file-progress-fade .5s .2s forwards}
+.dsh-file-viewer-notice button{margin-left:8px}
 .dsh-file-viewer-root{position:relative;display:flex;flex-direction:column;height:100%;min-height:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1)}
 .dsh-file-viewer-float{position:absolute;top:5px;right:8px;z-index:20;display:flex;flex-direction:column;align-items:flex-end;max-width:calc(100% - 16px);pointer-events:none}
 .dsh-file-viewer-float button,.dsh-file-viewer-float label{pointer-events:auto}

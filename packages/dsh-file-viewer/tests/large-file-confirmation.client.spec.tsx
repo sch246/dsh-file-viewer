@@ -13,7 +13,7 @@ import { en } from '../src/client/locales.ts'
 const runtimes: ResourceWorkbenchRuntime[] = []
 afterEach(() => { cleanup(); for (const runtime of runtimes.splice(0)) runtime.dispose(); vi.useRealTimers() })
 
-function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeFileBytes?: number } = {}, initialSize = initial.length) {
+function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeFileBytes?: number } = {}, initialSize = initial.length, streamText?: FilesystemSourceGateway['streamText']) {
   const hosted = new Map<string, Parameters<ResourceViewHost['open']>[1]>()
   const host: ResourceViewHost = {
     open: async (_session, input) => { hosted.set(input.id, input); return 'group' },
@@ -42,6 +42,7 @@ function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeF
     }
   }
   const gateway: FilesystemSourceGateway = {
+    ...(streamText === undefined ? {} : { streamText }),
     readText: vi.fn(async (_session, path, signal, access) => {
       signal.throwIfAborted()
       gate(diskSize, access)
@@ -66,7 +67,7 @@ function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeF
   const descriptor = { ref: { sourceId: source.id, sessionId: 'session' as never, resourceId: '/file.txt' }, name: 'file.txt', size: initialSize }
   const createEditor = vi.fn(({ parent, text }: { parent: HTMLElement; text: string }) => {
     parent.textContent = text
-    return { setText: (next: string) => { parent.textContent = next }, setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+    return { appendText: vi.fn((next: string) => { parent.textContent += next }), setReadOnly: vi.fn(), setText: (next: string) => { parent.textContent = next }, setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
   })
   const loadEditor = vi.fn(async () => ({ createFileViewerEditor: createEditor }))
   const View = createTextResourceView({ loadEditor, confirm: () => true, t: key => en[key] })
@@ -297,4 +298,88 @@ it('pauses large-tier draft writes and further polls while an observed source ha
   finish('source text')
   await vi.advanceTimersByTimeAsync(0)
   expect(f.service.textSnapshot(view)).toMatchObject({ text: 'local', latestSourceText: 'source text' })
+})
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => { resolve = done })
+  return { promise, resolve }
+}
+
+it('shows the first stream chunk immediately, coalesces appends, and only enables editing after validated completion', async () => {
+  vi.useFakeTimers()
+  const middle = deferred(), end = deferred()
+  const stream = vi.fn<NonNullable<FilesystemSourceGateway['streamText']>>(async function* () {
+    yield { kind: 'start' as const, path: '/file.txt', sizeBytes: 10 }
+    yield { kind: 'chunk' as const, text: 'first', bytesRead: 5 }
+    await middle.promise
+    yield { kind: 'chunk' as const, text: ' la', bytesRead: 8 }
+    await end.promise
+    yield { kind: 'chunk' as const, text: 'st', bytesRead: 10 }
+    yield { kind: 'complete' as const, version: 'v1' as never, sizeBytes: 10 }
+  })
+  const f = fixture('first last', {}, 10, stream)
+  const view = await f.service.open(f.descriptor)
+  render(<f.View viewId={view} handlerId={TEXT_RESOURCE_HANDLER_ID} service={f.service} />)
+  expect(stream).not.toHaveBeenCalled()
+  let loading!: Promise<void>
+  await act(async () => { loading = f.service.confirmTextLoad(view); await vi.advanceTimersByTimeAsync(0) })
+  expect(f.service.textSnapshot(view)).toMatchObject({ status: 'partial', text: 'first' })
+  expect(screen.getByText(en.incompleteFile)).toBeTruthy()
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50')
+  expect(f.createEditor).toHaveBeenCalledTimes(1)
+  expect(f.createEditor.mock.calls[0]![0]).toMatchObject({ readOnly: true })
+  await act(async () => { middle.resolve(); await vi.advanceTimersByTimeAsync(299) })
+  expect(f.service.textSnapshot(view)).toMatchObject({ text: 'first' })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(f.service.textSnapshot(view)).toMatchObject({ text: 'first la' })
+  expect(f.createEditor.mock.results[0]!.value.appendText).toHaveBeenCalledWith(' la')
+  f.runtime.flushDrafts()
+  f.service.editText(view, 'cannot edit')
+  await f.service.saveText(view)
+  await f.service.overwriteSourceText(view)
+  expect(f.hashText).not.toHaveBeenCalled()
+  expect(f.storage.setItem).not.toHaveBeenCalled()
+  expect(f.gateway.saveText).not.toHaveBeenCalled()
+  await act(async () => { end.resolve(); await loading })
+  expect(f.service.textSnapshot(view)).toMatchObject({ status: 'ready', text: 'first last', baseVersion: 'v1' })
+  expect(f.hashText).toHaveBeenCalledTimes(1)
+  expect(f.createEditor).toHaveBeenCalledTimes(1)
+  expect(f.createEditor.mock.results[0]!.value.setReadOnly).toHaveBeenCalledWith(false)
+  expect(f.createEditor.mock.results[0]!.value.appendText).toHaveBeenLastCalledWith('st')
+  expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('100')
+})
+
+it('keeps stopped or failed partial text read-only, retries from the start and preserves a saved draft until completion', async () => {
+  vi.useFakeTimers()
+  const end = deferred()
+  let attempt = 0
+  const stream = vi.fn<NonNullable<FilesystemSourceGateway['streamText']>>(async function* (_session, _path, signal) {
+    attempt += 1
+    yield { kind: 'start' as const, path: '/file.txt', sizeBytes: 10 }
+    yield { kind: 'chunk' as const, text: 'first', bytesRead: 5 }
+    if (attempt === 1) { await end.promise; signal.throwIfAborted() }
+    if (attempt === 2) throw new Error('connection lost')
+    yield { kind: 'chunk' as const, text: ' last', bytesRead: 10 }
+    yield { kind: 'complete' as const, version: 'v1' as never, sizeBytes: 10 }
+  })
+  const f = fixture('first last', {}, 10, stream)
+  const draft = JSON.stringify({ format: 1, baseText: 'old', localText: 'saved edits' })
+  f.storage.getItem.mockImplementation(key => key.startsWith('dsh-file-viewer:draft:') ? draft : null)
+  const view = await f.service.open(f.descriptor)
+  render(<f.View viewId={view} handlerId={TEXT_RESOURCE_HANDLER_ID} service={f.service} />)
+  let loading!: Promise<void>
+  await act(async () => { loading = f.service.confirmTextLoad(view); await vi.advanceTimersByTimeAsync(0) })
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.stopLoading })) })
+  expect(stream.mock.calls[0]![2].aborted).toBe(true)
+  expect(f.service.textSnapshot(view)).toMatchObject({ status: 'partial', text: 'first', operation: 'idle' })
+  expect(screen.getByRole('button', { name: en.retryLoading })).toBeTruthy()
+  await act(async () => { end.resolve(); await loading; await f.service.refreshText(view) })
+  expect(f.service.textSnapshot(view)).toMatchObject({ status: 'partial', text: 'first', failure: { code: 'load-failed' } })
+  f.runtime.flushDrafts()
+  expect(f.storage.setItem).not.toHaveBeenCalled()
+  expect(f.storage.removeItem).not.toHaveBeenCalled()
+  await act(async () => { await f.service.refreshText(view) })
+  expect(f.service.textSnapshot(view)).toMatchObject({ status: 'ready', text: 'saved edits', latestSourceText: 'first last' })
+  expect(f.gateway.saveText).not.toHaveBeenCalled()
 })

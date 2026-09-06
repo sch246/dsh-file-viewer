@@ -53,7 +53,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     edit: vi.fn(),
     save: vi.fn(),
     refresh: vi.fn(),
-    confirmLoad: vi.fn(),
+    confirmLoad: vi.fn(), cancelLoad: vi.fn(),
     setDraftPersistence: vi.fn(),
     overwriteSource: vi.fn(),
     discardLocal: vi.fn(),
@@ -67,7 +67,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     loadEditor: async () => ({
       createFileViewerEditor: ({ parent }) => {
         parent.dataset.editor = 'mounted'
-        return { setText: vi.fn(), setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+        return { appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
       },
     }),
     t: key => en[key],
@@ -110,7 +110,7 @@ describe('FileViewerPanel', () => {
         createFileViewerEditor: ({ parent, comparison }) => {
           parent.dataset.editor = 'mounted'
           comparisons.push(comparison)
-          return { setText: vi.fn(), setComparison: value => { comparisons.push(value) }, setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+          return { appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: value => { comparisons.push(value) }, setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
         },
       }),
     }

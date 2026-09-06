@@ -13,11 +13,12 @@ import {
 } from './resource.ts'
 import { isMissingResourceError, isConfirmationRequiredError } from './service.ts'
 import type {
-  UserFileBytesDocument, UserFileRevision, UserFileTextDocument, UserFileSaveResult,
+  UserFileBytesDocument, UserFileRevision, UserFileTextDocument, UserFileSaveResult, UserFileTextStreamEvent,
 } from '@dsh-external/dsh-user-files/types'
 
 /** Filesystem-source operations implemented by the generated Remote adapter. */
 export interface FilesystemSourceGateway {
+  streamText?(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): AsyncIterable<UserFileTextStreamEvent>
   readText(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileTextDocument>
   readBytes(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileBytesDocument>
   saveText(
@@ -160,6 +161,7 @@ export class FilesystemResourceSource implements ResourceSource {
   readonly supportsConditionalTextSave = true
   readonly supportsConditionalByteSave = true
   readonly openExternal?: (ref: ResourceRef, signal: AbortSignal) => Promise<void>
+  readonly streamText?: NonNullable<ResourceSource['streamText']>
   readonly #gateway: FilesystemSourceGateway
   readonly #pollIntervalMs: number
   readonly #textVersions = new Map<string, unknown>()
@@ -169,6 +171,25 @@ export class FilesystemResourceSource implements ResourceSource {
   constructor(gateway: FilesystemSourceGateway, pollIntervalMs: number) {
     this.#gateway = gateway
     this.#pollIntervalMs = pollIntervalMs
+    if (gateway.streamText !== undefined) {
+      const versions = this.#textVersions
+      this.streamText = async function* (ref, signal, access) {
+        const iterator = gateway.streamText!(ref.sessionId, ref.resourceId, signal, access)[Symbol.asyncIterator]()
+        try {
+          while (true) {
+            const item = await readResource(() => iterator.next())
+            signal.throwIfAborted()
+            if (item.done) break
+            const event = item.value
+            if (event.kind === 'start') yield { kind: 'start', sizeBytes: event.sizeBytes, descriptor: { ...descriptor(event.path), size: event.sizeBytes } }
+            else {
+              if (event.kind === 'complete') versions.set(refKey(ref), event.version)
+              yield event
+            }
+          }
+        } finally { await iterator.return?.() }
+      }
+    }
     if (gateway.openExternal !== undefined) {
       this.openExternal = async (ref, signal) => {
         await gateway.openExternal?.(ref.sessionId, ref.resourceId, signal)

@@ -18,6 +18,8 @@ export interface FileViewerEditorModule {
     readonly onViewStateChange?: (state: unknown) => void
   }): {
     setText(text: string): void
+    appendText(text: string): void
+    setReadOnly(readOnly: boolean): void
     setLineNumbers(enabled: boolean): void
     setComparison(comparison: FileViewerComparison | undefined): void
     captureViewState(): unknown
