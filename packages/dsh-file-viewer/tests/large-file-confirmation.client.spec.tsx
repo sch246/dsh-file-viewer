@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { webcrypto } from 'node:crypto'
-import { diffTextLines } from '../../dsh-file-viewer-editor/src/line-diff.ts'
+import { pollPolicy } from './poll-policy.ts'
 import { hashFileViewerText } from '../src/client/service.ts'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { ResourceWorkbenchPanel } from '../src/client/ResourceWorkbenchPanel.tsx'
@@ -47,6 +47,11 @@ function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeF
   }
   const gateway: FilesystemSourceGateway = {
     ...(streamText === undefined ? {} : { streamText }),
+    deltaText: vi.fn(async (_session, _path, baseHash, _background, _max, signal, access) => {
+      signal.throwIfAborted(); gate(diskSize, access)
+      return baseHash === disk ? { kind: 'unchanged' as const, canonicalHash: disk, version: revision, sizeBytes: diskSize }
+        : { kind: 'manual-required' as const, reason: 'base-missing' as const }
+    }),
     readText: vi.fn(async (_session, path, signal, access) => {
       signal.throwIfAborted()
       gate(diskSize, access)
@@ -71,7 +76,7 @@ function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeF
     }),
     readBytes: vi.fn(), saveBytes: vi.fn(),
   }
-  const source = new FilesystemResourceSource(gateway, 50, async (base, text) => diffTextLines(base, text))
+  const source = new FilesystemResourceSource(gateway, pollPolicy(50))
   const offSource = runtime.registerSource(source)
   runtime.registerHandler({ id: TEXT_RESOURCE_HANDLER_ID, label: 'text', match: () => ({ role: 'default' }), load: async () => ({ View: () => null }) })
   const service = createResourceWorkbenchClientService(runtime)
@@ -128,11 +133,11 @@ it('shares one decision across views, forgets it after the last close, and leave
   expect(f.service.textSnapshot(second)).toMatchObject({ text: 'retained edits', baseText: 'base' })
   await f.service.close(first)
   await f.service.refreshText(second)
-  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  expect(f.contentRead).toHaveBeenCalledTimes(1)
   await f.service.close(second)
   const reopened = await f.service.open(f.descriptor)
   expect(f.service.textSnapshot(reopened).status).toBe('confirmation-required')
-  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  expect(f.contentRead).toHaveBeenCalledTimes(1)
 })
 
 it('pauses polls on growth, retains local text, and resumes authorized polling and saving after confirmation', async () => {
@@ -238,14 +243,14 @@ it('applies large defaults before draft writes and polling, retains old drafts, 
   expect(f.storage.setItem).toHaveBeenCalledTimes(1)
   fireEvent.click(screen.getByRole('checkbox', { name: en.autoUpdate }))
   await act(async () => { await vi.advanceTimersByTimeAsync(50) })
-  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  expect(f.contentRead).toHaveBeenCalledTimes(1)
   expect(f.service.textSnapshot(view)).toMatchObject({ draftPersistence: true, automation: { autoUpdate: true } })
   expect(screen.getByRole('button', { name: en.backToEditor })).toBeTruthy()
   fireEvent.click(screen.getByRole('checkbox', { name: en.autoUpdate }))
   await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
-  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  expect(f.contentRead).toHaveBeenCalledTimes(1)
   await act(async () => { await f.service.refreshText(view) })
-  expect(f.contentRead).toHaveBeenCalledTimes(3)
+  expect(f.contentRead).toHaveBeenCalledTimes(1)
   expect(f.service.textSnapshot(view).draftPersistence).toBe(true)
 })
 
@@ -293,21 +298,22 @@ it('uses current file bytes instead of a stale restored size to initialize defau
 it('pauses large-tier draft writes and further polls while an observed source hash is still pending', async () => {
   vi.useFakeTimers()
   const f = fixture('base text', { largeFileBytes: 10, hugeFileBytes: 100 })
+  let watch!: (event: import('../src/client/resource.ts').ResourceTextWatchEvent) => void | Promise<void>
+  vi.spyOn(f.source, 'watchText').mockImplementation((_ref, listener) => { watch = listener; return () => {} })
   const view = await f.service.open(f.descriptor)
   await f.service.confirmTextLoad(view)
   f.service.editText(view, 'local')
   await Promise.resolve()
   let finish!: (hash: string) => void
   f.hashText.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
-  f.grow('source text', 11)
-  await vi.advanceTimersByTimeAsync(50)
+  const applying = watch({ kind: 'snapshot', snapshot: { text: 'source text', version: 'v2', descriptor: { size: 11 } } })
   expect(f.service.textSnapshot(view)).toMatchObject({ sizeTier: 'large', draftPersistence: false })
   await vi.advanceTimersByTimeAsync(1000)
   f.runtime.flushDrafts()
-  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  expect(f.contentRead).toHaveBeenCalledTimes(1)
   expect(f.storage.setItem).not.toHaveBeenCalled()
   finish('source text')
-  await vi.advanceTimersByTimeAsync(0)
+  await applying
   expect(f.service.textSnapshot(view)).toMatchObject({ text: 'local', latestSourceText: 'source text' })
 })
 

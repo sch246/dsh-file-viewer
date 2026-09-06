@@ -1,6 +1,5 @@
 /** Editable local text and a readonly source pane share baseline rows and measured wrap heights. */
 import { Compartment, EditorSelection, EditorState, StateEffect, StateField, Text, Transaction, type Range } from '@codemirror/state'
-export { diffTextLines } from './line-diff.ts'
 import { history, historyKeymap } from '@codemirror/commands'
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, keymap, lineNumbers, type DecorationSet } from '@codemirror/view'
 import { buildComparison, type ComparisonCell, type ComparisonSide } from './alignment.ts'
@@ -30,6 +29,8 @@ export interface FileViewerEditorOptions {
 export interface FileViewerEditorHandle {
   /** Replace source text without recording an undo step or invoking onChange. */
   setText(text: string): void
+  /** Apply validated source ranges, mapping selection and undo positions without recording an undo step. */
+  applyChanges(text: string, changes: readonly { readonly from: number; readonly to: number; readonly insert: string }[]): void
   /** Append canonical source text without moving selection, recording undo or invoking onChange. */
   appendText(text: string): void
   /** Reconfigure editing permission without replacing the view or its history. */
@@ -421,6 +422,21 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
       binding.text = text
       try {
         view.dispatch(replaceText(view.state, text))
+      } catch (error: unknown) {
+        binding.text = view.state.doc === previousDocument ? previous : view.state.doc.toString()
+        throw error
+      } finally { binding.applying = false }
+    },
+    applyChanges: (text, changes) => {
+      const previous = binding.text
+      const previousDocument = view.state.doc
+      const top = view.scrollDOM.scrollTop, left = view.scrollDOM.scrollLeft
+      binding.applying = true
+      binding.text = text
+      try {
+        view.dispatch({ changes: [...changes], annotations: Transaction.addToHistory.of(false) })
+        view.scrollDOM.scrollTop = top
+        view.scrollDOM.scrollLeft = left
       } catch (error: unknown) {
         binding.text = view.state.doc === previousDocument ? previous : view.state.doc.toString()
         throw error

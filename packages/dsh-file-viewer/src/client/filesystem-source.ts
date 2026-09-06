@@ -12,15 +12,18 @@ import {
   type ResourceSource,
   type ResourceTextWatchEvent,
 } from './resource.ts'
-import type { FileViewerEditorModule } from './editor-module.ts'
+import { diffTextLines } from '@dsh-external/dsh-user-files/text-patch'
+import type { FileViewerWatchContext } from './service.ts'
+import type { FileViewerMetadata } from '../types.ts'
 import { hashFileViewerText, isMissingResourceError, isConfirmationRequiredError } from './service.ts'
 import type {
-  UserFileBytesDocument, UserFileRevision, UserFileTextDocument, UserFileSaveResult, UserFileTextStreamEvent, UserFileTextPatch, UserFilePatchResult,
+  UserFileBytesDocument, UserFileRevision, UserFileTextDocument, UserFileSaveResult, UserFileTextStreamEvent, UserFileTextPatch, UserFilePatchResult, UserFileDeltaResult,
 } from '@dsh-external/dsh-user-files/types'
 
 /** Filesystem-source operations implemented by the generated Remote adapter. */
 export interface FilesystemSourceGateway {
   streamText?(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): AsyncIterable<UserFileTextStreamEvent>
+  deltaText(sessionId: SessionId, path: string, baseHash: string, background: boolean, maxPatchBytes: number, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileDeltaResult>
   readText(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileTextDocument>
   readBytes(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileBytesDocument>
   patchText(sessionId: SessionId, path: string, ranges: readonly UserFileTextPatch[], signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFilePatchResult>
@@ -106,69 +109,22 @@ function encodeBytes(bytes: Uint8Array): string {
   return btoa(chunks.join(''))
 }
 
-function watchLoaded<T extends { readonly version?: unknown }>(
-  pollIntervalMs: number,
-  initialVersion: unknown,
-  read: (signal: AbortSignal) => Promise<T>,
-  onVersion: (version: unknown) => void,
-  listener: (event: { readonly kind: 'invalidate' } | { readonly kind: 'missing'; readonly error: ResourceMissingError } | { readonly kind: 'snapshot'; readonly snapshot: T }) => void,
-  onConfirmation?: (error: ResourceConfirmationRequiredError) => void,
-): () => void {
-  const controller = new AbortController()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let lastVersion = initialVersion
-  let invalidated = false
-  const poll = async (): Promise<void> => {
-    try {
-      const document = await read(controller.signal)
-      if (controller.signal.aborted) return
-      if (invalidated || document.version !== lastVersion) {
-        invalidated = false
-        lastVersion = document.version
-        onVersion(document.version)
-        listener({ kind: 'snapshot', snapshot: document })
-      }
-    } catch (error: unknown) {
-      if (!controller.signal.aborted) {
-        if (isConfirmationRequiredError(error) && onConfirmation !== undefined) {
-          onConfirmation(error)
-          return
-        }
-        invalidated = true
-        listener(isMissingResourceError(error)
-          ? { kind: 'missing', error: error as ResourceMissingError }
-          : { kind: 'invalidate' })
-      }
-    } finally {
-      if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, pollIntervalMs)
-    }
-  }
-  timer = setTimeout(() => { void poll() }, pollIntervalMs)
-  return () => {
-    controller.abort(new Error('filesystem source watch disposed'))
-    if (timer !== undefined) clearTimeout(timer)
-  }
-}
-
 /** Generic resource source backed by the authenticated user-filesystem Remote. */
 export class FilesystemResourceSource implements ResourceSource {
   readonly id = ResourceSourceId('filesystem')
   readonly supportsConditionalByteSave = true
   readonly openExternal?: (ref: ResourceRef, signal: AbortSignal) => Promise<void>
   readonly streamText?: NonNullable<ResourceSource['streamText']>
-  readonly #diffTextLines: (base: string, text: string) => Promise<ReturnType<FileViewerEditorModule['diffTextLines']>>
   readonly #gateway: FilesystemSourceGateway
-  readonly #pollIntervalMs: number
-  readonly #textVersions = new Map<string, unknown>()
+  readonly #policy: FileViewerMetadata
+  #backgroundBusy = false
   readonly #byteVersions = new Map<string, unknown>()
 
-  /** @param gateway - Remote and optional native-open operations. @param pollIntervalMs - Delay between completed resource polls. @param diffTextLines Lazy editor-owned line differ. */
-  constructor(gateway: FilesystemSourceGateway, pollIntervalMs: number, diffTextLines: (base: string, text: string) => Promise<ReturnType<FileViewerEditorModule['diffTextLines']>>) {
-    this.#diffTextLines = diffTextLines
+  /** @param gateway Remote and optional native-open operations. @param policy Validated deployment timing, size and transfer policy. */
+  constructor(gateway: FilesystemSourceGateway, policy: FileViewerMetadata) {
     this.#gateway = gateway
-    this.#pollIntervalMs = pollIntervalMs
+    this.#policy = policy
     if (gateway.streamText !== undefined) {
-      const versions = this.#textVersions
       this.streamText = async function* (ref, signal, access) {
         const iterator = gateway.streamText!(ref.sessionId, ref.resourceId, signal, access)[Symbol.asyncIterator]()
         try {
@@ -179,7 +135,6 @@ export class FilesystemResourceSource implements ResourceSource {
             const event = item.value
             if (event.kind === 'start') yield { kind: 'start', sizeBytes: event.sizeBytes, descriptor: { ...descriptor(event.path), size: event.sizeBytes } }
             else {
-              if (event.kind === 'complete') versions.set(refKey(ref), event.version)
               yield event
             }
           }
@@ -201,11 +156,10 @@ export class FilesystemResourceSource implements ResourceSource {
     await this.#gateway.openLocation(ref.sessionId, selection.path)
   }
 
-  /** Load canonical LF text and retain its revision for the first watch comparison. */
+  /** Load canonical LF text with exact source size, location and revision. */
   async readText(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceLoadedText> {
     const document = await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal, access))
     signal.throwIfAborted()
-    this.#textVersions.set(refKey(ref), document.version)
     return loadedText(document)
   }
 
@@ -218,7 +172,8 @@ export class FilesystemResourceSource implements ResourceSource {
 
   /** @param ref Resource identity. @param baseText Original canonical Base. @param text Captured Local. @param signal Cancellation. @param access Disk-read approval. @returns Actual source revision/hash after guarded range publication. */
   async saveTextDelta(ref: ResourceRef, baseText: string, text: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFilePatchResult> {
-    const changes = await this.#diffTextLines(baseText, text)
+    const changes = diffTextLines(baseText, text)
+    if (changes === undefined) throw new Error('file-viewer: line diff computation exceeded its budget')
     const ranges = await Promise.all(changes.map(async change => ({ startLine: change.startLine, lineCount: change.lineCount,
       expectedHash: await hashFileViewerText(change.oldText), replacement: change.replacement })))
     signal.throwIfAborted()
@@ -231,7 +186,6 @@ export class FilesystemResourceSource implements ResourceSource {
       }
       throw error
     }
-    this.#textVersions.set(refKey(ref), result.version)
     return result
   }
 
@@ -254,28 +208,97 @@ export class FilesystemResourceSource implements ResourceSource {
     return result
   }
 
-  /** Poll only while subscribed, never overlap reads, and stop after disposal. */
-  watchText(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void, access?: ResourceTextAccess): () => void {
-    const key = refKey(ref)
-    return watchLoaded(
-      this.#pollIntervalMs,
-      this.#textVersions.get(key),
-      async signal => loadedText(await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal, access))),
-      version => { this.#textVersions.set(key, version) },
-      listener,
-      error => { listener({ kind: 'confirmation-required', error }) },
-    )
+  /** @param ref Resource identity. @param baseHash Known canonical Source hash. @param signal Cancellation. @param access Read approval. @returns Delta-first explicit observation; the document owner controls any full-load fallback. */
+  async readTextDelta(ref: ResourceRef, baseHash: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileDeltaResult> {
+    return readResource(() => this.#gateway.deltaText(ref.sessionId, ref.resourceId, baseHash, false, this.#policy.maxDeltaBytes, signal, access))
   }
 
-  /** Poll bounded bytes while subscribed without overlapping reads. */
-  watchBytes(ref: ResourceRef, listener: (event: ResourceBytesWatchEvent) => void): () => void {
+  #interval(size: number | undefined): number {
+    return size !== undefined && size > this.#policy.hugeFileBytes ? this.#policy.hugeResourcePollIntervalMs
+      : size !== undefined && size > this.#policy.largeFileBytes ? this.#policy.largeResourcePollIntervalMs : this.#policy.resourcePollIntervalMs
+  }
+
+  #watch(size: () => number | undefined, cycle: (signal: AbortSignal) => Promise<'continue' | 'stop' | 'busy'>,
+    failure: (error: unknown) => void | Promise<void>): () => void {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let failures = 0
+    const poll = async (): Promise<void> => {
+      if (controller.signal.aborted) return
+      if (this.#backgroundBusy) { schedule(this.#interval(size())); return }
+      this.#backgroundBusy = true
+      const started = performance.now()
+      let stopped = false
+      try {
+        const result = await cycle(controller.signal)
+        stopped = result === 'stop'
+        failures = result === 'busy' ? Math.min(failures + 1, 30) : 0
+      } catch (error: unknown) {
+        failures = Math.min(failures + 1, 30)
+        if (!controller.signal.aborted) {
+          try { await failure(error) } catch { /* The document already owns the failed consumer diagnostic; polling still backs off. */ }
+        }
+      } finally {
+        this.#backgroundBusy = false
+        const idle = this.#interval(size())
+        if (!stopped) schedule(Math.max(performance.now() - started,
+          failures === 0 ? idle : Math.min(this.#policy.resourcePollBackoffMaxMs, idle * 2 ** failures)))
+      }
+    }
+    const schedule = (delay: number) => {
+      if (!controller.signal.aborted) timer = setTimeout(() => { void poll() }, delay)
+    }
+    schedule(this.#interval(size()))
+    return () => { controller.abort(new Error('filesystem source watch disposed')); clearTimeout(timer) }
+  }
+
+  /** Await read, validation and consumer application under one source-wide background permit. */
+  watchText(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void | Promise<void>, access?: ResourceTextAccess, context?: FileViewerWatchContext): () => void {
+    return this.#watch(() => context?.sizeBytes(), async signal => {
+      const baseHash = context?.sourceHash()
+      if (baseHash === undefined) {
+        await listener({ kind: 'manual-required', reason: 'base-missing' })
+        return 'stop'
+      }
+      let delta: UserFileDeltaResult
+      try {
+        delta = await readResource(() => this.#gateway.deltaText(ref.sessionId, ref.resourceId, baseHash, true, this.#policy.maxDeltaBytes, signal, access))
+      } catch (error: unknown) {
+        if (!signal.aborted && isConfirmationRequiredError(error)) {
+          await listener({ kind: 'confirmation-required', error })
+          return 'stop'
+        }
+        throw error
+      }
+      if (signal.aborted) return 'stop'
+      if (delta.kind === 'busy') return 'busy'
+      if (delta.kind === 'manual-required') { await listener(delta); return 'stop' }
+      if (delta.kind === 'patch') await listener({ kind: 'delta', baseHash, delta })
+      else await listener({ kind: 'unchanged', delta })
+      return 'continue'
+    }, async error => {
+      await listener(isMissingResourceError(error) ? { kind: 'missing', error: error as ResourceMissingError } : { kind: 'failure', error })
+    })
+  }
+
+  /** Poll exact bytes with the same source-wide admission and awaited consumer processing. */
+  watchBytes(ref: ResourceRef, listener: (event: ResourceBytesWatchEvent) => void | Promise<void>): () => void {
     const key = refKey(ref)
-    return watchLoaded(
-      this.#pollIntervalMs,
-      this.#byteVersions.get(key),
-      async signal => loadedBytes(await readResource(() => this.#gateway.readBytes(ref.sessionId, ref.resourceId, signal))),
-      version => { this.#byteVersions.set(key, version) },
-      listener,
-    )
+    let size: number | undefined
+    let invalidated = false
+    return this.#watch(() => size, async signal => {
+      const loaded = loadedBytes(await readResource(() => this.#gateway.readBytes(ref.sessionId, ref.resourceId, signal)))
+      if (signal.aborted) return 'stop'
+      size = loaded.bytes.length
+      if (invalidated || loaded.version !== this.#byteVersions.get(key)) {
+        await listener({ kind: 'snapshot', snapshot: loaded })
+        if (!signal.aborted) this.#byteVersions.set(key, loaded.version)
+      }
+      invalidated = false
+      return 'continue'
+    }, async error => {
+      invalidated = true
+      await listener(isMissingResourceError(error) ? { kind: 'missing', error: error as ResourceMissingError } : { kind: 'failure', error })
+    })
   }
 }

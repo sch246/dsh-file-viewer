@@ -3,6 +3,7 @@ export const NS = 'file-viewer'
 
 /** Complete product-copy key set for generic controls and the text editor. */
 export type FileViewerLocaleKey =
+  | 'manualUpdateRequired' | 'deltaConflict'
   | 'loading' | 'editorLoading' | 'editorFailed'
   | 'save' | 'saving' | 'saveUnsupported' | 'update' | 'updating'
   | 'autoUpdate' | 'autoUpdateUnsupported' | 'autoSave' | 'autoSaveUnsupported'
@@ -32,6 +33,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const en: Record<FileViewerLocaleKey, string> = {
+  manualUpdateRequired: 'Background updates are paused. Choose Update to obtain the latest source; a complete reload may be needed. Local edits are retained.',
+  deltaConflict: 'Source changes overlap local edits or shifted lines. Local text is retained; update and compare before reconciling.',
   syncedJustNow: 'Synced just now',
   syncedSecondsAgo: 'Synced {seconds}s ago',
   syncedMinutesAgo: 'Synced {minutes}m ago',
@@ -114,6 +117,8 @@ export const en: Record<FileViewerLocaleKey, string> = {
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
+  manualUpdateRequired: '后台更新已暂停。点击更新获取最新来源，可能需要重新加载完整文件。本地修改会保留。',
+  deltaConflict: '来源变化与本地修改重叠或行位置已改变。已保留本地文本，请更新并比较后处理。',
   syncedJustNow: '刚刚同步',
   syncedSecondsAgo: '同步于{seconds}秒前',
   syncedMinutesAgo: '同步于{minutes}分钟前',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { diffTextLines } from '../src/line-diff.ts'
+import { diffTextLines } from '@dsh-external/dsh-user-files/text-patch'
 
 function lines(text: string) { return text.match(/[^\n]*\n|[^\n]+$/g) ?? [] }
 
@@ -28,7 +28,7 @@ describe('guarded line changes', () => {
       { startLine: 4, lineCount: 1, oldText: 'e\n', replacement: 'E\n' },
     ])
     expect(diffTextLines('a\nb\n', 'a\nnew\nb\n')).toEqual([
-      { startLine: 1, lineCount: 1, oldText: 'b\n', replacement: 'new\nb\n' },
+      { startLine: 0, lineCount: 1, oldText: 'a\n', replacement: 'a\nnew\n' },
     ])
   })
 })

@@ -312,6 +312,9 @@ export class ResourceWorkbenchRuntime {
             ...(loaded.descriptor?.location === undefined ? {} : { location: loaded.descriptor.location }),
           }
         },
+        ...(source.readTextDelta === undefined ? {} : {
+          loadDelta: (ref, baseHash, signal, access) => source.readTextDelta!(ref as unknown as ResourceRef, baseHash, signal, access),
+        }),
         ...(source.streamText === undefined ? {} : {
           stream: async function* (ref, signal, access) {
             for await (const event of source.streamText!(ref as unknown as ResourceRef, signal, access)) {
@@ -333,7 +336,7 @@ export class ResourceWorkbenchRuntime {
           ? {}
           : { supportsConditionalSave: source.supportsConditionalTextSave }),
         ...(source.watchText === undefined ? {} : {
-          watch: (ref, listener, access) => {
+          watch: (ref, listener, access, context) => {
             const resourceRef = ref as unknown as ResourceRef
             return source.watchText!(resourceRef, event => {
               if (event.kind === 'snapshot' && event.snapshot.descriptor !== undefined) {
@@ -341,14 +344,13 @@ export class ResourceWorkbenchRuntime {
               }
               const textEvent = toFileViewerWatchEvent(event)
               if (textEvent.kind !== 'snapshot' || textEvent.snapshot.title !== undefined) {
-                listener(textEvent)
-                return
+                return listener(textEvent)
               }
               const title = this.#resourceName(resourceRef)
-              listener(title === undefined
+              return listener(title === undefined
                 ? textEvent
                 : { ...textEvent, snapshot: { ...textEvent.snapshot, title } })
-            }, access)
+            }, access, context)
           },
         }),
         ...(source.openExternal === undefined ? {} : {
@@ -693,7 +695,7 @@ export class ResourceWorkbenchRuntime {
   }
 
   /** Subscribe through a source's byte notification capability. */
-  watchBytes(viewId: string, listener: (event: ResourceBytesWatchEvent) => void): () => void {
+  watchBytes(viewId: string, listener: (event: ResourceBytesWatchEvent) => void | Promise<void>): () => void {
     const view = this.#view(viewId)
     const source = this.#sources.get(view.descriptor.ref.sourceId)
     if (source?.watchBytes === undefined) throw new Error('resource-workbench: byte watching is unavailable')
@@ -702,8 +704,8 @@ export class ResourceWorkbenchRuntime {
     const disposeSource = source.watchBytes(view.descriptor.ref, event => {
       if (!active || view.byteGeneration !== generation || this.#views.get(viewId) !== view
         || this.#sources.get(source.id) !== source) return
-      if (event.kind !== 'invalidate') this.#syncResourceMissing(viewId, view, event.kind === 'missing')
-      listener(event)
+      if (event.kind === 'snapshot' || event.kind === 'missing') this.#syncResourceMissing(viewId, view, event.kind === 'missing')
+      return listener(event)
     })
     const dispose = () => {
       if (!active) return

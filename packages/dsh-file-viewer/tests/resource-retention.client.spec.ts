@@ -1,4 +1,4 @@
-import { diffTextLines } from '../../dsh-file-viewer-editor/src/line-diff.ts'
+import { pollPolicy } from './poll-policy.ts'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { FileViewerService, FileViewerSourceId } from '../src/client/service.ts'
@@ -6,7 +6,6 @@ import { ResourceMissingError, ResourceSourceId, type ResourceDescriptor, type R
 import { FilesystemResourceSource, type FilesystemSourceGateway } from '../src/client/filesystem-source.ts'
 import { ResourceWorkbenchRuntime, TEXT_RESOURCE_HANDLER_ID, IMAGE_RESOURCE_HANDLER_ID, type ResourceViewHost } from '../src/client/workbench.ts'
 
-const differ = async (base: string, text: string) => diffTextLines(base, text)
 const sessionId = SessionId('retention')
 const sourceId = ResourceSourceId('filesystem')
 const descriptor: ResourceDescriptor = { ref: { sessionId, sourceId, resourceId: '/file.txt' }, name: 'file.txt' }
@@ -27,6 +26,7 @@ function storage() {
 
 function gateway(): FilesystemSourceGateway {
   return {
+    deltaText: vi.fn(async () => ({ kind: 'unchanged' as const, canonicalHash: 'base', sizeBytes: 4, version: 'v1' })),
     readText: vi.fn(async (_id, path) => ({ path, text: 'base', version: 'v1' })),
     readBytes: vi.fn(async (_id, path) => ({ path, dataBase64: 'AP8=', version: 'v1' })),
     patchText: vi.fn(async () => ({ version: 'v2', canonicalHash: 'base' })),
@@ -57,16 +57,19 @@ describe('resource absence and retained text', () => {
   it.each(['readText', 'readBytes'] as const)('maps only confirmed absence from %s and recovers a same-revision watch', async method => {
     vi.useFakeTimers()
     const remote = gateway()
-    const source = new FilesystemResourceSource(remote, 10, differ)
+    const source = new FilesystemResourceSource(remote, pollPolicy())
     const listener = vi.fn()
     await source[method](descriptor.ref, signal())
-    const dispose = method === 'readText' ? source.watchText(descriptor.ref, listener) : source.watchBytes(descriptor.ref, listener)
+    const dispose = method === 'readText' ? source.watchText(descriptor.ref, listener, undefined, { sourceHash: () => 'base', sizeBytes: () => 4 }) : source.watchBytes(descriptor.ref, listener)
     onTestFinished(dispose)
-    vi.mocked(remote[method]).mockRejectedValueOnce(missing)
+    const poll = method === 'readText' ? remote.deltaText : remote.readBytes
+    vi.mocked(poll).mockRejectedValueOnce(missing)
     await vi.advanceTimersByTimeAsync(10)
     expect(listener).toHaveBeenLastCalledWith({ kind: 'missing', error: expect.any(ResourceMissingError) })
-    await vi.advanceTimersByTimeAsync(10)
-    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'snapshot', snapshot: expect.objectContaining({ version: 'v1' }) }))
+    await vi.advanceTimersByTimeAsync(20)
+    expect(listener).toHaveBeenLastCalledWith(method === 'readText'
+      ? expect.objectContaining({ kind: 'unchanged', delta: expect.objectContaining({ version: 'v1' }) })
+      : expect.objectContaining({ kind: 'snapshot', snapshot: expect.objectContaining({ version: 'v1' }) }))
     const denied = { code: 'user-files/denied', message: 'not permitted' }
     vi.mocked(remote[method]).mockRejectedValueOnce(denied)
     await expect(source[method](descriptor.ref, signal())).rejects.toBe(denied)
@@ -82,14 +85,14 @@ describe('resource absence and retained text', () => {
     vi.useFakeTimers()
     const { runtime, host } = bench()
     const remote = gateway()
-    runtime.registerSource(new FilesystemResourceSource(remote, 10, differ))
+    runtime.registerSource(new FilesystemResourceSource(remote, pollPolicy()))
     const view = await runtime.open(descriptor)
     runtime.editText(view, 'unsaved')
-    vi.mocked(remote.readText).mockRejectedValueOnce(missing)
+    vi.mocked(remote.deltaText).mockRejectedValueOnce(missing)
     await vi.advanceTimersByTimeAsync(10)
     expect(runtime.textSnapshot(view)).toMatchObject({ text: 'unsaved', resourceMissing: true, automationPaused: true })
     expect(markings(host)).toEqual([true])
-    vi.mocked(remote.readText).mockRejectedValueOnce(new Error('offline'))
+    vi.mocked(remote.deltaText).mockRejectedValueOnce(new Error('offline'))
     await runtime.refreshText(view)
     expect(markings(host)).toEqual([true])
     vi.mocked(remote.patchText).mockRejectedValueOnce(missing)
@@ -105,7 +108,7 @@ describe('resource absence and retained text', () => {
     const { runtime, host, restore } = bench()
     const remote = gateway()
     vi.mocked(remote.readText).mockRejectedValue(missing)
-    const offSource = runtime.registerSource(new FilesystemResourceSource(remote, 10, differ))
+    const offSource = runtime.registerSource(new FilesystemResourceSource(remote, pollPolicy()))
     runtime.registerRestorer()
     const result = await restore()({ sessionId, instanceId: 'restored', descriptor: { format: 1, ...descriptor, handlerId: TEXT_RESOURCE_HANDLER_ID } })
     expect(host.update).not.toHaveBeenCalled()
@@ -124,7 +127,7 @@ describe('resource absence and retained text', () => {
     const { runtime, host } = bench({ storage: browser })
     const remote = gateway()
     vi.mocked(remote.readText).mockRejectedValueOnce(missing)
-    runtime.registerSource(new FilesystemResourceSource(remote, 10, differ))
+    runtime.registerSource(new FilesystemResourceSource(remote, pollPolicy()))
     const view = await runtime.open(descriptor)
     const snapshot = runtime.textSnapshot(view)
     expect(runtime.snapshot(view).descriptor.name).toBe(descriptor.name)
@@ -143,7 +146,7 @@ describe('resource absence and retained text', () => {
     vi.useFakeTimers()
     const { runtime, host } = bench()
     const remote = gateway()
-    runtime.registerSource(new FilesystemResourceSource(remote, 10, differ))
+    runtime.registerSource(new FilesystemResourceSource(remote, pollPolicy()))
     const view = await runtime.open(descriptor, { handlerId: IMAGE_RESOURCE_HANDLER_ID })
     await runtime.loadHandler(view)
     vi.mocked(remote.readBytes).mockRejectedValueOnce(missing)
@@ -156,7 +159,7 @@ describe('resource absence and retained text', () => {
     vi.mocked(remote.readBytes).mockRejectedValueOnce(missing)
     await vi.advanceTimersByTimeAsync(10)
     expect(markings(host)).toEqual([true, false, true])
-    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(20)
     expect(markings(host)).toEqual([true, false, true, false])
     dispose()
     let reject!: (error: unknown) => void

@@ -155,6 +155,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const offImageHandler = runtime.registerHandler(imageHandler)
   const source = new FilesystemResourceSource({
     streamText: (sessionId, path, signal, access) => ctx.remote.userFiles.streamText({ sessionId, path, ...access }, signal),
+    deltaText: async (sessionId, path, baseHash, background, maxPatchBytes, signal, access) => valueOf(await ctx.remote.userFiles.deltaText({ sessionId, path, baseHash, background, maxPatchBytes, ...access }, signal)),
     readText: async (sessionId, path, signal, access) => valueOf(await ctx.remote.userFiles.readText({ sessionId, path, ...access }, signal)),
     readBytes: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.readBytes({ sessionId, path }, signal)),
     patchText: async (sessionId, path, ranges, signal, access) => valueOf(await ctx.remote.userFiles.patchText({ sessionId, path, ranges, ...access }, signal)),
@@ -164,7 +165,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
       signal.throwIfAborted()
       await openWorkspaceFile(ctx, { sessionId, path, mode: 'system', signal })
     },
-  }, metadata.resourcePollIntervalMs, async (base, text) => (await loadEditor()).diffTextLines(base, text))
+  }, metadata)
   const offSource = runtime.registerSource(source)
   const offRestorer = runtime.registerRestorer()
   const offOpen = ctx.on('chat/open-workspace-file', async (request, next) => {

@@ -1,3 +1,5 @@
+import { applyTextPatches, TextPatchError } from '@dsh-external/dsh-user-files/text-patch'
+import type { UserFileDeltaResult, UserFileTextPatch } from '@dsh-external/dsh-user-files/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 
 /** Stable source identifier contributed by a content adapter. */
@@ -44,9 +46,30 @@ export interface FileViewerSavedText { readonly version?: unknown; readonly size
 /** Delta publication reports the actual canonical source hash without returning its complete text. */
 export interface FileViewerSavedDelta extends FileViewerSavedText { readonly canonicalHash: string }
 
+/** Source-owned guarded updates; canonical hashes identify their exact input and output. */
+export type FileViewerDeltaResult = UserFileDeltaResult
+
+/** Live document baseline supplied to a source subscription without copying text. */
+export interface FileViewerWatchContext {
+  /** @returns The last verified canonical Source hash, including a retained stale baseline. */
+  sourceHash(): string | undefined
+  /** @returns The latest exact source byte size for polling cadence. */
+  sizeBytes(): number | undefined
+}
+
+/** Exact editor transactions for an already validated remote update. */
+export interface FileViewerTextUpdate {
+  readonly previousText: string
+  readonly changes: readonly { readonly from: number; readonly to: number; readonly insert: string }[]
+}
+
 /** Source watch event. */
 export type FileViewerWatchEvent =
   | { readonly kind: 'confirmation-required'; readonly error: FileViewerConfirmationRequiredError }
+  | { readonly kind: 'unchanged'; readonly delta: Extract<FileViewerDeltaResult, { kind: 'unchanged' }> }
+  | { readonly kind: 'delta'; readonly baseHash: string; readonly delta: Extract<FileViewerDeltaResult, { kind: 'patch' }> }
+  | { readonly kind: 'manual-required'; readonly reason: string }
+  | { readonly kind: 'failure'; readonly error: unknown }
   | { readonly kind: 'invalidate' }
   | { readonly kind: 'missing'; readonly error: FileViewerMissingResourceError }
   | { readonly kind: 'snapshot'; readonly snapshot: FileViewerLoadedText }
@@ -84,13 +107,15 @@ export interface FileViewerSource {
   readonly id: FileViewerSourceId
   readonly defaults?: Partial<FileViewerAutomationPreferences>
   load(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerLoadedText>
+  /** @param ref Document identity. @param baseHash Verified Source baseline. @param signal Cancellation. @param access Read approval. @returns Guarded observation or explicit full-read requirement. */
+  loadDelta?(ref: FileViewerDocumentRef, baseHash: string, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerDeltaResult>
   stream?(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): AsyncIterable<FileViewerTextStreamEvent>
   save?(ref: FileViewerDocumentRef, text: string, version: unknown, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerSavedText>
   /** @param ref Document identity. @param baseText Captured canonical Base. @param text Captured Local. @param signal Cancellation. @param access Existing-content approval. @returns Actual published canonical hash; unrelated source changes may remain. */
   saveDelta?(ref: FileViewerDocumentRef, baseText: string, text: string, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerSavedDelta>
   /** True only when save rejects a revision mismatch without publishing. */
   readonly supportsConditionalSave?: boolean
-  watch?(ref: FileViewerDocumentRef, listener: (event: FileViewerWatchEvent) => void, access?: FileViewerTextAccess): () => void
+  watch?(ref: FileViewerDocumentRef, listener: (event: FileViewerWatchEvent) => void | Promise<void>, access?: FileViewerTextAccess, context?: FileViewerWatchContext): () => void
   openExternal?(ref: FileViewerDocumentRef, signal: AbortSignal): Promise<void>
 }
 
@@ -179,6 +204,8 @@ export type FileViewerInstanceSnapshot =
     readonly conditionalSaveSupported: boolean
     readonly deltaSaveSupported?: boolean
     readonly savedWithOtherChanges?: boolean
+    readonly manualUpdateRequired?: string
+    readonly textUpdate?: FileViewerTextUpdate
     readonly watchSupported: boolean
     readonly externalOpenSupported: boolean
     readonly location?: FileViewerLocation
@@ -382,6 +409,15 @@ function deriveSync(snapshot: ReadySnapshot): ReadySnapshot {
   if (localHash === next.baseHash) return { ...next, syncStatus: 'source-ahead' }
   if (latestSourceHash === next.baseHash) return { ...next, syncStatus: 'local-ahead' }
   return { ...next, syncStatus: 'diverged' }
+}
+
+function patchOffsets(text: string, ranges: readonly UserFileTextPatch[]): FileViewerTextUpdate['changes'] {
+  let line = 0, offset = 0
+  const at = (target: number) => {
+    while (line < target) { const end = text.indexOf('\n', offset); offset = end === -1 ? text.length : end + 1; line++ }
+    return offset
+  }
+  return ranges.map(range => ({ from: at(range.startLine), to: at(range.startLine + range.lineCount), insert: range.replacement }))
 }
 
 /** Authoritative registry for sources and independent document controllers. */
@@ -766,6 +802,7 @@ export class FileViewerService {
       this.requireConfirmation(record, record.snapshot.loadConfirmation)
       return undefined
     }
+    if (mode === 'manual') this.detachWatch(record)
     const operation = this.begin(record.read, operationName)
     this.notify(record)
     if (source === undefined) {
@@ -775,8 +812,19 @@ export class FileViewerService {
     }
 
     let loaded: FileViewerLoadedText
+    let verifiedHash: string | undefined
     try {
-      loaded = mode === 'initial' && record.allowLargeFile && source.stream !== undefined
+      const previous = record.snapshot
+      const delta = mode === 'manual' && source.loadDelta !== undefined && previous.status === 'ready'
+        && previous.latestSourceText !== undefined && previous.latestSourceHash !== undefined
+        ? await source.loadDelta(previous.ref, previous.latestSourceHash, operation.controller.signal, this.textAccess(record)) : undefined
+      if (delta?.kind === 'unchanged' || delta?.kind === 'patch') {
+        if (previous.status !== 'ready' || previous.latestSourceText === undefined) throw new Error('file-viewer: delta baseline unavailable')
+        const text = delta.kind === 'patch' ? await applyTextPatches(previous.latestSourceText, delta.ranges, this.hashText) : previous.latestSourceText
+        verifiedHash = delta.kind === 'unchanged' ? previous.latestSourceHash : await this.hashText(text)
+        if (verifiedHash !== delta.canonicalHash) throw new Error('file-viewer: source delta hash mismatch')
+        loaded = { text, version: delta.version, sizeBytes: delta.sizeBytes }
+      } else loaded = mode === 'initial' && record.allowLargeFile && source.stream !== undefined
         ? await this.readStream(record, source, operation)
         : await source.load(record.snapshot.ref, operation.controller.signal, this.textAccess(record))
     } catch (error: unknown) {
@@ -819,7 +867,7 @@ export class FileViewerService {
     let restored: RestoredDraft | undefined
     try {
       if (persisted === undefined) {
-        hash = await this.hashText(loaded.text)
+        hash = verifiedHash ?? await this.hashText(loaded.text)
       } else {
         const sourceHashPromise = this.hashText(loaded.text)
         const baseHashPromise = persisted.baseText === loaded.text
@@ -950,7 +998,7 @@ export class FileViewerService {
     missingFailure?: FileViewerFailure,
   ): void {
     this.observeSize(record, loaded.sizeBytes ?? record.snapshot.sizeBytes)
-    const previous = record.snapshot
+    const { manualUpdateRequired: _manual, ...previous } = record.snapshot as FileViewerInstanceSnapshot & { manualUpdateRequired?: string }
     let next: ReadySnapshot
     if (previous.status !== 'ready') {
       next = deriveSync({
@@ -1023,7 +1071,7 @@ export class FileViewerService {
   private reconcileWatch(record: InstanceRecord): void {
     const source = this.sources.get(record.snapshot.ref.sourceId)
     const value = record.snapshot
-    if (source === undefined || value.status !== 'ready' || value.loadConfirmation !== undefined
+    if (source === undefined || value.status !== 'ready' || value.loadConfirmation !== undefined || value.manualUpdateRequired !== undefined
       || (value.sizeTier !== 'normal' && !value.automation.autoUpdate && !value.automation.autoSave)) {
       this.detachWatch(record)
       return
@@ -1037,7 +1085,7 @@ export class FileViewerService {
     record.watchSource = source
     try {
       record.watchDispose = source.watch(record.snapshot.ref, event => {
-        void this.onWatch(record, source, event).catch(error => {
+        return this.onWatch(record, source, event).catch(error => {
           if (!this.watchCurrent(record, source)) return
           record.pauseReason = 'failure'
           record.snapshot = {
@@ -1047,8 +1095,12 @@ export class FileViewerService {
           }
           this.notify(record)
           this.clearAutomationTimers(record)
+          throw error
         })
-      }, this.textAccess(record))
+      }, this.textAccess(record), {
+        sourceHash: () => record.snapshot.status === 'ready' ? record.snapshot.latestSourceHash : undefined,
+        sizeBytes: () => record.snapshot.sizeBytes,
+      })
     } catch (error: unknown) {
       record.watchSource = undefined
       record.watchDispose = undefined
@@ -1076,11 +1128,37 @@ export class FileViewerService {
       this.publishReadFailure(record, toFailure('resource-missing', event.error))
       return
     }
+    if (event.kind === 'failure') {
+      this.publishReadFailure(record, toFailure('watch-failed', event.error))
+      return
+    }
     if (event.kind === 'invalidate') {
       record.snapshot = { ...record.snapshot, sourceStale: true, syncStatus: 'unknown' }
       this.notify(record)
       this.clearTimer(record, 'autoUpdate')
       await this.read(record, 'refreshing', 'observe')
+      return
+    }
+    if (event.kind === 'manual-required') {
+      this.detachWatch(record)
+      record.pauseReason = 'failure'
+      record.snapshot = { ...record.snapshot, sourceStale: true, syncStatus: 'unknown', automationPaused: true,
+        manualUpdateRequired: event.reason }
+      this.notify(record)
+      this.clearAutomationTimers(record)
+      return
+    }
+    if (event.kind === 'unchanged') {
+      const current = record.snapshot
+      if (record.read.controller !== undefined || record.save.controller !== undefined
+        || current.latestSourceHash !== event.delta.canonicalHash || current.latestSourceText === undefined) return
+      if (!current.sourceStale && !current.resourceMissing && current.failure === undefined
+        && current.latestSourceVersion === event.delta.version && current.sizeBytes === event.delta.sizeBytes) return
+      this.applyObserved(record, source, { text: current.latestSourceText, version: event.delta.version, sizeBytes: event.delta.sizeBytes }, event.delta.canonicalHash, 'observe')
+      return
+    }
+    if (event.kind === 'delta') {
+      await this.applyWatchedDelta(record, source, event)
       return
     }
 
@@ -1107,6 +1185,58 @@ export class FileViewerService {
     }
     if (!this.watchHashCurrent(record, source, generation)) return
     this.applyObserved(record, source, event.snapshot, hash, 'observe')
+  }
+
+  private async applyWatchedDelta(record: InstanceRecord & { snapshot: ReadySnapshot }, source: FileViewerSource,
+    event: Extract<FileViewerWatchEvent, { kind: 'delta' }>): Promise<void> {
+    const previous = record.snapshot
+    if (previous.latestSourceHash !== event.baseHash || previous.latestSourceText === undefined) return
+    // A foreground operation owns its result; this observation can be requested again afterward.
+    if (record.read.controller !== undefined || record.save.controller !== undefined) return
+    const generation = record.read.generation
+    this.observeSize(record, event.delta.sizeBytes)
+    this.notify(record)
+    const sourceText = await applyTextPatches(previous.latestSourceText, event.delta.ranges, this.hashText)
+    const sourceHash = await this.hashText(sourceText)
+    if (sourceHash !== event.delta.canonicalHash) throw new Error('file-viewer: source delta hash mismatch')
+    if (!this.watchHashCurrent(record, source, generation) || record.save.controller !== undefined || record.snapshot.latestSourceHash !== event.baseHash) return
+    let current = record.snapshot
+    if (record.pauseReason === 'failure' && !current.savedWithOtherChanges) record.pauseReason = undefined
+    const automatic = current.automation.autoUpdate && record.pauseReason === undefined && record.presented
+    let localText: string | undefined
+    let localHash: string | undefined
+    const capturedText = current.text
+    if (automatic && current.baseHash === event.baseHash) {
+      try {
+        localText = capturedText === previous.latestSourceText ? sourceText
+          : await applyTextPatches(capturedText, event.delta.ranges, this.hashText)
+        localHash = localText === sourceText ? sourceHash : await this.hashText(localText)
+      } catch (error: unknown) {
+        if (!(error instanceof TextPatchError) || error.code !== 'stale-version') throw error
+        // Exact-position local range mismatches retain Local for manual reconciliation.
+      }
+    }
+    if (!this.watchHashCurrent(record, source, generation) || record.save.controller !== undefined || record.snapshot.latestSourceHash !== event.baseHash) return
+    current = record.snapshot
+    const { manualUpdateRequired: _manual, ...retained } = clearFailure(current)
+    let next = replaceLatestSource({ ...retained, sourceStale: false, resourceMissing: false },
+      { text: sourceText, version: event.delta.version, sizeBytes: event.delta.sizeBytes }, sourceHash)
+    if (automatic && localText !== undefined && localHash !== undefined && current.text === capturedText) {
+      record.hashGeneration++
+      next = replaceBase({ ...next, text: localText, localHash,
+        textUpdate: { previousText: capturedText, changes: patchOffsets(capturedText, event.delta.ranges) },
+        ...(localHash === sourceHash ? { lastSyncedAt: Date.now() } : {}) }, sourceText, sourceHash, event.delta.version)
+      record.pauseReason = undefined
+    } else if (automatic) {
+      record.pauseReason = 'conflict'
+      next = { ...next, manualUpdateRequired: 'conflict' }
+    }
+    next = this.reconcilePause(record, deriveSync(next))
+    record.snapshot = next
+    this.scheduleDraftPersistence(record)
+    this.reconcileWatch(record)
+    this.notify(record)
+    this.scheduleAutomation(record, true)
   }
 
   private saveRecord(record: InstanceRecord, automatic: boolean, overwrite: boolean): Promise<void> {
@@ -1187,7 +1317,7 @@ export class FileViewerService {
       this.cancel(record.read, new Error('successful save superseded source read'))
       this.observeSize(record, saved.sizeBytes)
       if ('canonicalHash' in saved && saved.canonicalHash !== savedHash) {
-        const { latestSourceText: _text, latestSourceHash: _hash, latestSourceVersion: _version, ...retained } = clearFailure(record.snapshot)
+        const retained = clearFailure(record.snapshot)
         record.pauseReason = 'failure'
         record.snapshot = replaceBase({ ...retained, resourceMissing: false, sourceStale: true,
           syncStatus: 'unknown', savedWithOtherChanges: true, automationPaused: true }, savedText, savedHash, saved.version)
@@ -1197,8 +1327,9 @@ export class FileViewerService {
         return
       }
       record.pauseReason = undefined
+      const { manualUpdateRequired: _manual, ...savedSnapshot } = clearFailure(record.snapshot)
       let next = replaceLatestSource({
-        ...clearFailure(record.snapshot),
+        ...savedSnapshot,
         savedWithOtherChanges: false,
         lastSyncedAt: Date.now(),
         resourceMissing: false,

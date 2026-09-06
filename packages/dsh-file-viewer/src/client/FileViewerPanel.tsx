@@ -94,6 +94,7 @@ function FailureDetail({ failure, t }: {
 interface EditorHostProps {
   readonly text: string
   readonly appendKey?: number
+  readonly textUpdate?: import('./service.ts').FileViewerTextUpdate
   readonly readOnly: boolean
   readonly comparison?: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]['comparison']
   readonly lineNumbers: boolean
@@ -107,7 +108,7 @@ interface EditorHostProps {
 
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
-  text, appendKey, readOnly, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
+  text, appendKey, textUpdate, readOnly, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<FileViewerEditorModule['createFileViewerEditor']>>()
@@ -166,9 +167,11 @@ export function EditorHost({
     const finishing = appendKey === undefined && previous.appendKey !== undefined && text.startsWith(previous.text)
     if (finishing || (appendKey !== undefined && previous.appendKey === appendKey && text.length >= previous.text.length)) {
       handle.appendText(text.slice(previous.text.length))
+    } else if (textUpdate !== undefined && textUpdate.previousText === previous.text && text !== previous.text) {
+      handle.applyChanges(text, textUpdate.changes)
     } else handle.setText(text)
     appliedRef.current = { text, appendKey }
-  }, [text, appendKey])
+  }, [text, appendKey, textUpdate])
   useEffect(() => { handleRef.current?.setReadOnly(readOnly) }, [readOnly])
   useEffect(() => {
     handleRef.current?.setComparison(comparison)
@@ -374,6 +377,10 @@ function ReadyPanel({
         </div>
       </div>
       <LoadConfirmation state={state} onLoad={confirmLoad} t={t} />
+      {ready?.manualUpdateRequired !== undefined && <div className="dsh-file-viewer-notice" role="status">
+        {t(ready.manualUpdateRequired === 'conflict' ? 'deltaConflict' : 'manualUpdateRequired')}
+        <button type="button" disabled={busy || state.loadConfirmation !== undefined} onClick={refresh}>{t('update')}</button>
+      </div>}
       {ready?.savedWithOtherChanges && <div className="dsh-file-viewer-notice" role="status">{t('savedOtherChanges')}</div>}
       {ready?.automationPaused && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
       {ready?.sourceStale && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
@@ -393,6 +400,7 @@ function ReadyPanel({
       <div className="dsh-file-viewer-primary-editor">
         <EditorHost
           text={state.text}
+          {...(ready?.textUpdate === undefined ? {} : { textUpdate: ready.textUpdate })}
           {...(state.status === 'partial' ? { appendKey: state.streamId } : {})}
           readOnly={!ready?.saveSupported}
           loadEditor={loadEditor}

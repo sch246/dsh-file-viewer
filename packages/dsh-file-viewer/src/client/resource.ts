@@ -8,6 +8,8 @@ import type {
   FileViewerConfirmationRequiredError,
   FileViewerMissingResourceError,
   FileViewerWatchEvent,
+  FileViewerWatchContext,
+  FileViewerDeltaResult,
 } from './service.ts'
 
 /**
@@ -115,6 +117,8 @@ export interface ResourceSource {
   streamText?(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): AsyncIterable<ResourceTextStreamEvent>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @param access Explicit document permission; approval rejection precedes content reads. @returns Complete canonical source text and revision. */
   readText?(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceLoadedText>
+  /** @param ref Exact resource identity. @param baseHash Verified Source hash. @param signal Cancellation. @param access Read approval. @returns Delta-first explicit observation. */
+  readTextDelta?(ref: ResourceRef, baseHash: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<FileViewerDeltaResult>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Opaque source bytes and revision. */
   readBytes?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes>
   /** @param ref Exact resource identity. @param text Canonical text to publish. @param version Caller-observed revision. @param signal Cancellation signal. @param access Explicit document permission, also covering large saves. @returns Published revision. */
@@ -124,19 +128,20 @@ export interface ResourceSource {
   /** Provider declaration that `saveText` rejects its recognized revision mismatch before publishing. */
   readonly supportsConditionalTextSave?: boolean
   /** @param ref Exact resource identity. @param listener Text notification receiver; confirmation-required pauses the subscription until explicit approval. @param access Permission retained by this document subscription. @returns Source watch disposer. */
-  watchText?(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void, access?: ResourceTextAccess): () => void
+  watchText?(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void | Promise<void>, access?: ResourceTextAccess, context?: FileViewerWatchContext): () => void
   /** @param ref Exact resource identity. @param bytes Opaque bytes to publish. @param version Caller-observed revision. @param signal Cancellation signal. @returns Published revision. */
   saveBytes?(ref: ResourceRef, bytes: Uint8Array, version: unknown, signal: AbortSignal): Promise<ResourceSavedBytes>
   /** Provider declaration that `saveBytes` rejects its recognized revision mismatch before publishing. */
   readonly supportsConditionalByteSave?: boolean
   /** @param ref Exact resource identity. @param listener Byte notification receiver. @returns Source watch disposer. */
-  watchBytes?(ref: ResourceRef, listener: (event: ResourceBytesWatchEvent) => void): () => void
+  watchBytes?(ref: ResourceRef, listener: (event: ResourceBytesWatchEvent) => void | Promise<void>): () => void
   /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Nothing after source-owned external opening. */
   openExternal?(ref: ResourceRef, signal: AbortSignal): Promise<void>
 }
 
 /** Text watch notification with source-owned metadata. */
 export type ResourceTextWatchEvent =
+  | Extract<FileViewerWatchEvent, { kind: 'delta' | 'unchanged' | 'manual-required' | 'failure' }>
   | { readonly kind: 'confirmation-required'; readonly error: FileViewerConfirmationRequiredError }
   | { readonly kind: 'invalidate' }
   | { readonly kind: 'missing'; readonly error: FileViewerMissingResourceError }
@@ -144,6 +149,7 @@ export type ResourceTextWatchEvent =
 
 /** Byte watch notification; invalidation never implies decoded content. */
 export type ResourceBytesWatchEvent =
+  | { readonly kind: 'failure'; readonly error: unknown }
   | { readonly kind: 'invalidate' }
   | { readonly kind: 'missing'; readonly error: FileViewerMissingResourceError }
   | { readonly kind: 'snapshot'; readonly snapshot: ResourceLoadedBytes }
@@ -249,7 +255,7 @@ export interface ResourceWorkbenchClientService {
   /** @param viewId Resource view. @param bytes Bytes to publish. @param version Caller-observed revision. @param signal Cancellation signal. @returns Published revision from a provider-declared guarded write. */
   writeBytes(viewId: string, bytes: Uint8Array, version: unknown, signal: AbortSignal): Promise<ResourceSavedBytes>
   /** @param viewId Resource view. @param listener Byte notification listener. @returns Source watch disposer. */
-  watchBytes(viewId: string, listener: (event: ResourceBytesWatchEvent) => void): () => void
+  watchBytes(viewId: string, listener: (event: ResourceBytesWatchEvent) => void | Promise<void>): () => void
   /** @param viewId Edited resource view. Permanently pins its preview after the first edit. */
   markEdited(viewId: string): void
   /**

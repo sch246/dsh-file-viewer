@@ -200,6 +200,21 @@ describe('CodeMirror editor handle', () => {
     expect(view.state.doc.toString()).toBe('first\nsecond')
   })
 
+  it('maps selection and local undo through guarded remote line changes while retaining scroll', () => {
+    const onChange = vi.fn()
+    const { handle, view } = mount({ text: 'a\nb\nc\n', onChange })
+    view.dispatch({ changes: { from: 4, to: 5, insert: 'C' }, selection: { anchor: 4, head: 5 } })
+    onChange.mockClear()
+    view.scrollDOM.scrollTop = 123
+    handle.applyChanges('long\nb\nC\n', [{ from: 0, to: 2, insert: 'long\n' }])
+    expect(view.state.selection.main).toMatchObject({ anchor: 7, head: 8 })
+    expect(view.scrollDOM.scrollTop).toBe(123)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(undo(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe('long\nb\nc\n')
+    expect(undo(view)).toBe(false)
+  })
+
   it('rejects foreign view state before attaching an editor', () => {
     const parent = document.createElement('div')
     expect(() => createFileViewerEditor({

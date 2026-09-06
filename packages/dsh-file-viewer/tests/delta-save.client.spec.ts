@@ -27,7 +27,7 @@ it('saves disjoint source changes, keeps ambiguous success unsynced, and permits
   finish({ canonicalHash: 'A\nexternal\n', version: 2 }); await saving
   expect(service.snapshot(id)).toMatchObject({ text: 'AA\nb\n', baseText: 'A\nb\n', savedWithOtherChanges: true,
     syncStatus: 'unknown', sourceStale: true, automationPaused: true, lastSyncedAt: 1000 })
-  expect(service.snapshot(id)).not.toHaveProperty('latestSourceText')
+  expect(service.snapshot(id)).toMatchObject({ latestSourceText: 'a\nexternal\n', latestSourceHash: 'a\nexternal\n' })
   expect(service.snapshot(id).failure).toBeUndefined()
   await service.save(id)
   expect(saveDelta.mock.calls[1]![1]).toBe('A\nb\n')
@@ -58,8 +58,10 @@ it('timestamps actual loads, pulls and equal-hash saves, preserving edits made d
   service.discardLocal(id)
   expect(service.snapshot(id).lastSyncedAt).toBe(2000)
   service.edit(id, 'c'); await Promise.resolve()
+  await watch({ kind: 'manual-required', reason: 'too-large' })
   const saving = service.save(id)
   service.edit(id, 'd'); await Promise.resolve()
   vi.setSystemTime(3000); finish({ canonicalHash: 'c', version: 3 }); await saving
   expect(service.snapshot(id)).toMatchObject({ text: 'd', baseText: 'c', latestSourceText: 'c', syncStatus: 'local-ahead', lastSyncedAt: 3000 })
+  expect(service.snapshot(id)).not.toHaveProperty('manualUpdateRequired')
 })
