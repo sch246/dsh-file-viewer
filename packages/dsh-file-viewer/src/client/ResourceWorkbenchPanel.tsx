@@ -1,3 +1,4 @@
+import { formatFileSize } from './file-size.ts'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
 import type {
@@ -107,6 +108,9 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
     <section className="dsh-resource-workbench-root">
       <header className="dsh-resource-workbench-bar">
         <ResourceLocation viewId={instanceId} service={service} label={t('location')} />
+        {state.descriptor.size !== undefined && <span className="dsh-resource-file-size" title={t('fileSize')}>
+          {formatFileSize(state.descriptor.size, t('bytes'))}
+        </span>}
         <div className="dsh-resource-handler-picker" ref={menuRef}
           onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setMenuOpen(false) }}
           onKeyDown={event => {

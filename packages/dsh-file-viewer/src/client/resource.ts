@@ -79,7 +79,7 @@ export interface ResourceLoadedBytes {
 }
 
 /** Result of publishing text to a source. */
-export interface ResourceSavedText { readonly version?: unknown }
+export interface ResourceSavedText { readonly version?: unknown; readonly sizeBytes?: number }
 
 /** Result of publishing bytes to a source. */
 export interface ResourceSavedBytes { readonly version?: unknown }
@@ -258,6 +258,8 @@ export interface ResourceWorkbenchClientService {
   refreshText(viewId: string): Promise<void>
   /** @param viewId Text view showing a large-file prompt. @returns Nothing after the explicitly approved load. */
   confirmTextLoad(viewId: string): Promise<void>
+  /** @param viewId Text view. @param enabled Whether its shared document writes browser drafts; disabling retains existing records. */
+  setTextDraftPersistence(viewId: string, enabled: boolean): void
   /** @param viewId Text resource view. @returns Nothing after explicit publication. */
   overwriteSourceText(viewId: string): Promise<void>
   /** @param viewId Text resource view. Replaces local text with the last observed source. */
@@ -296,6 +298,7 @@ export function toFileViewerWatchEvent(event: ResourceTextWatchEvent): FileViewe
     kind: 'snapshot',
     snapshot: {
       text: event.snapshot.text,
+      ...(event.snapshot.descriptor?.size === undefined ? {} : { sizeBytes: event.snapshot.descriptor.size }),
       ...(event.snapshot.version === undefined ? {} : { version: event.snapshot.version }),
       ...(event.snapshot.descriptor?.name === undefined ? {} : { title: event.snapshot.descriptor.name }),
       ...(event.snapshot.descriptor?.location === undefined ? {} : { location: event.snapshot.descriptor.location }),

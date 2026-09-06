@@ -11,14 +11,23 @@ export const name = 'file-viewer'
 export interface Config {
   /** Delay between completed filesystem source polls while subscribed. */
   resourcePollIntervalMs: number
-  /** Text length in UTF-16 code units above which the editor shows an advisory. */
-  largeDocumentCharacters: number
+  /** File bytes above which background work defaults off for a new document. */
+  largeFileBytes: number
+  /** File bytes above which loading requires stronger explicit confirmation. */
+  hugeFileBytes: number
 }
 
 /** Validated viewer polling and presentation configuration. */
-export const Config: z<Config> = z.object({
-  largeDocumentCharacters: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(2_097_152),
+const fields: z<Config> = z.object({
+  largeFileBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(10 * 1024 * 1024),
+  hugeFileBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(100 * 1024 * 1024),
   resourcePollIntervalMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),
+})
+
+/** Validated ordered byte tiers and resource polling configuration. */
+export const Config: z<Config> = z.transform(fields, (value) => {
+  if (value.hugeFileBytes <= value.largeFileBytes) throw new Error('file-viewer: hugeFileBytes must exceed largeFileBytes')
+  return value
 })
 
 /** @param ctx Host context. @param config Validated viewer configuration. */

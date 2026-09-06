@@ -20,7 +20,7 @@ export type FileViewerLocaleKey =
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
   | 'lineNumbers' | 'defaultLineNumbers' | 'synchronization'
-  | 'largeDocument' | 'failureDetail' | 'largeFilePrompt' | 'fileSize' | 'bytes' | 'loadFile'
+  | 'largeDocument' | 'failureDetail' | 'largeFilePrompt' | 'fileSize' | 'bytes' | 'loadFile' | 'hugeFilePrompt' | 'continueLoading' | 'hugeDocument' | 'draftPersistence' | 'draftPersistenceHelp'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -30,6 +30,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const en: Record<FileViewerLocaleKey, string> = {
+  hugeFilePrompt: 'This file is very large. Loading it may use much more browser memory than the file size and make the page unresponsive. Continue to load the complete file.',
+  continueLoading: 'Continue loading',
+  hugeDocument: 'Very large file. Browser memory use may greatly exceed the file size and the page may become unresponsive. Background synchronization, drafts and differences start off; each can be enabled in the controls.',
+  draftPersistence: 'Browser draft',
+  draftPersistenceHelp: 'Keep edits in this browser for reopening and recovery, subject to browser storage capacity. Turning this off stops draft updates and preserves existing records.',
   largeFilePrompt: 'This file is large. Load its contents to continue.',
   fileSize: 'File size',
   bytes: 'bytes',
@@ -93,11 +98,16 @@ export const en: Record<FileViewerLocaleKey, string> = {
   globalAutoSave: 'Default automatic save',
   imageDecodeFailed: 'The image data could not be decoded.',
   confirmHandlerSwitch: 'Keep the unsaved text draft and pause its automation while opening another viewer?',
-  largeDocument: 'Large document. Every action stays available; whole-document work such as differences, hashing and browser draft retention can take longer here.',
+  largeDocument: 'Large-file defaults: automatic update/save, browser drafts and differences start off. Enable each in the controls. Content polling stops while both automation choices are off.',
   failureDetail: 'Reported by the source',
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
+  hugeFilePrompt: '此文件很大。加载后的浏览器内存占用可能远超文件大小，并可能导致页面无响应。继续后将加载完整文件。',
+  continueLoading: '继续加载',
+  hugeDocument: '超大文件的浏览器内存占用可能远超文件大小，页面可能无响应。后台同步、草稿和差异对比默认关闭，可在控件中分别开启。',
+  draftPersistence: '浏览器草稿',
+  draftPersistenceHelp: '在此浏览器保留编辑内容，以便重新打开时恢复，受浏览器存储容量限制。关闭后不再更新草稿；已有记录保留。',
   largeFilePrompt: '此文件较大，加载内容后继续。',
   fileSize: '文件大小',
   bytes: '字节',
@@ -161,6 +171,6 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   globalAutoSave: '默认自动保存',
   imageDecodeFailed: '无法解码图片数据。',
   confirmHandlerSwitch: '保留未保存的文本草稿并暂停自动同步，然后改用其它查看器吗？',
-  largeDocument: '文档较大。所有功能仍然可用；差异对比、哈希与浏览器草稿保留等整篇操作可能变慢。',
+  largeDocument: '大文件默认关闭自动更新、自动保存、浏览器草稿和差异对比，可在控件中分别开启。两项自动同步均关闭时停止内容轮询。',
   failureDetail: '来源返回的信息',
 }

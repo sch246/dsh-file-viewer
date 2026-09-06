@@ -36,3 +36,25 @@ for (const format of ['directory', 'tarball']) {
     }
   })
 }
+
+test('refuses a provider without the required text-read ceiling API before profile changes', t => {
+  const root = mkdtempSync(join(tmpdir(), 'viewer-user-files-version-'))
+  t.after(() => { rmSync(root, { recursive: true, force: true }) })
+  const provider = join(root, 'node_modules', '@dsh-external', 'dsh-user-files')
+  const sidebar = join(root, 'node_modules', '@dsh-external', 'dsh-right-sidebar')
+  mkdirSync(provider, { recursive: true })
+  mkdirSync(sidebar, { recursive: true })
+  const manifest = JSON.stringify({ dependencies: { '@dsh-external/dsh-user-files': '0.1.0' }, dsh: { profile: { bundles: ['@dsh-external/dsh-user-files'] } } })
+  writeFileSync(join(root, 'package.json'), manifest)
+  writeFileSync(join(sidebar, 'package.json'), JSON.stringify({ name: '@dsh-external/dsh-right-sidebar', version: '0.0.1' }))
+  for (const version of ['0.1.0', '0.1.1']) {
+    writeFileSync(join(provider, 'package.json'), JSON.stringify({ name: '@dsh-external/dsh-user-files', version }))
+    const result = spawnSync(process.execPath, [join(import.meta.dirname, 'profile-peers.mjs'), 'prepare', root], { encoding: 'utf8' })
+    assert.equal(result.signal, null)
+    if (version === '0.1.0') {
+      assert.notEqual(result.status, 0)
+      assert.match(result.stderr, /0\.1\.0.*\^0\.1\.1|\^0\.1\.1.*0\.1\.0/)
+      assert.equal(result.stdout, '')
+    } else assert.equal(result.status, 0, result.stderr)
+  }
+})

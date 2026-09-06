@@ -122,8 +122,9 @@ export interface ResourceWorkbenchOptions {
   readonly automationDebounceMs?: number
   readonly persistenceDebounceMs?: number
   readonly hashText?: (text: string) => Promise<string>
-  /** Code-unit length above which a document is reported as large; omission disables the advisory. */
-  readonly largeDocumentCharacters?: number
+  /** Validated byte tiers for background defaults and explicit huge-file loading. */
+  readonly largeFileBytes?: number
+  readonly hugeFileBytes?: number
   readonly confirmHandlerSwitch?: (snapshot: ReturnType<FileViewerService['snapshot']>) => boolean | Promise<boolean>
 }
 
@@ -280,9 +281,8 @@ export class ResourceWorkbenchRuntime {
       ...(options.automationDebounceMs === undefined ? {} : { automationDebounceMs: options.automationDebounceMs }),
       ...(options.persistenceDebounceMs === undefined ? {} : { persistenceDebounceMs: options.persistenceDebounceMs }),
       ...(options.hashText === undefined ? {} : { hashText: options.hashText }),
-      ...(options.largeDocumentCharacters === undefined
-        ? {}
-        : { largeDocumentCharacters: options.largeDocumentCharacters }),
+      ...(options.largeFileBytes === undefined ? {} : { largeFileBytes: options.largeFileBytes }),
+      ...(options.hugeFileBytes === undefined ? {} : { hugeFileBytes: options.hugeFileBytes }),
     })
     this.#readAssociations()
   }
@@ -304,6 +304,7 @@ export class ResourceWorkbenchRuntime {
           const title = loaded.descriptor?.name ?? this.#resourceName(resourceRef)
           return {
             text: loaded.text,
+            ...(loaded.descriptor?.size === undefined ? {} : { sizeBytes: loaded.descriptor.size }),
             ...(loaded.version === undefined ? {} : { version: loaded.version }),
             ...(title === undefined ? {} : { title }),
             ...(loaded.descriptor?.location === undefined ? {} : { location: loaded.descriptor.location }),
@@ -749,6 +750,11 @@ export class ResourceWorkbenchRuntime {
     return this.documents.confirmLoad(this.#documentId(viewId))
   }
 
+  /** @param viewId Text view. @param enabled Shared document browser draft writing choice. */
+  setTextDraftPersistence(viewId: string, enabled: boolean): void {
+    this.documents.setDraftPersistence(this.#documentId(viewId), enabled)
+  }
+
   /** Explicitly publish shared local text over the source. */
   overwriteSourceText(viewId: string): Promise<void> {
     return this.documents.overwriteSource(this.#documentId(viewId))
@@ -980,7 +986,7 @@ export class ResourceWorkbenchRuntime {
       return
     }
     try {
-      const documentId = await this.documents.open(toTextRef(view.descriptor.ref))
+      const documentId = await this.documents.open(toTextRef(view.descriptor.ref), view.descriptor.size)
       if (this.#views.get(viewId) !== view) {
         const shared = [...this.#views.values()].some(other => other.documentId === documentId)
         if (!shared) this.documents.discard(documentId)
@@ -1102,10 +1108,14 @@ export class ResourceWorkbenchRuntime {
     if (view.documentId === undefined) return
     const snapshot = this.documents.snapshot(view.documentId)
     this.#syncResourceMissing(viewId, view, snapshot.resourceMissing)
+    if (snapshot.sizeBytes !== undefined && snapshot.sizeBytes !== view.descriptor.size) {
+      this.#applyDescriptor(viewId, view, { size: snapshot.sizeBytes })
+    }
     if (snapshot.status !== 'ready' || snapshot.resourceMissing) return
-    if (snapshot.title === view.descriptor.name && snapshot.location === view.descriptor.location) return
+    if (snapshot.title === view.descriptor.name && snapshot.location === view.descriptor.location && snapshot.sizeBytes === view.descriptor.size) return
     this.#applyDescriptor(viewId, view, {
       name: snapshot.title,
+      ...(snapshot.sizeBytes === undefined ? {} : { size: snapshot.sizeBytes }),
       ...(snapshot.location === undefined ? {} : { location: snapshot.location }),
     })
   }

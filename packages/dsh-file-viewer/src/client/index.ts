@@ -111,7 +111,8 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const host = createResourceViewHost(ctx.rightSidebar)
   const runtime = new ResourceWorkbenchRuntime({
     host,
-    largeDocumentCharacters: metadata.largeDocumentCharacters,
+    largeFileBytes: metadata.largeFileBytes,
+    hugeFileBytes: metadata.hugeFileBytes,
     confirmDiscard: () => window.confirm(t('confirmClose')),
     confirmHandlerSwitch: () => window.confirm(t('confirmHandlerSwitch')),
   })

@@ -1,3 +1,4 @@
+import { formatFileSize } from './file-size.ts'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
@@ -18,6 +19,7 @@ class TextPresentation {
   lineNumbers = defaultLineNumbers()
   expanded = false
   differences = false
+  largeDefaultsApplied = false
   constructor(public editorState?: unknown) {}
 }
 
@@ -29,6 +31,7 @@ export interface FileViewerPanelInjected {
   save(instanceId: string): void
   refresh(instanceId: string): void
   confirmLoad(instanceId: string): void
+  setDraftPersistence(instanceId: string, enabled: boolean): void
   overwriteSource(instanceId: string): void
   discardLocal(instanceId: string): void
   setAutoUpdate(instanceId: string, enabled: boolean): void
@@ -195,14 +198,14 @@ function LoadConfirmation({ state, onLoad, t }: {
 }) {
   if (state.loadConfirmation === undefined) return null
   return <div className="dsh-file-viewer-state dsh-file-viewer-load-confirmation" role="status">
-    <span>{t('largeFilePrompt')}</span>
-    <span>{t('fileSize')}: {state.loadConfirmation.sizeBytes.toLocaleString()} {t('bytes')}</span>
-    <button type="button" disabled={state.operation !== 'idle'} onClick={onLoad}>{t('loadFile')}</button>
+    <span>{t(state.sizeTier === 'huge' ? 'hugeFilePrompt' : 'largeFilePrompt')}</span>
+    <span>{t('fileSize')}: {formatFileSize(state.loadConfirmation.sizeBytes, t('bytes'))}</span>
+    <button type="button" disabled={state.operation !== 'idle'} onClick={onLoad}>{t(state.sizeTier === 'huge' ? 'continueLoading' : 'loadFile')}</button>
   </div>
 }
 
 function ReadyPanel({
-  state, edit, save, refresh, confirmLoad, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
+  state, edit, save, refresh, confirmLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
   automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
   presentation, retainPresentation, onViewStateChange, t,
 }: {
@@ -211,6 +214,7 @@ function ReadyPanel({
   readonly save: () => void
   readonly refresh: () => void
   readonly confirmLoad: () => void
+  readonly setDraftPersistence: (enabled: boolean) => void
   readonly overwriteSource: () => void
   readonly discardLocal: () => void
   readonly setAutoUpdate: (enabled: boolean) => void
@@ -230,6 +234,10 @@ function ReadyPanel({
     Object.assign(presentation, change)
     retainPresentation()
     redraw(value => value + 1)
+  }
+  if (state.largeDefaultsApplied && !presentation.largeDefaultsApplied) {
+    presentation.differences = false
+    presentation.largeDefaultsApplied = true
   }
   const showDifferences = presentation.differences
   const comparison = useMemo(() => showDifferences ? {
@@ -290,8 +298,8 @@ function ReadyPanel({
           onClick={() => {
             changePresentation({ expanded: !expanded })
           }}>
-          {state.large && <span className="dsh-file-viewer-warning" role="img"
-            aria-label={t('largeDocument')} title={t('largeDocument')}>!</span>}
+          {state.sizeTier !== 'normal' && <span className="dsh-file-viewer-warning" role="img"
+            aria-label={t(state.sizeTier === 'huge' ? 'hugeDocument' : 'largeDocument')} title={t(state.sizeTier === 'huge' ? 'hugeDocument' : 'largeDocument')}>!</span>}
           <span role="status">{t(state.syncStatus)}</span>
           {updating && <span className="dsh-file-viewer-activity" role="status">
             {t('updating')}<span className="dsh-file-viewer-pending-dots" aria-hidden="true">{updateDots}</span>
@@ -316,6 +324,11 @@ function ReadyPanel({
             defaultLabel={t('defaultLineNumbers')} checked={presentation.lineNumbers} defaultChecked={lineNumberDefault}
             onChange={lineNumbers => { changePresentation({ lineNumbers }) }} onDefaultChange={setDefaultLineNumbers}
             onAction={() => { changePresentation({ lineNumbers: !presentation.lineNumbers }) }} />
+          <label className="dsh-file-viewer-action-group" hidden={!expanded} title={t('draftPersistenceHelp')}>
+            <input type="checkbox" aria-label={t('draftPersistence')} checked={state.draftPersistence}
+              onChange={event => { setDraftPersistence(event.currentTarget.checked) }} />
+            {t('draftPersistence')}
+          </label>
           <button type="button" hidden={!expanded} aria-pressed={showDifferences}
             onClick={() => { changePresentation({ differences: !showDifferences }) }}>{t(showDifferences ? 'backToEditor' : 'differences')}</button>
         </div>
@@ -392,6 +405,7 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
       save={() => { props.save(props.instanceId) }}
       refresh={() => { props.refresh(props.instanceId) }}
       confirmLoad={() => { props.confirmLoad(props.instanceId) }}
+      setDraftPersistence={enabled => { props.setDraftPersistence(props.instanceId, enabled) }}
       overwriteSource={() => { props.overwriteSource(props.instanceId) }}
       discardLocal={() => { props.discardLocal(props.instanceId) }}
       setAutoUpdate={enabled => { props.setAutoUpdate(props.instanceId, enabled) }}

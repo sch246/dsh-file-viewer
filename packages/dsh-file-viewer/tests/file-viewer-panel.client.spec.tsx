@@ -35,7 +35,7 @@ function ready(
     externalOpenSupported: false,
     automation: { autoUpdate: false, autoSave: false },
     automationPaused: true,
-    large: false,
+    sizeTier: 'normal', largeDefaultsApplied: false, draftPersistence: true,
     location: {
       label: 'Memory',
       segments: [{ label: 'One', selectionHint: { resourceId: 'one' } }],
@@ -54,6 +54,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     save: vi.fn(),
     refresh: vi.fn(),
     confirmLoad: vi.fn(),
+    setDraftPersistence: vi.fn(),
     overwriteSource: vi.fn(),
     discardLocal: vi.fn(),
     setAutoUpdate: vi.fn(),
@@ -98,7 +99,7 @@ describe('FileViewerPanel', () => {
   it('marks a long document in the permanent status without withholding any control', async () => {
     const comparisons: unknown[] = []
     const base = props(ready({
-      large: true,
+      sizeTier: 'large', largeDefaultsApplied: true,
       syncStatus: 'local-ahead',
       automationPaused: false,
       failure: { code: 'load-failed', message: 'path "/root/bot/app.log" exceeds the configured resource limit' },
@@ -131,7 +132,7 @@ describe('FileViewerPanel', () => {
     expect(screen.getByRole('button', { name: en.backToEditor })).toBeTruthy()
     expect(comparisons.at(-1)).toMatchObject({ baseText: 'base', sourceText: 'source' })
 
-    const unmarked = render(<FileViewerPanel {...props(ready({ large: false }))} />)
+    const unmarked = render(<FileViewerPanel {...props(ready({ sizeTier: 'normal' }))} />)
     expect(unmarked.container.querySelector('.dsh-file-viewer-warning')).toBeNull()
   })
 

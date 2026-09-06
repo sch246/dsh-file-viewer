@@ -26,13 +26,14 @@ export interface FileViewerLocation {
 /** Canonical source text and its opaque revision. */
 export interface FileViewerLoadedText {
   readonly text: string
+  readonly sizeBytes?: number
   readonly version?: unknown
   readonly title?: string
   readonly location?: FileViewerLocation
 }
 
 /** Source save result. */
-export interface FileViewerSavedText { readonly version?: unknown }
+export interface FileViewerSavedText { readonly version?: unknown; readonly sizeBytes?: number }
 
 /** Source watch event. */
 export type FileViewerWatchEvent =
@@ -42,7 +43,7 @@ export type FileViewerWatchEvent =
   | { readonly kind: 'snapshot'; readonly snapshot: FileViewerLoadedText }
 
 /** Per-document permission passed only after an explicit large-file load action. */
-export interface FileViewerTextAccess { readonly allowLargeFile?: boolean }
+export interface FileViewerTextAccess { readonly allowLargeFile?: boolean; readonly maxConfirmedBytes?: number }
 
 /** Metadata returned without reading content when the source requires confirmation. */
 export interface FileViewerLoadConfirmation { readonly sizeBytes: number; readonly thresholdBytes: number }
@@ -116,6 +117,12 @@ export interface FileViewerActivities {
 export interface FileViewerAutomationPreferences { readonly autoUpdate: boolean; readonly autoSave: boolean }
 
 interface CommonSnapshot {
+  /** Last exact source byte size; local edits do not re-encode the complete document. */
+  readonly sizeBytes?: number
+  readonly sizeTier: 'normal' | 'large' | 'huge'
+  /** One-time policy entry marker shared by all views of this open document. */
+  readonly largeDefaultsApplied: boolean
+  readonly draftPersistence: boolean
   readonly instanceId: string
   readonly ref: FileViewerDocumentRef
   readonly title: string
@@ -149,8 +156,6 @@ export type FileViewerInstanceSnapshot =
     readonly externalOpenSupported: boolean
     readonly location?: FileViewerLocation
     readonly automationPaused: boolean
-    /** True when the exact text is long enough that whole-document actions may be slow. Advisory only. */
-    readonly large: boolean
   })
 
 type ReadySnapshot = Extract<FileViewerInstanceSnapshot, { status: 'ready' }>
@@ -185,6 +190,7 @@ type AutomationPauseReason = 'conflict' | 'failure' | 'confirmation'
 
 interface InstanceRecord {
   allowLargeFile: boolean
+  allowHugeFile: boolean
   snapshot: FileViewerInstanceSnapshot
   listeners: Set<() => void>
   read: OperationState
@@ -213,8 +219,9 @@ export interface FileViewerServiceOptions {
   readonly confirmDiscard?: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   /** Injectable only to make hashing failures and completion order deterministic in tests. */
   readonly hashText?: (text: string) => Promise<string>
-  /** Code-unit length above which a document is reported as large; omission disables the advisory. */
-  readonly largeDocumentCharacters?: number
+  /** Byte tiers supplied by validated deployment configuration; omission disables the corresponding tier. */
+  readonly largeFileBytes?: number
+  readonly hugeFileBytes?: number
 }
 
 const DEFAULT_AUTOMATION = Object.freeze({ autoUpdate: false, autoSave: false })
@@ -359,7 +366,8 @@ export class FileViewerService {
   private readonly persistenceDebounceMs: number
   private readonly confirmDiscard: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   private readonly hashText: (text: string) => Promise<string>
-  private readonly largeDocumentCharacters: number | undefined
+  private readonly largeFileBytes: number | undefined
+  private readonly hugeFileBytes: number | undefined
   private globalAutomation: FileViewerAutomationPreferences
   private readonly automationDefaultListeners = new Set<() => void>()
   private nextInstance = 0
@@ -371,7 +379,8 @@ export class FileViewerService {
     this.persistenceDebounceMs = options.persistenceDebounceMs ?? 700
     this.confirmDiscard = options.confirmDiscard ?? (() => false)
     this.hashText = options.hashText ?? hashFileViewerText
-    this.largeDocumentCharacters = options.largeDocumentCharacters
+    this.largeFileBytes = options.largeFileBytes
+    this.hugeFileBytes = options.hugeFileBytes
     this.globalAutomation = this.readGlobalAutomation(options.globalAutomationDefaults)
   }
 
@@ -415,7 +424,7 @@ export class FileViewerService {
   }
 
   /** Open a new instance, or activate and retry the existing instance for the exact ref. */
-  async open(ref: FileViewerDocumentRef): Promise<string> {
+  async open(ref: FileViewerDocumentRef, sizeBytes?: number): Promise<string> {
     this.assertLive()
     const existing = this.refs.get(keyOf(ref))
     if (existing !== undefined) {
@@ -431,7 +440,9 @@ export class FileViewerService {
     const instanceId = `text-editor-${++this.nextInstance}`
     const record: InstanceRecord = {
       allowLargeFile: false,
+      allowHugeFile: false,
       snapshot: {
+        sizeTier: 'normal', largeDefaultsApplied: false, draftPersistence: true,
         instanceId, ref, title: ref.resourceId, status: 'loading', operation: 'loading', resourceMissing: false,
         activities: { updating: false, saving: false },
         automation: this.readDraft(ref)?.automation ?? {
@@ -455,6 +466,7 @@ export class FileViewerService {
       draftTimer: undefined,
       persistedDraft: undefined,
     }
+    if (sizeBytes !== undefined) record.snapshot = { ...record.snapshot, sizeBytes }
     this.instances.set(instanceId, record)
     this.refs.set(keyOf(ref), instanceId)
     const failure = await this.read(record, 'loading', 'initial')
@@ -489,7 +501,7 @@ export class FileViewerService {
     if (record.snapshot.status !== 'ready') return
     record.editGeneration += 1
     const generation = ++record.hashGeneration
-    record.snapshot = deriveSync(this.applySize(replaceLocalTextWithoutHash(record.snapshot, text)))
+    record.snapshot = deriveSync(replaceLocalTextWithoutHash(record.snapshot, text))
     this.scheduleDraftPersistence(record)
     this.notify(record)
     this.hashLocalText(instanceId, record, generation, text)
@@ -510,6 +522,7 @@ export class FileViewerService {
     const record = this.record(instanceId)
     if (record.snapshot.loadConfirmation === undefined || record.read.controller !== undefined) return
     record.allowLargeFile = true
+    if (record.snapshot.sizeTier === 'huge') record.allowHugeFile = true
     const { loadConfirmation: _confirmation, ...snapshot } = record.snapshot
     record.snapshot = snapshot.status === 'ready' ? snapshot : { ...snapshot, status: 'loading' }
     await this.read(record, snapshot.status === 'ready' ? 'refreshing' : 'loading', snapshot.status === 'ready' ? 'manual' : 'initial')
@@ -525,6 +538,15 @@ export class FileViewerService {
     this.pullLatest(this.record(instanceId))
   }
 
+  /** @param instanceId Shared document. @param enabled Whether future browser draft writes are enabled; existing records are retained. */
+  setDraftPersistence(instanceId: string, enabled: boolean): void {
+    const record = this.record(instanceId)
+    record.snapshot = { ...record.snapshot, draftPersistence: enabled }
+    if (enabled) this.scheduleDraftPersistence(record)
+    else this.clearDraftTimer(record)
+    this.notify(record)
+  }
+
   /** Change one shared document's automation choice until its last view closes. */
   setAutomation(instanceId: string, name: keyof FileViewerAutomationPreferences, enabled: boolean): void {
     const record = this.record(instanceId)
@@ -537,6 +559,7 @@ export class FileViewerService {
     this.scheduleDraftPersistence(record)
     if (automation[name] !== true) this.clearTimer(record, name)
     this.notify(record)
+    this.reconcileWatch(record)
     this.scheduleAutomation(record, true)
   }
 
@@ -712,7 +735,7 @@ export class FileViewerService {
 
     let loaded: FileViewerLoadedText
     try {
-      loaded = await source.load(record.snapshot.ref, operation.controller.signal, { allowLargeFile: record.allowLargeFile })
+      loaded = await source.load(record.snapshot.ref, operation.controller.signal, this.textAccess(record))
     } catch (error: unknown) {
       if (!this.current(record.read, operation)) return undefined
       if (isConfirmationRequiredError(error)) {
@@ -745,6 +768,7 @@ export class FileViewerService {
     }
 
     if (!this.current(record.read, operation)) return undefined
+    this.observeSize(record, loaded.sizeBytes ?? record.snapshot.sizeBytes)
     const persisted = mode === 'initial' && record.snapshot.status !== 'ready'
       ? this.readDraft(record.snapshot.ref)
       : undefined
@@ -788,6 +812,7 @@ export class FileViewerService {
     this.cancel(record.read, new Error('load confirmation required'))
     this.detachWatch(record)
     this.clearAutomationTimers(record)
+    this.observeSize(record, error.sizeBytes)
     const snapshot = record.snapshot
     const loadConfirmation = { sizeBytes: error.sizeBytes, thresholdBytes: error.thresholdBytes }
     record.snapshot = snapshot.status === 'ready'
@@ -827,10 +852,13 @@ export class FileViewerService {
     restored?: RestoredDraft,
     missingFailure?: FileViewerFailure,
   ): void {
+    this.observeSize(record, loaded.sizeBytes ?? record.snapshot.sizeBytes)
     const previous = record.snapshot
     let next: ReadySnapshot
     if (previous.status !== 'ready') {
       next = deriveSync({
+        ...(previous.sizeBytes === undefined ? {} : { sizeBytes: previous.sizeBytes }),
+        sizeTier: previous.sizeTier, largeDefaultsApplied: previous.largeDefaultsApplied, draftPersistence: previous.draftPersistence,
         instanceId: previous.instanceId,
         ref: previous.ref,
         status: 'ready',
@@ -855,7 +883,6 @@ export class FileViewerService {
         ...(loaded.location === undefined ? {} : { location: loaded.location }),
         automation: previous.automation,
         automationPaused: false,
-        large: false,
       })
     } else {
       const pull = mode === 'manual' && !isFileViewerDirty(previous)
@@ -883,9 +910,20 @@ export class FileViewerService {
     next = this.reconcilePause(record, next)
     record.snapshot = next
     this.scheduleDraftPersistence(record)
-    this.attachWatch(record, source)
+    this.reconcileWatch(record)
     this.notify(record)
     this.scheduleAutomation(record, true)
+  }
+
+  private reconcileWatch(record: InstanceRecord): void {
+    const source = this.sources.get(record.snapshot.ref.sourceId)
+    const value = record.snapshot
+    if (source === undefined || value.status !== 'ready' || value.loadConfirmation !== undefined
+      || (value.sizeTier !== 'normal' && !value.automation.autoUpdate && !value.automation.autoSave)) {
+      this.detachWatch(record)
+      return
+    }
+    this.attachWatch(record, source)
   }
 
   private attachWatch(record: InstanceRecord, source: FileViewerSource): void {
@@ -905,7 +943,7 @@ export class FileViewerService {
           this.notify(record)
           this.clearAutomationTimers(record)
         })
-      }, { allowLargeFile: record.allowLargeFile })
+      }, this.textAccess(record))
     } catch (error: unknown) {
       record.watchSource = undefined
       record.watchDispose = undefined
@@ -943,6 +981,7 @@ export class FileViewerService {
 
     this.cancel(record.read, new Error('source snapshot superseded read'))
     const generation = record.read.generation
+    this.observeSize(record, event.snapshot.sizeBytes ?? record.snapshot.sizeBytes)
     this.notify(record)
     let hash: string
     try {
@@ -1031,9 +1070,10 @@ export class FileViewerService {
     }
     const version = overwrite ? current.latestSourceVersion : current.baseVersion
     try {
-      const saved = await source.save(value.ref, savedText, version, operation.controller.signal, { allowLargeFile: record.allowLargeFile })
+      const saved = await source.save(value.ref, savedText, version, operation.controller.signal, this.textAccess(record))
       if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
       this.cancel(record.read, new Error('successful save superseded source read'))
+      this.observeSize(record, saved.sizeBytes)
       record.pauseReason = undefined
       let next = replaceLatestSource({
         ...clearFailure(record.snapshot),
@@ -1044,6 +1084,7 @@ export class FileViewerService {
       next = this.reconcilePause(record, deriveSync(next))
       record.snapshot = next
       this.scheduleDraftPersistence(record)
+      this.reconcileWatch(record)
       this.notify(record)
       this.scheduleAutomation(record, true)
     } catch (error: unknown) {
@@ -1122,7 +1163,7 @@ export class FileViewerService {
   }
 
   private scheduleDraftPersistence(record: InstanceRecord): void {
-    if (this.storage === undefined || record.snapshot.status !== 'ready') return
+    if (this.storage === undefined || record.snapshot.status !== 'ready' || !record.snapshot.draftPersistence) return
     clearTimeout(record.draftTimer)
     record.draftTimer = setTimeout(() => {
       record.draftTimer = undefined
@@ -1131,7 +1172,7 @@ export class FileViewerService {
   }
 
   private persistDraft(record: InstanceRecord): void {
-    if (this.storage === undefined || record.snapshot.status !== 'ready') return
+    if (this.storage === undefined || record.snapshot.status !== 'ready' || !record.snapshot.draftPersistence) return
     const written = {
       baseText: record.snapshot.baseText,
       localText: record.snapshot.text,
@@ -1208,14 +1249,28 @@ export class FileViewerService {
       && value.latestSourceHash === value.baseHash
   }
 
-  /** Classify the exact local text against the advisory length without copying it. */
-  private applySize(value: ReadySnapshot): ReadySnapshot {
-    const large = this.largeDocumentCharacters !== undefined && value.text.length > this.largeDocumentCharacters
-    return value.large === large ? value : { ...value, large }
+  private textAccess(record: InstanceRecord): FileViewerTextAccess {
+    return { allowLargeFile: record.allowLargeFile,
+      ...(record.allowHugeFile || this.hugeFileBytes === undefined ? {} : { maxConfirmedBytes: this.hugeFileBytes }),
+    }
+  }
+
+  private observeSize(record: InstanceRecord, sizeBytes: number | undefined): void {
+    if (sizeBytes === undefined) return
+    const sizeTier = this.hugeFileBytes !== undefined && sizeBytes > this.hugeFileBytes ? 'huge'
+      : this.largeFileBytes !== undefined && sizeBytes > this.largeFileBytes ? 'large' : 'normal'
+    record.snapshot = { ...record.snapshot, sizeBytes, sizeTier }
+    if (sizeTier === 'normal' || record.snapshot.largeDefaultsApplied) return
+    record.snapshot = { ...record.snapshot, largeDefaultsApplied: true, draftPersistence: false,
+      automation: { autoUpdate: false, autoSave: false },
+    }
+    this.clearDraftTimer(record)
+    this.clearAutomationTimers(record)
+    this.detachWatch(record)
   }
 
   private reconcilePause(record: InstanceRecord, snapshot: ReadySnapshot): ReadySnapshot {
-    const value = this.applySize(snapshot)
+    const value = snapshot
     if (value.syncStatus === 'diverged') {
       if (record.pauseReason !== 'failure') record.pauseReason = 'conflict'
     } else if (record.pauseReason === 'conflict' && value.syncStatus !== 'unknown') {
@@ -1325,7 +1380,8 @@ export class FileViewerService {
   }
 
   private watchHashCurrent(record: InstanceRecord, source: FileViewerSource, generation: number): boolean {
-    return this.watchCurrent(record, source) && record.read.generation === generation
+    return this.instances.get(record.snapshot.instanceId) === record && record.snapshot.status === 'ready'
+      && this.sources.get(source.id) === source && record.read.generation === generation
   }
 
   private notify(record: InstanceRecord): void {

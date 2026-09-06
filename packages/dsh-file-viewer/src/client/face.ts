@@ -64,6 +64,7 @@ export function createResourceWorkbenchClientService(
     saveText: (viewId: string) => runtime.saveText(viewId),
     refreshText: (viewId: string) => runtime.refreshText(viewId),
     confirmTextLoad: (viewId: string) => runtime.confirmTextLoad(viewId),
+    setTextDraftPersistence: (viewId: string, enabled: boolean) => { runtime.setTextDraftPersistence(viewId, enabled) },
     overwriteSourceText: (viewId: string) => runtime.overwriteSourceText(viewId),
     discardLocalText: (viewId: string) => { runtime.discardLocalText(viewId) },
     setTextAutomation: (viewId: string, name: 'autoUpdate' | 'autoSave', enabled: boolean) => {

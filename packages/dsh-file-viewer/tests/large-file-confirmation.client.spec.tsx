@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import { ResourceWorkbenchPanel } from '../src/client/ResourceWorkbenchPanel.tsx'
+import { formatFileSize } from '../src/client/file-size.ts'
+import type { ResourceTextAccess } from '../src/client/resource.ts'
 import { ResourceWorkbenchRuntime, TEXT_RESOURCE_HANDLER_ID, type ResourceViewHost } from '../src/client/workbench.ts'
 import { createResourceWorkbenchClientService } from '../src/client/face.ts'
 import { createTextResourceView } from '../src/client/text-handler.tsx'
@@ -10,7 +13,7 @@ import { en } from '../src/client/locales.ts'
 const runtimes: ResourceWorkbenchRuntime[] = []
 afterEach(() => { cleanup(); for (const runtime of runtimes.splice(0)) runtime.dispose(); vi.useRealTimers() })
 
-function fixture(initial = 'large text') {
+function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeFileBytes?: number } = {}, initialSize = initial.length) {
   const hosted = new Map<string, Parameters<ResourceViewHost['open']>[1]>()
   const host: ResourceViewHost = {
     open: async (_session, input) => { hosted.set(input.id, input); return 'group' },
@@ -25,31 +28,34 @@ function fixture(initial = 'large text') {
   }
   const storage = { getItem: vi.fn((_key: string): string | null => null), setItem: vi.fn(), removeItem: vi.fn() }
   const hashText = vi.fn(async (text: string) => text)
-  const runtime = new ResourceWorkbenchRuntime({ host, storage, hashText, confirmDiscard: () => true })
+  const runtime = new ResourceWorkbenchRuntime({ host, storage, hashText, confirmDiscard: () => true, ...tiers })
   runtimes.push(runtime)
   let disk = initial
+  let diskSize = initialSize
   let revision = 'v1'
   const contentRead = vi.fn()
-  const gate = (size: number, allowed?: boolean) => {
-    if (size > 4 && !allowed) throw {
+  const gate = (size: number, access?: ResourceTextAccess) => {
+    const limit = access?.allowLargeFile ? access.maxConfirmedBytes : Math.min(4, access?.maxConfirmedBytes ?? Infinity)
+    if (limit !== undefined && size > limit) throw {
       code: 'user-files/confirmation-required',
-      details: { path: '/file.txt', sizeBytes: size, thresholdBytes: 4 },
+      details: { path: '/file.txt', sizeBytes: size, thresholdBytes: limit },
     }
   }
   const gateway: FilesystemSourceGateway = {
     readText: vi.fn(async (_session, path, signal, access) => {
       signal.throwIfAborted()
-      gate(disk.length, access?.allowLargeFile)
+      gate(diskSize, access)
       contentRead()
-      return { path, text: disk, version: revision }
+      return { path, text: disk, version: revision, sizeBytes: diskSize }
     }),
     saveText: vi.fn(async (_session, _path, text, version, signal, access) => {
       signal.throwIfAborted()
-      gate(disk.length, access?.allowLargeFile)
+      gate(diskSize, access)
       if (version !== revision) throw new Error('conflict')
       disk = text
+      diskSize = text.length
       revision += 's'
-      return { version: revision }
+      return { version: revision, sizeBytes: diskSize }
     }),
     readBytes: vi.fn(), saveBytes: vi.fn(),
   }
@@ -57,7 +63,7 @@ function fixture(initial = 'large text') {
   const offSource = runtime.registerSource(source)
   runtime.registerHandler({ id: TEXT_RESOURCE_HANDLER_ID, label: 'text', match: () => ({ role: 'default' }), load: async () => ({ View: () => null }) })
   const service = createResourceWorkbenchClientService(runtime)
-  const descriptor = { ref: { sourceId: source.id, sessionId: 'session' as never, resourceId: '/file.txt' }, name: 'file.txt' }
+  const descriptor = { ref: { sourceId: source.id, sessionId: 'session' as never, resourceId: '/file.txt' }, name: 'file.txt', size: initialSize }
   const createEditor = vi.fn(({ parent, text }: { parent: HTMLElement; text: string }) => {
     parent.textContent = text
     return { setText: (next: string) => { parent.textContent = next }, setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
@@ -65,7 +71,7 @@ function fixture(initial = 'large text') {
   const loadEditor = vi.fn(async () => ({ createFileViewerEditor: createEditor }))
   const View = createTextResourceView({ loadEditor, confirm: () => true, t: key => en[key] })
   return { runtime, service, descriptor, gateway, source, offSource, contentRead, hashText, storage, createEditor, loadEditor, View,
-    grow: (text: string) => { disk = text; revision += 'g' } }
+    grow: (text: string, size = text.length) => { disk = text; diskSize = size; revision += 'g' } }
 }
 
 it('shows a neutral size prompt and only fetches, hashes, creates an editor and retains a draft after Load file', async () => {
@@ -147,12 +153,12 @@ it('pauses polls on growth, retains local text, and resumes authorized polling a
 
 it('saves already-local growth without a loading prompt or content reload', async () => {
   vi.useFakeTimers()
-  const f = fixture('base')
+  const f = fixture('base', { largeFileBytes: 10, hugeFileBytes: 100 })
   const view = await f.service.open(f.descriptor)
   f.service.editText(view, 'long local edits')
   await Promise.resolve()
   await f.service.saveText(view)
-  expect(f.service.textSnapshot(view)).toMatchObject({ text: 'long local edits', syncStatus: 'synced' })
+  expect(f.service.textSnapshot(view)).toMatchObject({ text: 'long local edits', syncStatus: 'synced', sizeBytes: 16, draftPersistence: false })
   expect(f.service.textSnapshot(view).loadConfirmation).toBeUndefined()
   expect(f.contentRead).toHaveBeenCalledTimes(1)
   expect(f.gateway.saveText).toHaveBeenCalledTimes(1)
@@ -186,4 +192,109 @@ it('restores a pending confirmation after its source reconnects without reading 
   expect(f.contentRead).not.toHaveBeenCalled()
   await f.service.confirmTextLoad(view)
   expect(f.service.textSnapshot(view)).toMatchObject({ status: 'ready', text: 'large text' })
+})
+
+it('scales source sizes with IEC units', () => {
+  expect(formatFileSize(0, 'bytes')).toBe('0 bytes')
+  expect(formatFileSize(1023, 'bytes')).toBe('1,023 bytes')
+  expect(formatFileSize(1024, 'bytes')).toBe('1 KiB')
+  expect(formatFileSize(1.5 * 1024 ** 2, 'bytes')).toBe('1.5 MiB')
+  expect(formatFileSize(1024 ** 3, 'bytes')).toBe('1 GiB')
+})
+
+it('applies large defaults before draft writes and polling, retains old drafts, and permits individual reenablement', async () => {
+  vi.useFakeTimers()
+  const f = fixture('large text', { largeFileBytes: 10, hugeFileBytes: 100 }, 11)
+  const draft = JSON.stringify({ format: 1, baseText: 'base', localText: 'retained local', automation: { autoUpdate: true, autoSave: true } })
+  f.storage.getItem.mockImplementation(key => key.startsWith('dsh-file-viewer:draft:') ? draft : null)
+  const view = await f.service.open(f.descriptor)
+  expect(f.service.textSnapshot(view)).toMatchObject({ sizeBytes: 11, sizeTier: 'large', draftPersistence: false, automation: { autoUpdate: false, autoSave: false } })
+  await f.service.confirmTextLoad(view)
+  await act(async () => { render(<f.View viewId={view} handlerId={TEXT_RESOURCE_HANDLER_ID} service={f.service} />) })
+  expect(f.service.textSnapshot(view)).toMatchObject({ text: 'retained local', baseText: 'base' })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); f.runtime.flushDrafts() })
+  expect(f.contentRead).toHaveBeenCalledTimes(1)
+  expect(f.storage.setItem).not.toHaveBeenCalled()
+  expect(f.storage.removeItem).not.toHaveBeenCalled()
+  fireEvent.focus(screen.getByTitle(en.synchronization))
+  expect((screen.getByRole('checkbox', { name: en.draftPersistence }) as HTMLInputElement).checked).toBe(false)
+  expect((screen.getByRole('button', { name: en.differences }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('false')
+  fireEvent.click(screen.getByRole('checkbox', { name: en.draftPersistence }))
+  fireEvent.click(screen.getByRole('button', { name: en.differences }))
+  expect(f.service.textSnapshot(view).draftPersistence).toBe(true)
+  await act(async () => { f.runtime.flushDrafts() })
+  expect(f.storage.setItem).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByRole('checkbox', { name: en.autoUpdate }))
+  await act(async () => { await vi.advanceTimersByTimeAsync(50) })
+  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  expect(f.service.textSnapshot(view)).toMatchObject({ draftPersistence: true, automation: { autoUpdate: true } })
+  expect(screen.getByRole('button', { name: en.backToEditor })).toBeTruthy()
+  fireEvent.click(screen.getByRole('checkbox', { name: en.autoUpdate }))
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  await act(async () => { await f.service.refreshText(view) })
+  expect(f.contentRead).toHaveBeenCalledTimes(3)
+  expect(f.service.textSnapshot(view).draftPersistence).toBe(true)
+})
+
+it('requires a stronger action before a previously approved file grows beyond the huge tier', async () => {
+  vi.useFakeTimers()
+  const f = fixture('base text', { largeFileBytes: 10, hugeFileBytes: 100 }, 10)
+  const view = await f.service.open(f.descriptor)
+  await f.service.confirmTextLoad(view)
+  expect(f.service.textSnapshot(view)).toMatchObject({ sizeTier: 'normal', draftPersistence: true })
+  await act(async () => { render(<f.View viewId={view} handlerId={TEXT_RESOURCE_HANDLER_ID} service={f.service} />) })
+  fireEvent.focus(screen.getByTitle(en.synchronization))
+  fireEvent.click(screen.getByRole('button', { name: en.differences }))
+  await act(async () => { f.service.editText(view, 'local edits') })
+  f.grow('huge source', 101)
+  await act(async () => { await vi.advanceTimersByTimeAsync(50) })
+  expect(f.contentRead).toHaveBeenCalledTimes(1)
+  expect(screen.getByText(en.hugeFilePrompt)).toBeTruthy()
+  expect(screen.getByRole('button', { name: en.continueLoading })).toBeTruthy()
+  expect(f.service.textSnapshot(view)).toMatchObject({ text: 'local edits', sizeTier: 'huge', draftPersistence: false })
+  expect(screen.getByRole('button', { name: en.differences }).getAttribute('aria-pressed')).toBe('false')
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: en.continueLoading })) })
+  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(f.gateway.readText).mock.calls.at(-1)?.[3]).toEqual({ allowLargeFile: true })
+  expect(f.service.textSnapshot(view)).toMatchObject({ text: 'local edits', latestSourceText: 'huge source' })
+  expect(f.createEditor).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByRole('button', { name: en.differences }))
+  expect(screen.getByRole('button', { name: en.backToEditor })).toBeTruthy()
+})
+
+it('shows the exact source size in the workbench bar using an automatic unit', async () => {
+  vi.useFakeTimers()
+  const f = fixture('file', { largeFileBytes: 10 * 1024 ** 2, hugeFileBytes: 100 * 1024 ** 2 }, 1536)
+  const view = await f.service.open(f.descriptor)
+  await act(async () => { render(<ResourceWorkbenchPanel instanceId={view} service={f.service} t={key => en[key]} />) })
+  expect(screen.getByTitle(en.fileSize).textContent).toContain('1.5 KiB')
+  expect(f.contentRead).not.toHaveBeenCalled()
+})
+
+it('uses current file bytes instead of a stale restored size to initialize defaults', async () => {
+  const f = fixture('base', { largeFileBytes: 10, hugeFileBytes: 100 })
+  const view = await f.service.open({ ...f.descriptor, size: 101 })
+  expect(f.service.textSnapshot(view)).toMatchObject({ sizeBytes: 4, sizeTier: 'normal', draftPersistence: true, largeDefaultsApplied: false })
+})
+
+it('pauses large-tier draft writes and further polls while an observed source hash is still pending', async () => {
+  vi.useFakeTimers()
+  const f = fixture('base text', { largeFileBytes: 10, hugeFileBytes: 100 })
+  const view = await f.service.open(f.descriptor)
+  await f.service.confirmTextLoad(view)
+  f.service.editText(view, 'local')
+  await Promise.resolve()
+  let finish!: (hash: string) => void
+  f.hashText.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  f.grow('source text', 11)
+  await vi.advanceTimersByTimeAsync(50)
+  expect(f.service.textSnapshot(view)).toMatchObject({ sizeTier: 'large', draftPersistence: false })
+  await vi.advanceTimersByTimeAsync(1000)
+  f.runtime.flushDrafts()
+  expect(f.contentRead).toHaveBeenCalledTimes(2)
+  expect(f.storage.setItem).not.toHaveBeenCalled()
+  finish('source text')
+  await vi.advanceTimersByTimeAsync(0)
+  expect(f.service.textSnapshot(view)).toMatchObject({ text: 'local', latestSourceText: 'source text' })
 })

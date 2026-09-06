@@ -13,7 +13,7 @@ import {
 } from './resource.ts'
 import { isMissingResourceError, isConfirmationRequiredError } from './service.ts'
 import type {
-  UserFileBytesDocument, UserFileRevision, UserFileTextDocument,
+  UserFileBytesDocument, UserFileRevision, UserFileTextDocument, UserFileSaveResult,
 } from '@dsh-external/dsh-user-files/types'
 
 /** Filesystem-source operations implemented by the generated Remote adapter. */
@@ -27,14 +27,14 @@ export interface FilesystemSourceGateway {
     version: UserFileRevision,
     signal: AbortSignal,
     access?: ResourceTextAccess,
-  ): Promise<{ version: UserFileRevision }>
+  ): Promise<UserFileSaveResult>
   saveBytes(
     sessionId: SessionId,
     path: string,
     dataBase64: string,
     version: UserFileRevision,
     signal: AbortSignal,
-  ): Promise<{ version: UserFileRevision }>
+  ): Promise<UserFileSaveResult>
   openLocation?(sessionId: SessionId, path: string): Promise<void>
   openExternal?(sessionId: SessionId, path: string, signal: AbortSignal): Promise<void>
 }
@@ -91,7 +91,7 @@ function descriptor(path: string): NonNullable<ResourceLoadedText['descriptor']>
 }
 
 function loadedText(document: UserFileTextDocument): ResourceLoadedText {
-  return { text: document.text, version: document.version, descriptor: descriptor(document.path) }
+  return { text: document.text, version: document.version, descriptor: { ...descriptor(document.path), size: document.sizeBytes } }
 }
 
 function loadedBytes(document: UserFileBytesDocument): ResourceLoadedBytes {
@@ -206,7 +206,7 @@ export class FilesystemResourceSource implements ResourceSource {
     version: unknown,
     signal: AbortSignal,
     access?: ResourceTextAccess,
-  ): Promise<{ version: UserFileRevision }> {
+  ): Promise<UserFileSaveResult> {
     if (typeof version !== 'string' || version === '') throw new Error('file-viewer: save requires a filesystem revision')
     const result = await readResource(() => this.#gateway.saveText(
       ref.sessionId,
@@ -226,7 +226,7 @@ export class FilesystemResourceSource implements ResourceSource {
     bytes: Uint8Array,
     version: unknown,
     signal: AbortSignal,
-  ): Promise<{ version: UserFileRevision }> {
+  ): Promise<UserFileSaveResult> {
     if (typeof version !== 'string' || version === '') throw new Error('file-viewer: save requires a filesystem revision')
     const result = await this.#gateway.saveBytes(
       ref.sessionId,
