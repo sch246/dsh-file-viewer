@@ -20,7 +20,7 @@ export type FileViewerLocaleKey =
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
   | 'lineNumbers' | 'defaultLineNumbers' | 'synchronization'
-  | 'largeDocument' | 'failureDetail'
+  | 'largeDocument' | 'failureDetail' | 'largeFilePrompt' | 'fileSize' | 'bytes' | 'loadFile'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -30,6 +30,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const en: Record<FileViewerLocaleKey, string> = {
+  largeFilePrompt: 'This file is large. Load its contents to continue.',
+  fileSize: 'File size',
+  bytes: 'bytes',
+  loadFile: 'Load file',
   loading: 'Loading document…',
   editorLoading: 'Loading editor…',
   editorFailed: 'The editor could not be loaded.',
@@ -94,6 +98,10 @@ export const en: Record<FileViewerLocaleKey, string> = {
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
+  largeFilePrompt: '此文件较大，加载内容后继续。',
+  fileSize: '文件大小',
+  bytes: '字节',
+  loadFile: '加载文件',
   loading: '正在加载文档…',
   editorLoading: '正在加载编辑器…',
   editorFailed: '无法加载编辑器。',

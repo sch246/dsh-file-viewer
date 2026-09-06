@@ -30,6 +30,7 @@ export const FILE_VIEWER_CSS = `
 @media(hover:none){.dsh-file-viewer-preference-pair .dsh-file-viewer-default-toggle{opacity:1;pointer-events:auto}}
 .dsh-file-viewer-toolbar button,.dsh-file-viewer-conflict button{border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:inherit;padding:4px 8px;cursor:pointer}
 .dsh-file-viewer-toolbar button:disabled,.dsh-file-viewer-conflict button:disabled{cursor:not-allowed;opacity:.5}
+.dsh-file-viewer-load-confirmation{display:flex;flex-direction:column;align-items:flex-start;gap:10px}.dsh-file-viewer-load-confirmation button{border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:inherit;padding:6px 12px;cursor:pointer}
 .dsh-file-viewer-state{padding:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-file-viewer-failure,.dsh-file-viewer-notice{padding:6px 10px;font-size:12px}
 .dsh-file-viewer-failure{color:var(--dsw-alias-state-error-primary)}

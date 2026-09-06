@@ -55,6 +55,8 @@ export async function openMemoryDocument(ctx: Context, sessionId: SessionId): Pr
 
 Sources report confirmed absence by rejecting reads with `ResourceMissingError` (or a rejection carrying `resourceMissing: true`) or emitting a `{ kind: 'missing', error }` watch event. The workbench retains the view and local text, pauses text automation, and marks the tab title with a strikethrough. Successful reads or watch snapshots clear the marking; unrelated failures and renderer availability do not establish resource existence. The filesystem source maps the shared provider’s `user-files/not-found` code; other errors retain their original diagnostics.
 
+A text source that needs approval rejects before reading content with `ResourceConfirmationRequiredError(sizeBytes, thresholdBytes)`, or emits a `{ kind: 'confirmation-required', error }` text watch event when a loaded file grows. The document presents a neutral size prompt and Load file action. Its explicit decision reaches the source through the optional `ResourceTextAccess` argument on `readText`, `saveText` and `watchText`; only `allowLargeFile: true` permits crossing the loading threshold. The decision belongs to the shared open document, survives view remounts, and ends when its last view closes.
+
 Source ids are non-empty and unique while registered. `readText` and `readBytes` are optional and independent; a byte-only source is never decoded through the text editor. Guarded text and byte writes use `saveText` and `saveBytes` with opaque revisions. Source watching is also content-specific.
 
 Callers place a preview relative to a stable workbench instance, so a file tree can remain in its group while files open to its right:
@@ -80,6 +82,8 @@ The image handler is the default for `image/*`; SVG also offers the text handler
 <a id="synchronize-a-document"></a>
 ## Synchronize a document
 
+Filesystem text larger than the shared provider’s `maxTextReadBytes` (1 MiB by default) first shows its size and a Load file button. Content reading, hashing, editor construction, watching and new draft retention begin after that action. Confirmed documents retain normal editing, saving and differences with no additional text size cap. If a loaded file grows beyond the threshold, the existing editor and local text remain available while new source reads and synchronization pause for confirmation. Local edits can grow beyond the threshold and save without an output-size prompt; reading an existing large source during a later operation still requires approval. Byte/image limits are independent.
+
 Each exact text document compares hashes of the common base, local editor text and latest observed source text. Update observes the source while retaining local edits. Save uses the common base revision when the source supports conditional writes; a writable source without conditional writes requires explicit overwrite confirmation. Source failures or conflicts pause automation without deleting the local text.
 
 Synchronization status stays visible in the editor's upper-right corner. Actual updates and saves add independent activity text there; both can appear together. The text cycles through zero to three dots without shifting its width. Reduced-motion preferences disable that animation, and screen readers receive static activity names. Source changes or a synchronized relationship do not mean a save took place.
@@ -94,7 +98,7 @@ Within pale red deleted rows, the exact removed character fragments have darker 
 
 Line-number visibility, expanded controls and comparison mode belong to each resource view and survive in-memory remounts. The browser remembers the default line-number preference; it initializes only new view presentations. Existing views keep their current setting when the default changes. Editor selection, scroll and undo stay with the same local editor across mode changes.
 
-Local text longer than the deployment’s `largeDocumentCharacters` shows one orange `!` in the permanent synchronization status. Its tooltip explains that whole-document work can take longer; it opens no warning popup. The validated Host Config defaults to 2,097,152 UTF-16 code units, and the mark clears at or below that length. Length does not disable comparison, limit browser drafts, delay hashing or alter synchronization. Source read limits remain source-owned, and failed operations show the source diagnostic beside the localized message.
+Local text longer than the deployment’s `largeDocumentCharacters` shows one orange `!` in the permanent synchronization status. Its tooltip explains that whole-document work can take longer; it opens no warning popup. The validated Host Config defaults to 2,097,152 UTF-16 code units, and the mark clears at or below that length. Length does not disable comparison, limit browser drafts, delay hashing or alter synchronization. Source loading policies remain source-owned, and failed operations show the source diagnostic beside the localized message.
 
 Sources define canonical text, including line endings and terminal newlines. The generic editor preserves the supplied text and never trims or normalizes it.
 
@@ -104,6 +108,8 @@ Sources define canonical text, including line endings and terminal newlines. The
 ## Recover browser drafts
 
 Each ready text document retains its exact Base and Local text and its automatic update/save choices in browser `localStorage`, keyed by the complete Session, source and resource identity. Version-1 drafts without automation choices remain readable and initialize those choices from current defaults. Workbench layout persistence stores a JSON-safe descriptor and handler id; JSON-safe selection hints can persist, while opaque revisions and handler memory do not. A later restoration freshly reads Source and reconnects any number of views to the shared document without resetting retained automation.
+
+Large-file confirmation is runtime-only and is requested again after browser restoration. A pending prompt leaves the existing draft record untouched; approval loads Source and restores Base and Local normally.
 
 If a source confirms absence during restoration, a valid stored draft still opens with Base and Local text, unknown Source and source revision, and paused automation. A successful source read reconnects that draft.
 

@@ -2,6 +2,8 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
   ResourceSourceId,
   ResourceMissingError,
+  ResourceConfirmationRequiredError,
+  type ResourceTextAccess,
   type ResourceBytesWatchEvent,
   type ResourceLoadedBytes,
   type ResourceLoadedText,
@@ -9,14 +11,14 @@ import {
   type ResourceSource,
   type ResourceTextWatchEvent,
 } from './resource.ts'
-import { isMissingResourceError } from './service.ts'
+import { isMissingResourceError, isConfirmationRequiredError } from './service.ts'
 import type {
   UserFileBytesDocument, UserFileRevision, UserFileTextDocument,
 } from '@dsh-external/dsh-user-files/types'
 
 /** Filesystem-source operations implemented by the generated Remote adapter. */
 export interface FilesystemSourceGateway {
-  readText(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileTextDocument>
+  readText(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileTextDocument>
   readBytes(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileBytesDocument>
   saveText(
     sessionId: SessionId,
@@ -24,6 +26,7 @@ export interface FilesystemSourceGateway {
     text: string,
     version: UserFileRevision,
     signal: AbortSignal,
+    access?: ResourceTextAccess,
   ): Promise<{ version: UserFileRevision }>
   saveBytes(
     sessionId: SessionId,
@@ -43,6 +46,16 @@ async function readResource<T>(read: () => Promise<T>): Promise<T> {
     if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'user-files/not-found') {
       const message = 'message' in error && typeof error.message === 'string' ? error.message : undefined
       throw new ResourceMissingError(message, { cause: error })
+    }
+    if (typeof error === 'object' && error !== null && 'code' in error
+      && error.code === 'user-files/confirmation-required' && 'details' in error) {
+      const details = error.details
+      if (typeof details === 'object' && details !== null
+        && 'sizeBytes' in details && typeof details.sizeBytes === 'number' && Number.isFinite(details.sizeBytes)
+        && 'thresholdBytes' in details && typeof details.thresholdBytes === 'number' && Number.isFinite(details.thresholdBytes)
+        && details.sizeBytes > details.thresholdBytes && details.thresholdBytes > 0) {
+        throw new ResourceConfirmationRequiredError(details.sizeBytes, details.thresholdBytes, { cause: error })
+      }
     }
     throw error
   }
@@ -103,6 +116,7 @@ function watchLoaded<T extends { readonly version?: unknown }>(
   read: (signal: AbortSignal) => Promise<T>,
   onVersion: (version: unknown) => void,
   listener: (event: { readonly kind: 'invalidate' } | { readonly kind: 'missing'; readonly error: ResourceMissingError } | { readonly kind: 'snapshot'; readonly snapshot: T }) => void,
+  onConfirmation?: (error: ResourceConfirmationRequiredError) => void,
 ): () => void {
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -120,6 +134,10 @@ function watchLoaded<T extends { readonly version?: unknown }>(
       }
     } catch (error: unknown) {
       if (!controller.signal.aborted) {
+        if (isConfirmationRequiredError(error) && onConfirmation !== undefined) {
+          onConfirmation(error)
+          return
+        }
         invalidated = true
         listener(isMissingResourceError(error)
           ? { kind: 'missing', error: error as ResourceMissingError }
@@ -167,8 +185,9 @@ export class FilesystemResourceSource implements ResourceSource {
   }
 
   /** Load canonical LF text and retain its revision for the first watch comparison. */
-  async readText(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedText> {
-    const document = await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal))
+  async readText(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceLoadedText> {
+    const document = await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal, access))
+    signal.throwIfAborted()
     this.#textVersions.set(refKey(ref), document.version)
     return loadedText(document)
   }
@@ -186,15 +205,17 @@ export class FilesystemResourceSource implements ResourceSource {
     text: string,
     version: unknown,
     signal: AbortSignal,
+    access?: ResourceTextAccess,
   ): Promise<{ version: UserFileRevision }> {
     if (typeof version !== 'string' || version === '') throw new Error('file-viewer: save requires a filesystem revision')
-    const result = await this.#gateway.saveText(
+    const result = await readResource(() => this.#gateway.saveText(
       ref.sessionId,
       ref.resourceId,
       text,
       version as UserFileRevision,
       signal,
-    )
+      access,
+    ))
     this.#textVersions.set(refKey(ref), result.version)
     return result
   }
@@ -219,14 +240,15 @@ export class FilesystemResourceSource implements ResourceSource {
   }
 
   /** Poll only while subscribed, never overlap reads, and stop after disposal. */
-  watchText(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void): () => void {
+  watchText(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void, access?: ResourceTextAccess): () => void {
     const key = refKey(ref)
     return watchLoaded(
       this.#pollIntervalMs,
       this.#textVersions.get(key),
-      async signal => loadedText(await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal))),
+      async signal => loadedText(await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal, access))),
       version => { this.#textVersions.set(key, version) },
       listener,
+      error => { listener({ kind: 'confirmation-required', error }) },
     )
   }
 

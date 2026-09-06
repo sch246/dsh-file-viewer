@@ -28,6 +28,7 @@ export interface FileViewerPanelInjected {
   edit(instanceId: string, text: string): void
   save(instanceId: string): void
   refresh(instanceId: string): void
+  confirmLoad(instanceId: string): void
   overwriteSource(instanceId: string): void
   discardLocal(instanceId: string): void
   setAutoUpdate(instanceId: string, enabled: boolean): void
@@ -187,8 +188,21 @@ function PreferenceAction({ label, currentLabel, defaultLabel, checked, defaultC
   </div>
 }
 
+function LoadConfirmation({ state, onLoad, t }: {
+  readonly state: FileViewerInstanceSnapshot
+  readonly onLoad: () => void
+  readonly t: FileViewerPanelProps['t']
+}) {
+  if (state.loadConfirmation === undefined) return null
+  return <div className="dsh-file-viewer-state dsh-file-viewer-load-confirmation" role="status">
+    <span>{t('largeFilePrompt')}</span>
+    <span>{t('fileSize')}: {state.loadConfirmation.sizeBytes.toLocaleString()} {t('bytes')}</span>
+    <button type="button" disabled={state.operation !== 'idle'} onClick={onLoad}>{t('loadFile')}</button>
+  </div>
+}
+
 function ReadyPanel({
-  state, edit, save, refresh, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
+  state, edit, save, refresh, confirmLoad, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
   automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
   presentation, retainPresentation, onViewStateChange, t,
 }: {
@@ -196,6 +210,7 @@ function ReadyPanel({
   readonly edit: (text: string) => void
   readonly save: () => void
   readonly refresh: () => void
+  readonly confirmLoad: () => void
   readonly overwriteSource: () => void
   readonly discardLocal: () => void
   readonly setAutoUpdate: (enabled: boolean) => void
@@ -241,7 +256,7 @@ function ReadyPanel({
   }, [presentation, retainPresentation])
   const dirty = isFileViewerDirty(state)
   const busy = state.operation !== 'idle'
-  const canSave = state.saveSupported && dirty && !busy
+  const canSave = state.saveSupported && dirty && !busy && state.loadConfirmation === undefined
     && state.syncStatus !== 'diverged' && state.syncStatus !== 'source-ahead'
   const confirmOverwrite = () => {
     if (confirm(t('confirmOverwrite'))) overwriteSource()
@@ -290,7 +305,7 @@ function ReadyPanel({
           <PreferenceAction hidden={!expanded} label={t('update')}
             currentLabel={state.watchSupported ? t('autoUpdate') : t('autoUpdateUnsupported')}
             defaultLabel={t('globalAutoUpdate')} checked={state.automation.autoUpdate}
-            defaultChecked={automationDefaults.autoUpdate} disabled={!state.watchSupported} actionDisabled={busy}
+            defaultChecked={automationDefaults.autoUpdate} disabled={!state.watchSupported} actionDisabled={busy || state.loadConfirmation !== undefined}
             onChange={setAutoUpdate} onDefaultChange={setGlobalAutoUpdate} onAction={refresh} />
           {state.saveSupported && <PreferenceAction hidden={!expanded} label={t('save')}
             currentLabel={state.conditionalSaveSupported ? t('autoSave') : t('autoSaveUnsupported')}
@@ -305,8 +320,9 @@ function ReadyPanel({
             onClick={() => { changePresentation({ differences: !showDifferences }) }}>{t(showDifferences ? 'backToEditor' : 'differences')}</button>
         </div>
       </div>
-      {state.automationPaused && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
-      {state.sourceStale && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
+      <LoadConfirmation state={state} onLoad={confirmLoad} t={t} />
+      {state.automationPaused && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('automationPaused')}</div>}
+      {state.sourceStale && state.loadConfirmation === undefined && <div className="dsh-file-viewer-notice" role="status">{t('sourceStale')}</div>}
       {state.failure !== undefined && <div className="dsh-file-viewer-failure" role="alert">
         {t(failureKey(state.failure))}
         <FailureDetail failure={state.failure} t={t} />
@@ -358,6 +374,8 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
     () => props.snapshot(props.instanceId),
   )
   if (state.status !== 'ready') {
+    if (state.status === 'confirmation-required') return <LoadConfirmation state={state}
+      onLoad={() => { props.confirmLoad(props.instanceId) }} t={props.t} />
     if (state.status === 'loading') return <div className="dsh-file-viewer-state" role="status">{props.t('loading')}</div>
     return (
       <div className="dsh-file-viewer-state" role="alert">
@@ -373,6 +391,7 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
       edit={text => { props.edit(props.instanceId, text) }}
       save={() => { props.save(props.instanceId) }}
       refresh={() => { props.refresh(props.instanceId) }}
+      confirmLoad={() => { props.confirmLoad(props.instanceId) }}
       overwriteSource={() => { props.overwriteSource(props.instanceId) }}
       discardLocal={() => { props.discardLocal(props.instanceId) }}
       setAutoUpdate={enabled => { props.setAutoUpdate(props.instanceId, enabled) }}

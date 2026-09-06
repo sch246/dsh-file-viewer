@@ -32,6 +32,7 @@ function show(service: FileViewerService, instanceId: string) {
     snapshot={id => service.snapshot(id)} subscribe={(id, listener) => service.subscribe(id, listener)}
     edit={(id, text) => service.edit(id, text)} save={id => { void service.save(id) }}
     refresh={id => { void service.refresh(id) }} overwriteSource={id => { void service.overwriteSource(id) }}
+    confirmLoad={id => { void service.confirmLoad(id) }}
     discardLocal={id => service.discardLocal(id)}
     setAutoUpdate={(id, enabled) => service.setAutomation(id, 'autoUpdate', enabled)}
     setAutoSave={(id, enabled) => service.setAutomation(id, 'autoSave', enabled)}

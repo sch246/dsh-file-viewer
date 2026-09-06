@@ -36,19 +36,41 @@ export interface FileViewerSavedText { readonly version?: unknown }
 
 /** Source watch event. */
 export type FileViewerWatchEvent =
+  | { readonly kind: 'confirmation-required'; readonly error: FileViewerConfirmationRequiredError }
   | { readonly kind: 'invalidate' }
   | { readonly kind: 'missing'; readonly error: FileViewerMissingResourceError }
   | { readonly kind: 'snapshot'; readonly snapshot: FileViewerLoadedText }
+
+/** Per-document permission passed only after an explicit large-file load action. */
+export interface FileViewerTextAccess { readonly allowLargeFile?: boolean }
+
+/** Metadata returned without reading content when the source requires confirmation. */
+export interface FileViewerLoadConfirmation { readonly sizeBytes: number; readonly thresholdBytes: number }
+
+/** Source rejection requesting an explicit load decision from the document owner. */
+export class FileViewerConfirmationRequiredError extends Error implements FileViewerLoadConfirmation {
+  readonly confirmationRequired = true
+  constructor(readonly sizeBytes: number, readonly thresholdBytes: number, options?: ErrorOptions) {
+    super('file-viewer: loading this file requires confirmation', options)
+    this.name = 'FileViewerConfirmationRequiredError'
+  }
+}
+
+/** @param error Source rejection. @returns Whether it requests large-file confirmation. */
+export function isConfirmationRequiredError(error: unknown): error is FileViewerConfirmationRequiredError {
+  return typeof error === 'object' && error !== null
+    && (error as FileViewerConfirmationRequiredError).confirmationRequired === true
+}
 
 /** One pluggable text source. */
 export interface FileViewerSource {
   readonly id: FileViewerSourceId
   readonly defaults?: Partial<FileViewerAutomationPreferences>
-  load(ref: FileViewerDocumentRef, signal: AbortSignal): Promise<FileViewerLoadedText>
-  save?(ref: FileViewerDocumentRef, text: string, version: unknown, signal: AbortSignal): Promise<FileViewerSavedText>
+  load(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerLoadedText>
+  save?(ref: FileViewerDocumentRef, text: string, version: unknown, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerSavedText>
   /** True only when save rejects a revision mismatch without publishing. */
   readonly supportsConditionalSave?: boolean
-  watch?(ref: FileViewerDocumentRef, listener: (event: FileViewerWatchEvent) => void): () => void
+  watch?(ref: FileViewerDocumentRef, listener: (event: FileViewerWatchEvent) => void, access?: FileViewerTextAccess): () => void
   openExternal?(ref: FileViewerDocumentRef, signal: AbortSignal): Promise<void>
 }
 
@@ -102,12 +124,13 @@ interface CommonSnapshot {
   readonly failure?: FileViewerFailure
   /** Last confirmed resource absence; unrelated operation failures do not clear it. */
   readonly resourceMissing: boolean
+  readonly loadConfirmation?: FileViewerLoadConfirmation
   readonly automation: FileViewerAutomationPreferences
 }
 
 /** Immutable state for one editor instance. */
 export type FileViewerInstanceSnapshot =
-  | (CommonSnapshot & { readonly status: 'loading' | 'failed' })
+  | (CommonSnapshot & { readonly status: 'loading' | 'failed' | 'confirmation-required' })
   | (CommonSnapshot & {
     readonly status: 'ready'
     readonly text: string
@@ -158,9 +181,10 @@ interface ActiveOperation {
   readonly controller: AbortController
 }
 
-type AutomationPauseReason = 'conflict' | 'failure'
+type AutomationPauseReason = 'conflict' | 'failure' | 'confirmation'
 
 interface InstanceRecord {
+  allowLargeFile: boolean
   snapshot: FileViewerInstanceSnapshot
   listeners: Set<() => void>
   read: OperationState
@@ -406,6 +430,7 @@ export class FileViewerService {
 
     const instanceId = `text-editor-${++this.nextInstance}`
     const record: InstanceRecord = {
+      allowLargeFile: false,
       snapshot: {
         instanceId, ref, title: ref.resourceId, status: 'loading', operation: 'loading', resourceMissing: false,
         activities: { updating: false, saving: false },
@@ -478,6 +503,16 @@ export class FileViewerService {
   /** Read and manually pull latest source text when local text is clean. */
   async refresh(instanceId: string): Promise<void> {
     await this.read(this.record(instanceId), 'refreshing', 'manual')
+  }
+
+  /** @param instanceId Shared document whose current large-file prompt the user accepted. @returns Nothing after loading. */
+  async confirmLoad(instanceId: string): Promise<void> {
+    const record = this.record(instanceId)
+    if (record.snapshot.loadConfirmation === undefined || record.read.controller !== undefined) return
+    record.allowLargeFile = true
+    const { loadConfirmation: _confirmation, ...snapshot } = record.snapshot
+    record.snapshot = snapshot.status === 'ready' ? snapshot : { ...snapshot, status: 'loading' }
+    await this.read(record, snapshot.status === 'ready' ? 'refreshing' : 'loading', snapshot.status === 'ready' ? 'manual' : 'initial')
   }
 
   /** Publish local text through the explicit overwrite path. */
@@ -663,6 +698,10 @@ export class FileViewerService {
     mode: 'initial' | 'manual' | 'observe',
   ): Promise<FileViewerFailure | undefined> {
     const source = this.sources.get(record.snapshot.ref.sourceId)
+    if (record.snapshot.loadConfirmation !== undefined && source !== undefined) {
+      this.requireConfirmation(record, record.snapshot.loadConfirmation)
+      return undefined
+    }
     const operation = this.begin(record.read, operationName)
     this.notify(record)
     if (source === undefined) {
@@ -673,9 +712,13 @@ export class FileViewerService {
 
     let loaded: FileViewerLoadedText
     try {
-      loaded = await source.load(record.snapshot.ref, operation.controller.signal)
+      loaded = await source.load(record.snapshot.ref, operation.controller.signal, { allowLargeFile: record.allowLargeFile })
     } catch (error: unknown) {
       if (!this.current(record.read, operation)) return undefined
+      if (isConfirmationRequiredError(error)) {
+        if (this.complete(record.read, operation)) this.requireConfirmation(record, error)
+        return undefined
+      }
       const missing = isMissingResourceError(error)
       const failure = toFailure(missing ? 'resource-missing' : 'load-failed', error)
       const draft = missing && record.snapshot.status !== 'ready' ? this.readDraft(record.snapshot.ref) : undefined
@@ -701,6 +744,7 @@ export class FileViewerService {
       return failure
     }
 
+    if (!this.current(record.read, operation)) return undefined
     const persisted = mode === 'initial' && record.snapshot.status !== 'ready'
       ? this.readDraft(record.snapshot.ref)
       : undefined
@@ -737,6 +781,19 @@ export class FileViewerService {
     if (!this.complete(record.read, operation) || this.instances.get(record.snapshot.instanceId) !== record) return undefined
     this.applyObserved(record, source, loaded, hash, mode, restored)
     return undefined
+  }
+
+  private requireConfirmation(record: InstanceRecord, error: FileViewerLoadConfirmation): void {
+    record.pauseReason = 'confirmation'
+    this.cancel(record.read, new Error('load confirmation required'))
+    this.detachWatch(record)
+    this.clearAutomationTimers(record)
+    const snapshot = record.snapshot
+    const loadConfirmation = { sizeBytes: error.sizeBytes, thresholdBytes: error.thresholdBytes }
+    record.snapshot = snapshot.status === 'ready'
+      ? { ...clearFailure(snapshot), loadConfirmation, sourceStale: true, syncStatus: 'unknown', automationPaused: true }
+      : { ...clearFailure(snapshot), loadConfirmation, status: 'confirmation-required' }
+    this.notify(record)
   }
 
   private publishReadFailure(record: InstanceRecord, failure: FileViewerFailure): void {
@@ -848,7 +905,7 @@ export class FileViewerService {
           this.notify(record)
           this.clearAutomationTimers(record)
         })
-      })
+      }, { allowLargeFile: record.allowLargeFile })
     } catch (error: unknown) {
       record.watchSource = undefined
       record.watchDispose = undefined
@@ -867,6 +924,10 @@ export class FileViewerService {
 
   private async onWatch(record: InstanceRecord, source: FileViewerSource, event: FileViewerWatchEvent): Promise<void> {
     if (!this.watchCurrent(record, source)) return
+    if (event.kind === 'confirmation-required') {
+      this.requireConfirmation(record, event.error)
+      return
+    }
     if (event.kind === 'missing') {
       this.cancel(record.read, event.error)
       this.publishReadFailure(record, toFailure('resource-missing', event.error))
@@ -917,7 +978,7 @@ export class FileViewerService {
 
   private async runSave(record: InstanceRecord, automatic: boolean, overwrite: boolean): Promise<void> {
     const value = record.snapshot
-    if (value.status !== 'ready') return
+    if (value.status !== 'ready' || value.loadConfirmation !== undefined) return
     const source = this.sources.get(value.ref.sourceId)
     if (source?.save === undefined) {
       this.publishSaveBlock(record, { code: 'save-unsupported' })
@@ -970,7 +1031,7 @@ export class FileViewerService {
     }
     const version = overwrite ? current.latestSourceVersion : current.baseVersion
     try {
-      const saved = await source.save(value.ref, savedText, version, operation.controller.signal)
+      const saved = await source.save(value.ref, savedText, version, operation.controller.signal, { allowLargeFile: record.allowLargeFile })
       if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
       this.cancel(record.read, new Error('successful save superseded source read'))
       record.pauseReason = undefined
@@ -987,6 +1048,10 @@ export class FileViewerService {
       this.scheduleAutomation(record, true)
     } catch (error: unknown) {
       if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
+      if (isConfirmationRequiredError(error)) {
+        this.requireConfirmation(record, error)
+        return
+      }
       record.pauseReason = 'failure'
       record.snapshot = {
         ...record.snapshot,

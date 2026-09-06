@@ -2,6 +2,8 @@ import type { ComponentType } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
   FileViewerInstanceSnapshot,
+  FileViewerTextAccess,
+  FileViewerConfirmationRequiredError,
   FileViewerMissingResourceError,
   FileViewerWatchEvent,
 } from './service.ts'
@@ -11,6 +13,12 @@ import type {
  * The workbench keeps the view and its local text, marks the tab, and pauses automation.
  */
 export { FileViewerMissingResourceError as ResourceMissingError } from './service.ts'
+
+/** Source request for a document-scoped decision before loading large text content. */
+export { FileViewerConfirmationRequiredError as ResourceConfirmationRequiredError } from './service.ts'
+
+/** Explicit large-file permission scoped to one open text document. */
+export type ResourceTextAccess = FileViewerTextAccess
 
 /** Stable source identifier contributed by a resource provider. */
 export type ResourceSourceId = string & { readonly __resourceSourceId: unique symbol }
@@ -91,16 +99,16 @@ export interface ResourceSource {
   readonly defaults?: Partial<ResourceAutomationPreferences>
   /** @param ref Exact resource identity. @param selection Persisted source-owned hint. @returns Nothing after opening the location. */
   selectLocation?(ref: ResourceRef, selection?: unknown): Promise<void>
-  /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Canonical source text and revision. */
-  readText?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedText>
+  /** @param ref Exact resource identity. @param signal Cancellation signal. @param access Explicit document permission; sources reject with ResourceConfirmationRequiredError before reading content when approval is needed. @returns Canonical source text and revision. */
+  readText?(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceLoadedText>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Opaque source bytes and revision. */
   readBytes?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes>
-  /** @param ref Exact resource identity. @param text Canonical text to publish. @param version Caller-observed revision. @param signal Cancellation signal. @returns Published revision. */
-  saveText?(ref: ResourceRef, text: string, version: unknown, signal: AbortSignal): Promise<ResourceSavedText>
+  /** @param ref Exact resource identity. @param text Canonical text to publish. @param version Caller-observed revision. @param signal Cancellation signal. @param access Explicit document permission, also covering large saves. @returns Published revision. */
+  saveText?(ref: ResourceRef, text: string, version: unknown, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceSavedText>
   /** Provider declaration that `saveText` rejects its recognized revision mismatch before publishing. */
   readonly supportsConditionalTextSave?: boolean
-  /** @param ref Exact resource identity. @param listener Text notification receiver. @returns Source watch disposer. */
-  watchText?(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void): () => void
+  /** @param ref Exact resource identity. @param listener Text notification receiver; confirmation-required pauses the subscription until explicit approval. @param access Permission retained by this document subscription. @returns Source watch disposer. */
+  watchText?(ref: ResourceRef, listener: (event: ResourceTextWatchEvent) => void, access?: ResourceTextAccess): () => void
   /** @param ref Exact resource identity. @param bytes Opaque bytes to publish. @param version Caller-observed revision. @param signal Cancellation signal. @returns Published revision. */
   saveBytes?(ref: ResourceRef, bytes: Uint8Array, version: unknown, signal: AbortSignal): Promise<ResourceSavedBytes>
   /** Provider declaration that `saveBytes` rejects its recognized revision mismatch before publishing. */
@@ -113,6 +121,7 @@ export interface ResourceSource {
 
 /** Text watch notification with source-owned metadata. */
 export type ResourceTextWatchEvent =
+  | { readonly kind: 'confirmation-required'; readonly error: FileViewerConfirmationRequiredError }
   | { readonly kind: 'invalidate' }
   | { readonly kind: 'missing'; readonly error: FileViewerMissingResourceError }
   | { readonly kind: 'snapshot'; readonly snapshot: ResourceLoadedText }
@@ -247,6 +256,8 @@ export interface ResourceWorkbenchClientService {
   saveText(viewId: string): Promise<void>
   /** @param viewId Text resource view. @returns Nothing after source observation. */
   refreshText(viewId: string): Promise<void>
+  /** @param viewId Text view showing a large-file prompt. @returns Nothing after the explicitly approved load. */
+  confirmTextLoad(viewId: string): Promise<void>
   /** @param viewId Text resource view. @returns Nothing after explicit publication. */
   overwriteSourceText(viewId: string): Promise<void>
   /** @param viewId Text resource view. Replaces local text with the last observed source. */

@@ -51,10 +51,11 @@ export type {
   ResourceSavedBytes,
   ResourceSource,
   ResourceTextWatchEvent,
+  ResourceTextAccess,
   ResourceViewSnapshot,
   ResourceWorkbenchClientService,
 } from './resource.ts'
-export { ResourceHandlerId, ResourceMissingError, ResourceSourceId } from './resource.ts'
+export { ResourceHandlerId, ResourceMissingError, ResourceConfirmationRequiredError, ResourceSourceId } from './resource.ts'
 export {
   IMAGE_RESOURCE_HANDLER_ID,
   RESOURCE_WORKBENCH_VIEW_ID,
@@ -149,9 +150,9 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const offTextHandler = runtime.registerHandler(textHandler)
   const offImageHandler = runtime.registerHandler(imageHandler)
   const source = new FilesystemResourceSource({
-    readText: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.readText({ sessionId, path }, signal)),
+    readText: async (sessionId, path, signal, access) => valueOf(await ctx.remote.userFiles.readText({ sessionId, path, ...access }, signal)),
     readBytes: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.readBytes({ sessionId, path }, signal)),
-    saveText: async (sessionId, path, text, version, signal) => valueOf(await ctx.remote.userFiles.saveText({ sessionId, path, text, version }, signal)),
+    saveText: async (sessionId, path, text, version, signal, access) => valueOf(await ctx.remote.userFiles.saveText({ sessionId, path, text, version, ...access }, signal)),
     saveBytes: async (sessionId, path, dataBase64, version, signal) => valueOf(await ctx.remote.userFiles.saveBytes({ sessionId, path, dataBase64, version }, signal)),
     openLocation: async (sessionId, path) => { await openWorkspaceFile(ctx, { sessionId, path }) },
     openExternal: async (sessionId, path, signal) => {

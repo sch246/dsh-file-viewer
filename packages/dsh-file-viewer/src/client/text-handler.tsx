@@ -20,6 +20,7 @@ export function createTextResourceView(dependencies: TextResourceHandlerDependen
         subscribe={(_id, listener) => service.subscribeText(viewId, listener)}
         edit={(_id, text) => { service.editText(viewId, text) }}
         save={() => { void service.saveText(viewId) }}
+        confirmLoad={() => { void service.confirmTextLoad(viewId) }}
         refresh={() => { void service.refreshText(viewId) }}
         overwriteSource={() => { void service.overwriteSourceText(viewId) }}
         discardLocal={() => { service.discardLocalText(viewId) }}

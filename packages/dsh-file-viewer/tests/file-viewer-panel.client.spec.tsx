@@ -53,6 +53,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     edit: vi.fn(),
     save: vi.fn(),
     refresh: vi.fn(),
+    confirmLoad: vi.fn(),
     overwriteSource: vi.fn(),
     discardLocal: vi.fn(),
     setAutoUpdate: vi.fn(),

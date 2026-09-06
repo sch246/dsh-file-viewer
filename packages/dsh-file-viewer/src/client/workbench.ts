@@ -296,9 +296,10 @@ export class ResourceWorkbenchRuntime {
       const adapter: FileViewerSource = {
         id: FileViewerSourceId(source.id),
         ...(source.defaults === undefined ? {} : { defaults: source.defaults }),
-        load: async (ref, signal) => {
+        load: async (ref, signal, access) => {
           const resourceRef = ref as unknown as ResourceRef
-          const loaded = await source.readText!(resourceRef, signal)
+          const loaded = await source.readText!(resourceRef, signal, access)
+          signal.throwIfAborted()
           if (loaded.descriptor !== undefined) this.#applyLoadedDescriptor(resourceRef, loaded.descriptor)
           const title = loaded.descriptor?.name ?? this.#resourceName(resourceRef)
           return {
@@ -309,13 +310,13 @@ export class ResourceWorkbenchRuntime {
           }
         },
         ...(source.saveText === undefined ? {} : {
-          save: (ref, text, version, signal) => source.saveText!(ref as unknown as ResourceRef, text, version, signal),
+          save: (ref, text, version, signal, access) => source.saveText!(ref as unknown as ResourceRef, text, version, signal, access),
         }),
         ...(source.supportsConditionalTextSave === undefined
           ? {}
           : { supportsConditionalSave: source.supportsConditionalTextSave }),
         ...(source.watchText === undefined ? {} : {
-          watch: (ref, listener) => {
+          watch: (ref, listener, access) => {
             const resourceRef = ref as unknown as ResourceRef
             return source.watchText!(resourceRef, event => {
               if (event.kind === 'snapshot' && event.snapshot.descriptor !== undefined) {
@@ -330,7 +331,7 @@ export class ResourceWorkbenchRuntime {
               listener(title === undefined
                 ? textEvent
                 : { ...textEvent, snapshot: { ...textEvent.snapshot, title } })
-            })
+            }, access)
           },
         }),
         ...(source.openExternal === undefined ? {} : {
@@ -741,6 +742,11 @@ export class ResourceWorkbenchRuntime {
   /** Observe shared text source state. */
   refreshText(viewId: string): Promise<void> {
     return this.documents.refresh(this.#documentId(viewId))
+  }
+
+  /** @param viewId Text view accepting its shared document's pending large-file load. @returns Nothing after loading. */
+  confirmTextLoad(viewId: string): Promise<void> {
+    return this.documents.confirmLoad(this.#documentId(viewId))
   }
 
   /** Explicitly publish shared local text over the source. */

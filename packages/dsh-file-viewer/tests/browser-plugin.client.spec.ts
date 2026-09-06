@@ -64,7 +64,7 @@ describe('file viewer browser plugin', () => {
 
     const sessionId = 'standalone-viewer' as SessionId
     await ctx.waterfall('chat/open-workspace-file', { sessionId, path: 'file.txt', preview: true, target: { fromInstanceId: 'tree', direction: 'right' } }, async () => {})
-    expect(readText).toHaveBeenCalledWith({ sessionId, path: '/workspace/file.txt' }, expect.any(AbortSignal))
+    expect(readText).toHaveBeenCalledWith({ sessionId, path: '/workspace/file.txt', allowLargeFile: false }, expect.any(AbortSignal))
     expect(rightSidebar.openInstance).toHaveBeenLastCalledWith(sessionId, expect.objectContaining({
       viewId: RESOURCE_WORKBENCH_VIEW_ID,
       restoreDescriptor: expect.objectContaining({ ref: { sessionId, sourceId: 'filesystem', resourceId: '/workspace/file.txt' } }),
