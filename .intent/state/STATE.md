@@ -1,30 +1,40 @@
-# Resource workbench current intended state
+# File viewer installation and adaptation map
 
-Recorded deployment: revision 0.3.5 activated under [the deleted fragment decision](../logs/2026-09-06-deleted-fragments.md). Revision 0.3.4 activation remains recorded in [the aligned comparison evidence](../logs/2026-09-06-aligned-comparison.md). This local STATE is an installation and behavior map, not the meta-intent protocol. Historical activation does not certify a new target checkout; no accepted realization lock or user visual acceptance is recorded.
-
-## Latest dependency target — migration pending
-
-The September 6, 2026 user instruction “可联动不意味着必依赖” establishes the target below. It takes precedence over earlier intended ownership statements. The installed dependency graph and operational instructions below describe the current implementation; runtime extraction, configuration migration and installation have not occurred. [The dependency decision log](../logs/2026-09-06-independent-feature-dependencies.md) records this documentation update.
-
-| Feature | Required target dependencies | Target ownership and optional cooperation |
-| --- | --- | --- |
-| Sidebar | Harness layout APIs | Layout, groups, tabs, previews, persistence and instance lifecycle only; no filesystem or feature-opening policy. |
-| Viewer | Sidebar and the shared authenticated UI filesystem provider | Owns the `filesystem` source, supported-file opening, text/image handlers, shared documents and drafts. Requires neither manager nor Links. The editor stays an internal plain dependency, not a separately chosen user feature. |
-| Manager | Sidebar and the same shared provider | Owns the tree, directory opening, navigation and mutations. Requires neither viewer nor Links; file clicks use the common Host opening entry. |
-| Shared filesystem package | Authenticated Harness UI/Remote APIs | Neutral service definition, one Node provider and generated Remote declarations; Session-relative resolution, metadata, text/bytes and revision-guarded saves. Proposed location: an independent package in the manager repository, separately built and distributed. That location creates no dependency on the manager feature. |
-| Optional Links toggle in the shared package | Shared filesystem access and Host text-link/opening APIs | Recognizes and confirms paths in Markdown inline code. Requires no sidebar, viewer or manager. Its toggle controls path decoration only; filesystem access and original session-file links remain available when disabled. |
-
-Authenticated user filesystem operations retain service-process permissions, independently of agent `ctx.fs`, sandbox and approval. The common provider owns one canonical-resource publication queue for text and byte saves, including revision checks; viewer documents own browser synchronization, not disk publication.
-
-All file clicks, including Chat links and manager rows, use the existing Host `chat/open-workspace-file` chain. Viewer handles supported files and manager handles directories. An unhandled request delegates to the native opener on the service-process machine; an error after a handler takes responsibility propagates without native fallback. Preserve preview, pin and open-to-the-right intent without exposing viewer internals to other features.
-
-Migration moves `FilesystemResourceSource` and `resourcePollIntervalMs` from manager to viewer; `directoryPollIntervalMs`, tree state and mutations remain in manager. Carry the effective configured resource interval into the complete viewer configuration row and remove it from the complete manager row without losing other fields. Replace manager's source registration, required workbench injection and direct viewer opening, and transfer the independent resource-links provider/Bundle to the shared package's optional Links implementation without duplicate registrations. Preserve the installed Links enablement and explicit opening behavior during configuration migration.
-
-Packages retain independent versions and declare compatible API/peer ranges; equal version numbers and synchronized releases are not requirements. Installation must resolve one shared provider and Bundle for all consumers, retain it while consumers need it, and reject incompatible ranges explicitly. Other repositories consume its independently built artifact rather than building the manager workspace. These are pending implementation requirements, not claims about the current setup scripts.
+Use this document as the installation prompt: establish the selected environment, adapt the supplied implementation to its public capabilities, and deliver the product behavior below. Refine the map from user feedback and observed Host behavior; source symbols and package placement are adaptation references, not frozen interface choices. Record installation observations, implementation debt and validation results in the [local log](../logs/2026-09-06-independent-feature-dependencies.md).
 
 ## Intent
 
 Provide a Session-aware generic resource workbench in the DeepSeek Harness Web right sidebar. Client plugins contribute sources and lazy handlers without receiving workbench, document or group store mutation authority.
+
+## Installation map
+
+### Required capabilities and ownership
+
+| Feature | Required capabilities | Ownership and optional cooperation |
+| --- | --- | --- |
+| Sidebar | Harness layout APIs | Layout, groups, tabs, previews, persistence and instance lifecycle only; no filesystem or feature-opening policy. |
+| Viewer | Sidebar and the shared authenticated UI filesystem provider | Owns the `filesystem` source, supported-file opening, text/image handlers, shared documents and drafts. Requires neither manager nor Links. The editor stays an internal plain dependency, not a separately chosen user feature. |
+| Manager | Sidebar and the same shared provider | Owns the tree, directory opening, navigation and mutations. Requires neither viewer nor Links; file clicks use the common Host opening entry. |
+| Shared filesystem package | Authenticated Harness UI/Remote APIs | Neutral service definition, one Node provider and generated Remote declarations; Session-relative resolution, metadata, text/bytes and revision-guarded saves. Build and distribute it independently of feature packages. An independent package in the manager repository is one possible location, not a required repository arrangement or a dependency on the manager feature. |
+| Optional Links toggle in the shared package | Shared filesystem access and Host text-link/opening APIs | Recognizes and confirms paths in Markdown inline code. Requires no sidebar, viewer or manager. Its toggle controls path decoration only; filesystem access and original session-file links remain available when disabled. |
+
+Authenticated user filesystem operations retain service-process permissions, independently of agent `ctx.fs`, sandbox and approval. The shared provider owns path resolution and one canonical-resource publication queue for text and byte saves, including revision checks; viewer documents own browser synchronization, not disk publication. Viewer owns the `filesystem` source and `resourcePollIntervalMs`; manager owns `directoryPollIntervalMs`, tree state and mutations.
+
+All file clicks, including Chat links and manager rows, use the Host's common opening entry, represented by `chat/open-workspace-file` in the supplied sources. Viewer handles supported files and manager handles directories. Unhandled requests delegate to the native opener on the service-process machine; errors after a handler takes responsibility propagate without native fallback. Preserve preview, pin and open-to-the-right intent without exposing viewer internals to other features.
+
+### Adapt and install in the selected environment
+
+1. Select explicit `DSH_CHECKOUT`, `DSH_HOME` and `DSH_PROFILE`. Read the selected Host's instructions, profile composition, manifests, actual resolution targets and existing adaptation receipts. Preserve unrelated plugins, user configuration, sidebar layout and browser drafts. Use the requested feature combination to select dependencies; cooperation with another feature is not permission to require its installation.
+2. Compare the selected Host's actual authenticated Remote, Session path metadata, Client module/slot registration, sidebar lifecycle and common opening APIs with the supplied [manifest](../../packages/dsh-file-viewer/package.json), [Bundle](../../packages/dsh-file-viewer/cordis.patch.yml), [workbench](../../packages/dsh-file-viewer/src/client/workbench.ts), [document service](../../packages/dsh-file-viewer/src/client/service.ts) and [editor package](../../packages/dsh-file-viewer-editor/package.json). Adapt names and interfaces to the supported Host while preserving the behavior below. Use one opening chain and one filesystem provider, not parallel compatibility implementations. Existing equivalent Host capabilities need no duplicate patch; attribute each necessary adaptation before applying it and retain changes owned by other plugins.
+3. Inspect the Host's declaration and Remote generators, including external-project support such as Typert `externalProjectReferences`, and its source-launch requirements. Read the [repository build guide](../../README.md#build-and-install) and actual scripts before choosing commands. Build the selected Host declarations/generator, then the provider and feature Host/Remote/Client artifacts as their dependency graph requires. Use explicitly selected repository tools and compatible APIs; a historical package version or sibling checkout path is not an environmental requirement.
+4. Resolve one independently distributed shared provider for all selected consumers. Declare compatible peer/API ranges and development dependencies; keep package versions independent without equal-version checks. Reuse a provider satisfying all consumer ranges, report incompatible ranges explicitly, and avoid duplicate provider rows or Remote namespaces. Viewer/editor form one user feature; manager and Links remain independent options. Local path overrides may support development without requiring neighbouring repositories for normal builds.
+5. Read [setup](../../scripts/setup-host.sh) and [uninstall](../../scripts/uninstall-host.sh) before execution and verify their actual dependencies, flags, scope and effects against this map. Treat them as tools to adapt, not authorities that can turn a historical prerequisite into a feature requirement. Install the selected feature and needed shared artifacts through the Host's supported plugin transaction, preserving complete configuration rows and effective settings. Keep resource polling under viewer and directory polling under manager; preserve Links enablement and explicit external-opening preferences when adapting an existing profile.
+6. Inspect manifest, lockfile, exact installed package targets, Bundle membership, generated Remote declarations and Client rows after the transaction. Cold-start an isolated profile with the selected feature combination before activating a user's profile. Exercise the behavior and failure conditions below; a successful package build or script inspection alone does not establish a working installation. Setup must not restart services implicitly.
+7. Remove only the selected feature's owned contributions and dependencies. Retain sidebar and the shared provider while other consumers need them; check remaining consumer manifests before removing shared capabilities. Inspect residual resolutions, rows and generated browser entries. Do not delete user files, browser preferences or drafts, and do not reverse an entire historical Host patch merely because one feature is removed.
+
+### Combination checks
+
+With sidebar and the shared provider, viewer alone must read and edit supported remote files reached through original session-file links; manager alone must browse and mutate directories and send unhandled file clicks to the native opener. With both features, files reach viewer and directories reach manager independent of installation order. Links works without either feature or sidebar; disabling it stops automatic path decoration and discovery queries while retaining filesystem access and original session links. Handler failures remain visible without fallback, and removal of one consumer leaves the others usable.
 
 ## User intent and provenance
 
@@ -32,43 +42,11 @@ Source: Codex task **评估网页文件查看编辑能力 (2)**, conversation `0
 
 - September 5 18:54, pasted user request: “文本查看应该只是文件编辑的一种功能罢了” and “应该能在文件编辑器里切换打开方式”. The resource workbench supports contributed handlers; text is one handler. The same pasted discussion assigns groups and placement to the shared sidebar, including opening tree selections to the right without replacing the tree. The proposed single editor plugin tab is not a requirement to reintroduce nested file tabs.
 - September 5 20:50: “默认的更新和保存应该与当前实例的更新保存无关，只影响新开时的自动更新自动保存的状态”. This supersedes the pasted GPT inheritance/reset proposal. The two inheritance buttons are rejected. The horizontal defaults row requested in this message is an intermediate presentation, superseded by the final hover controls below.
-- September 5 23:04 and September 6 00:14: keep breadcrumbs and a right-aligned open-with dropdown; handler names switch views and separate default markers toggle associations. “一个复选框就行了” confirms checkboxes instead of rotating icons; synchronization status remains visible and changes color. September 6 00:20 suggests operation animation in that status rather than revealing buttons; independent update/save activity is the implemented interpretation.
+- September 5 23:04 and September 6 00:14: keep breadcrumbs and a right-aligned open-with dropdown; handler names switch views and separate default markers toggle associations. “一个复选框就行了” confirms checkboxes instead of rotating icons; synchronization status remains visible and changes color. September 6 00:20 suggests operation animation in that status rather than revealing buttons; update/save activity remains independently observable.
 - September 6 01:02: “点击‘查看差异’时视图直接替换编辑区域” and “它一定要是实时的”. Differences belongs beside Update/Save in the floating controls. Base has no separate pane; sides equal to Base are omitted. September 6 01:32 further requires editable Local, read-only Source, stronger green character backgrounds, line numbers and red deletions excluded even from select-all/copy.
 - September 6 01:53: “需要以基准行进行对齐才行” and “悬浮按钮的展开状态在鼠标移开后应该保持”. Paired Base/current columns, shared row displacement and linked scrolling align every visible side. Current and default line-number choices follow the automation control arrangement. “鼠标悬浮到自动更新/自动保存的框上的时候，才在左边额外显示一个勾选框” is the final default-control request; it supersedes separate More/default controls. September 6 02:45 adds “删除时对应的地方要有红色背景的”, including removed character fragments.
 
-## Current installation map
-
-### Composition and implementation owners
-
-| Owner | Required contribution and location |
-| --- | --- |
-| Harness Web profile | Supported package declarations and source launcher; the manifests target `0.1.2-alpha.2`. Check actual API compatibility after Host upgrades. |
-| `@dsh-external/dsh-right-sidebar` | Must be built and composed first. Owns groups, placement, previews, tab orientation/dragging, resizing and layout persistence; these are not editor responsibilities. |
-| Viewer Bundle | [Bundle rows](../../packages/dsh-file-viewer/cordis.patch.yml) compose viewer and editor Client graph entries. [Workbench](../../packages/dsh-file-viewer/src/client/workbench.ts) owns generic opening, handlers and associations; [document service](../../packages/dsh-file-viewer/src/client/service.ts) owns synchronization. |
-| Editor dependency | [Editor package](../../packages/dsh-file-viewer-editor/package.json) owns CodeMirror and comparison rendering. It is installed as a plain dependency, never a second Bundle, and loaded lazily. |
-| Optional filesystem provider | `@dsh-external/dsh-file-manager` requires this viewer and supplies metadata, text/bytes, guarded saves, native-open capability and the Files launcher. Other sources can use the viewer without the manager. |
-| Optional Chat consumer | `@dsh-external/dsh-resource-links` requires manager, viewer and sidebar. It owns path recognition and Chat `preview\|system` policy; the viewer does not install it. |
-
-### Build, install and removal
-
-The [repository guide](../../README.md#build-and-install) owns build commands. Select explicit `DSH_CHECKOUT`, `DSH_HOME` and `DSH_PROFILE` for every profile operation. The viewer scripts permit omitted `DSH_HOME` and then use the ordinary default Home; supplying it avoids selecting an unintended profile. Keep sibling checkouts at the relative locations declared in the development manifest, or deliberately update those local links before building.
-
-| Operation | Owned entry and effects |
-| --- | --- |
-| Inspect | [Setup](../../scripts/setup-host.sh), `pnpm run setup --check`: checks checkout and package-source presence only. It does not prove an installed profile or browser works. |
-| Install/update | `pnpm run setup --install`: builds both packages and adds both absolute package paths in one `dsh plugin add` transaction; verifies manifest, lock, resolution and composed rows. The viewer is the Bundle and the editor is a plain dependency. |
-| Inspect removal | [Uninstall](../../scripts/uninstall-host.sh), `pnpm run uninstall --check`: reports declared dependencies and viewer Bundle presence. |
-| Remove | `pnpm run uninstall --remove`: removes both declared dependencies in one transaction and checks absence. Remove dependent resource-links and manager Bundles first, retaining unrelated sidebar consumers. |
-
-Scripts do not apply or reverse Harness patches or restart services. Build output and local build symlinks change during installation; the running profile is activated separately. After installation, inspect exact dependency/lock/resolution targets, Bundle and composed Client rows; after removal, inspect their absence. In particular, uninstall's already-absent dependency branch does not check for residual symlinks or lock rows. A successful inspection alone is not removal or boot evidence. Preserve user drafts and unrelated profile settings; package removal does not clear origin-local browser storage.
-
-### Host adaptation and ownership limits
-
-The tracked [historical Harness patch](../../patches/deepseek-harness.patch) includes the initial `chat/open-workspace-file` waterfall and other integration changes; it is not an input to viewer setup or uninstall. Resource-links maintains an incremental patch over that Chat baseline, including routing the workspace `.` action through the waterfall. Applying or reversing the historical patch wholesale can overlap that newer contribution.
-
-No current viewer or manager lifecycle script transfers the historical patch receipt. Resource-links refuses to adopt an already-applied patch without its matching receipt. The [resource-links baseline preparation map](https://github.com/sch246/dsh-resource-links/blob/main/.intent/state/STATE.md#preparing-a-host-that-lacks-the-baseline) identifies the exact Chat symbols and reviewed adaptation record needed on a Host without the waterfall. The [historical installation record](../logs/2026-09-05-live-web-install.md) excludes `packages/typert/generator/` from viewer ownership because its external-project support belongs to skill-manager. An integrator must inspect the selected Host, the historical receipt and resource-links receipt, preserve changes owned elsewhere, and reconcile that baseline before setup or removal; reverse applicability alone does not establish ownership transfer. After a Harness upgrade, adapt only the affected public sidebar/workbench APIs and owned Host increment, then regenerate the affected artifacts through their owning scripts. A clean arbitrary Host is not established as supported by the deployment logs.
-
-## Current implementation behavior
+## Product behavior
 
 - The frozen `ctx.resourceWorkbench` face exclusively owns source and handler registrations, handler selection, associations, resource views and shared text documents.
 - A resource identity contains a Session id, source id and source-owned resource id. Descriptors add a name and optional MIME, kind, size and location without replacing that identity.
@@ -88,9 +66,10 @@ No current viewer or manager lifecycle script transfers the historical patch rec
 - The right-sidebar workbench owns groups, tabs, preview replacement, pin state, activation and close gestures. The viewer registers one static `resource-workbench` renderer. First edit pins a preview; close and handler switch honor document and handler vetoes. Close confirmation does not release a view or document; cleanup runs only after the sidebar commits removal of that exact instance.
 - Optional source locations remain opaque. A location can display a label and segments; its selector id launches another right-sidebar feature with an optional source-owned selection hint.
 - `@dsh-external/dsh-file-viewer-editor` owns CodeMirror dependencies and editor construction. Source state updates reuse the mounted view, preserve bounded cursor positions and do not enter undo history.
-- The separate file-manager plugin owns authenticated user filesystem access, filesystem sources, navigation and its Files launcher. The independent resource-links plugin owns Chat path recognition and opening policy. User filesystem UI does not inherit agent sandbox or approval restrictions.
+- Viewer registers its own filesystem source backed by the shared authenticated provider. Manager independently owns directory navigation and its Files launcher. Optional Links owns automatic Chat path recognition; all use the common Host opening entry.
+- Filesystem reads bound text and byte sizes separately. Bytes remain exact; text rejects malformed UTF-8 and NUL, normalizes loaded line endings to LF, and retains EOL metadata in an opaque revision. Saves restore the loaded EOL convention, including mixed existing-line endings, and the terminal-newline presence represented by editor text. Revisions contain exact content hashes and file stat values; one shared-provider queue serializes text and byte publication per canonical resource, stages in the same directory and rechecks revision immediately before atomic rename. Guarded optimistic saves cannot provide strict compare-and-swap against an uncooperative external writer between that recheck and rename. Source watches run only while subscribed, wait for each read before scheduling another and abort timers/requests on disposal.
 
-## Current implementation acceptance criteria
+## Acceptance criteria
 
 - `VIEWER-001`: One Session can retain multiple views of one exact text resource with shared edits and independent editor state; restoration retains Base and Local text against a fresh Source observation.
 - `VIEWER-002`: Client fixtures can register in-memory text and byte sources, read and guarded-write without binary decoding, watch external changes, dispose a source and retain explicit source-unavailable state without receiving store setters.
@@ -104,19 +83,15 @@ No current viewer or manager lifecycle script transfers the historical patch rec
 - `VIEWER-010`: The expanded toolbar survives mouse leave and view remounts. Current automation and line-number controls reveal their independent default checkboxes to the left on hover/focus; defaults initialize only new documents or view presentations. No separate More/defaults section remains.
 - `VIEWER-011`: Exact deleted character fragments have darker red backgrounds inside pale red baseline deletion rows. Highlight ranges follow live edits even when the baseline row text is unchanged; deletion spans remain display-only.
 
-## Current implementation constraints
+## Constraints
 
 - The right-sidebar package owns group layout, previews, tabs and restoration descriptors. This package uses only its public service and `rightbar.view` slot.
 - Each source defines canonical text. The generic editor does not trim, normalize line endings or synthesize a terminal newline.
-- File-manager and other plugins consume public generic resource types from `@dsh-external/dsh-file-viewer/client`.
+- Source and handler contributors use public generic resource types; manager file-opening requests use the common Host entry without importing viewer internals.
 
-## Current implementation non-goals
+## Non-goals
 
-- Owning filesystem authorization, paths, directory operations, filesystem routing or Chat link policy.
+- Owning filesystem authorization, directory operations or automatic Chat path recognition.
 - Native HTML execution, archive editing, collaborative or streaming presentation.
 - Persisting browser editor buffers in the Session log or sending them to the model.
 - Restarting, publishing or asserting acceptance of a live deployment from repository setup.
-
-## Evidence status
-
-The aligned comparison and deleted-fragment records linked above own the implementation and activation evidence for their revisions. This documentation update does not rerun those observations or install anything. Earlier decisions and activation logs describe their respective revisions. No accepted realization lock or user visual acceptance is recorded.

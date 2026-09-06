@@ -1,11 +1,10 @@
 # dsh-file-viewer contributor instructions
 
-This repository is an out-of-tree DeepSeek Harness plugin. `README.md` owns the public contract and `.intent/state/STATE.md` owns intended state. The local current-state format is not the meta-intent protocol and records no accepted realization lock or installation claim.
+This repository is an out-of-tree DeepSeek Harness plugin. Read the [installation and adaptation map](.intent/state/STATE.md) before installation, adaptation or filesystem/lifecycle changes. Use it to select capabilities and preserve product behavior in the actual Host environment; refine it from user feedback and observed behavior. Record implementation constraints and execution evidence in local logs.
 
-- Follow the [latest dependency target](.intent/state/STATE.md#latest-dependency-target--migration-pending) for new work: feature cooperation does not establish a required dependency. The ownership statements below describe the current implementation; do not report the target as installed before runtime and profile migration.
 - Build against an explicit `DSH_CHECKOUT`; never edit or restart that checkout implicitly.
 - Keep `ResourceWorkbenchRuntime` as the only owner of sources, handlers, associations and resource views. `FileViewerService` owns shared text documents and exact synchronization state; providers receive no store setters.
-- The workbench is source-neutral. Text and bytes are independent capabilities. In the current implementation, the file-manager plugin owns authenticated filesystem access, filesystem native-open capability, tree navigation and its launcher. The independent resource-links plugin owns Chat path recognition and preview/system opening policy.
+- Keep the workbench source-neutral and text/byte capabilities independent. Viewer owns the filesystem source over shared authenticated UI access; directory management and automatic Links recognition remain independent optional features.
 - Register the static `resource-workbench` view once. The sidebar owns groups, previews and persisted layout; the workbench owns JSON-safe restore descriptors and reconnects views to resource state.
 - One exact Session/source/resource reference owns one shared text document. View ids own selection, scroll and undo state. Moving or remounting a view must not reread, copy or destroy the document.
 - Handler switching stays in the same sidebar instance. A retained handler controller registers close guards; renderer-effect disposal must not discard a dirty handler's veto.
