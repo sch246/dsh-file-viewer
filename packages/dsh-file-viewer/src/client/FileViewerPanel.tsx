@@ -1,5 +1,5 @@
 import { formatFileSize } from './file-size.ts'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
 import type { FileViewerEditorModule, FileViewerTextChange } from './editor-module.ts'
@@ -94,11 +94,8 @@ function FailureDetail({ failure, t }: {
 }
 
 interface EditorHostProps {
-  readonly text?: string
-  readonly document?: EditorDocument
-  readonly appendKey?: number
-  readonly textUpdate?: import('./service.ts').FileViewerTextUpdate
-  readonly readOnly: boolean
+  readonly snapshot: () => FileViewerInstanceSnapshot
+  readonly subscribe: (listener: () => void) => () => void
   readonly comparison?: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]['comparison']
   readonly lineNumbers: boolean
   readonly loadEditor: () => Promise<FileViewerEditorModule>
@@ -111,21 +108,22 @@ interface EditorHostProps {
 
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
-  text, document, appendKey, textUpdate, readOnly, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
+  snapshot, subscribe, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<FileViewerEditorModule['createFileViewerEditor']>>()
-  const inputRef = useRef({ text, document, appendKey })
-  const readOnlyRef = useRef(readOnly)
-  const appliedRef = useRef({ text, document, appendKey })
+  const snapshotRef = useRef(snapshot)
+  const submittingRef = useRef(false)
+  const synchronizeRef = useRef<() => void>(() => {})
+  const readOnlyRef = useRef<boolean>()
+  const appliedRef = useRef<{ text?: string; document?: EditorDocument; appendKey?: number }>({})
   const comparisonRef = useRef(comparison)
   const lineNumbersRef = useRef(lineNumbers)
   const viewStateRef = useRef(viewState)
   const onChangeRef = useRef(onChange)
   const onViewStateChangeRef = useRef(onViewStateChange)
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
-  readOnlyRef.current = readOnly
-  inputRef.current = { text, document, appendKey }
+  snapshotRef.current = snapshot
   comparisonRef.current = comparison
   lineNumbersRef.current = lineNumbers
   viewStateRef.current = viewState
@@ -136,15 +134,22 @@ export function EditorHost({
     let live = true
     void loadEditor().then((editor) => {
       if (!live || parentRef.current === null) return
+      const initial = snapshotRef.current()
+      if (initial.status !== 'ready' && initial.status !== 'partial') return
+      const input = initial.status === 'ready' ? { document: initial.document } : { text: initial.text, appendKey: initial.streamId }
+      readOnlyRef.current = initial.status !== 'ready' || !initial.saveSupported
       const handle = editor.createFileViewerEditor({
         parent: parentRef.current,
-        text: inputRef.current.document?.toString() ?? inputRef.current.text ?? '',
+        text: initial.status === 'ready' ? initial.document.toString() : initial.text,
         readOnly: readOnlyRef.current,
         ...(comparisonRef.current === undefined ? {} : { comparison: comparisonRef.current }),
         lineNumbers: lineNumbersRef.current,
         onChange: changes => {
-          const document = onChangeRef.current(changes)
-          if (document !== undefined) appliedRef.current = { document, text: undefined, appendKey: undefined }
+          submittingRef.current = true
+          try {
+            const document = onChangeRef.current(changes)
+            if (document !== undefined) appliedRef.current = { document }
+          } finally { submittingRef.current = false }
         },
         viewState: viewStateRef.current,
         onViewStateChange: value => { onViewStateChangeRef.current?.(value) },
@@ -153,8 +158,9 @@ export function EditorHost({
         handle.destroy()
         return
       }
-      appliedRef.current = inputRef.current
+      appliedRef.current = input
       handleRef.current = handle
+      synchronizeRef.current()
       setState('ready')
     }, () => {
       if (live) setState('failed')
@@ -166,9 +172,20 @@ export function EditorHost({
     }
   }, [loadEditor])
 
-  useEffect(() => {
+  synchronizeRef.current = () => {
     const handle = handleRef.current
-    if (handle === undefined) return
+    if (handle === undefined || submittingRef.current) return
+    const latest = snapshotRef.current()
+    if (latest.status !== 'ready' && latest.status !== 'partial') return
+    const document = latest.status === 'ready' ? latest.document : undefined
+    const text = latest.status === 'partial' ? latest.text : undefined
+    const appendKey = latest.status === 'partial' ? latest.streamId : undefined
+    const textUpdate = latest.status === 'ready' ? latest.textUpdate : undefined
+    const readOnly = latest.status !== 'ready' || !latest.saveSupported
+    if (readOnlyRef.current !== readOnly) {
+      handle.setReadOnly(readOnly)
+      readOnlyRef.current = readOnly
+    }
     const previous = appliedRef.current
     if (document !== undefined) {
       if (document === previous.document) return
@@ -187,9 +204,14 @@ export function EditorHost({
         handle.appendText(text.slice(previous.text.length))
       } else handle.setText(text)
     }
-    appliedRef.current = { text, document, appendKey }
-  }, [text, document, appendKey, textUpdate])
-  useEffect(() => { handleRef.current?.setReadOnly(readOnly) }, [readOnly])
+    appliedRef.current = latest.status === 'ready' ? { document: latest.document } : { text: latest.text, appendKey: latest.streamId }
+  }
+  // A peer must receive new coordinates before its next input, independently of React rendering.
+  useEffect(() => {
+    const dispose = subscribe(() => { synchronizeRef.current() })
+    synchronizeRef.current()
+    return dispose
+  }, [subscribe])
   useEffect(() => {
     handleRef.current?.setComparison(comparison)
   }, [comparison])
@@ -255,11 +277,13 @@ function LoadConfirmation({ state, onLoad, t }: {
 }
 
 function ReadyPanel({
-  state, edit, save, refresh, confirmLoad, cancelLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
+  state, snapshot, subscribe, edit, save, refresh, confirmLoad, cancelLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
   automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
   presentation, retainPresentation, onViewStateChange, t,
 }: {
   readonly state: EditorSnapshot
+  readonly snapshot: () => FileViewerInstanceSnapshot
+  readonly subscribe: (listener: () => void) => () => void
   readonly edit: (changes: readonly FileViewerTextChange[]) => EditorDocument | undefined
   readonly save: () => void
   readonly refresh: () => void
@@ -428,10 +452,8 @@ function ReadyPanel({
       </>}
       <div className="dsh-file-viewer-primary-editor">
         <EditorHost
-          {...(state.status === 'ready' ? { document: state.document } : { text: state.text })}
-          {...(ready?.textUpdate === undefined ? {} : { textUpdate: ready.textUpdate })}
-          {...(state.status === 'partial' ? { appendKey: state.streamId } : {})}
-          readOnly={!ready?.saveSupported}
+          snapshot={snapshot}
+          subscribe={subscribe}
           loadEditor={loadEditor}
           onChange={edit}
           lineNumbers={presentation.lineNumbers}
@@ -461,11 +483,9 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
     props.automationDefaults,
     props.automationDefaults,
   )
-  const state = useSyncExternalStore(
-    listener => props.subscribe(props.instanceId, listener),
-    () => props.snapshot(props.instanceId),
-    () => props.snapshot(props.instanceId),
-  )
+  const subscribeDocument = useCallback((listener: () => void) => props.subscribe(props.instanceId, listener), [props.subscribe, props.instanceId])
+  const snapshotDocument = useCallback(() => props.snapshot(props.instanceId), [props.snapshot, props.instanceId])
+  const state = useSyncExternalStore(subscribeDocument, snapshotDocument, snapshotDocument)
   if (state.status !== 'ready' && state.status !== 'partial') {
     if (state.status === 'confirmation-required') return <LoadConfirmation state={state}
       onLoad={() => { props.confirmLoad(props.instanceId) }} t={props.t} />
@@ -482,6 +502,8 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
     <ReadyPanel
       key={props.instanceId}
       state={state}
+      snapshot={snapshotDocument}
+      subscribe={subscribeDocument}
       edit={changes => {
         props.editChanges(props.instanceId, changes)
         const current = props.snapshot(props.instanceId)

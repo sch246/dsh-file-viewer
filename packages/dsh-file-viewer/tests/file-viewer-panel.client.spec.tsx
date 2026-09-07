@@ -80,7 +80,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('FileViewerPanel', () => {
-  it('shares batched range edits without replaying the origin or flattening documents', async () => {
+  it('synchronizes peers before their next input without waiting for a React render', async () => {
     let current = ready({ document: TextDocumentSnapshot.fromText('a\nb\nc\n'), syncStatus: 'local-ahead' })
     const listeners = new Set<() => void>()
     const editors: { text: string; input: (changes: readonly FileViewerTextChange[]) => void; received: unknown[] }[] = []
@@ -116,7 +116,7 @@ describe('FileViewerPanel', () => {
       },
       loadEditor,
     }
-    render(<><FileViewerPanel {...input} /><FileViewerPanel {...input} instanceId="second" /></>)
+    const rendered = render(<><FileViewerPanel {...input} /><FileViewerPanel {...input} instanceId="second" /></>)
     await waitFor(() => { expect(editors).toHaveLength(2) })
     const [first, second] = editors
     const flatten = vi.spyOn(TextDocumentSnapshot.prototype, 'toString')
@@ -124,17 +124,19 @@ describe('FileViewerPanel', () => {
       act(() => {
         first!.input([{ from: 0, to: 1, insert: 'A' }])
         first!.input([{ from: 1, to: 1, insert: '!' }])
+        expect(second!.text).toBe('A!\nb\nc\n')
+        expect(first!.received).toHaveLength(0)
+        const from = second!.text.indexOf('c')
+        second!.input([{ from, to: from + 1, insert: 'C' }])
+        expect(first!.text).toBe('A!\nb\nC\n')
       })
-      expect(first!.text).toBe('A!\nb\nc\n')
-      expect(second!.text).toBe(first!.text)
-      expect(first!.received).toHaveLength(0)
-      expect(second!.received).toHaveLength(2)
-      act(() => { second!.input([{ from: 5, to: 6, insert: 'C' }]) })
       expect(first!.text).toBe('A!\nb\nC\n')
       expect(second!.text).toBe(first!.text)
       expect(first!.received).toHaveLength(1)
       expect(second!.received).toHaveLength(2)
       expect(flatten).not.toHaveBeenCalled()
+      rendered.unmount()
+      expect(listeners.size).toBe(0)
     } finally { flatten.mockRestore() }
   })
 
