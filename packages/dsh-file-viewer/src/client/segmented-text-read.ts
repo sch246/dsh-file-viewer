@@ -19,7 +19,11 @@ class TextReadIntegrityError extends Error {}
 class TextRequestTimeoutError extends Error {}
 
 function transient(error: unknown): boolean {
-  if (typeof error === 'object' && error !== null && 'code' in error) return false
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    // The Client gateway replaces carrier error types with this endpoint-specific diagnostic.
+    return error.code === 'gateway/internal' && 'message' in error && typeof error.message === 'string'
+      && /^client api: userFiles\/(prepareTextRead|readTextChunk|finishTextRead) failed: /.test(error.message)
+  }
   return error instanceof TypeError || error instanceof SyntaxError
     || (error instanceof Error && /transport failure .*HTTP (408|429|5\d\d)/.test(error.message))
 }

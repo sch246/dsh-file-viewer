@@ -1,3 +1,4 @@
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 import { createHash } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SegmentedTextRead, type SegmentedTextGateway } from '../src/client/segmented-text-read.ts'
@@ -195,4 +196,19 @@ it('rejects the final canonical digest before enabling editing and releases an a
   expect(requestSignal.aborted).toBe(true)
   expect(service.snapshot(id)).toMatchObject({ failure: { code: 'source-unavailable' } })
   await expect(collect(active.reader)).rejects.toThrow('disposed')
+})
+
+it('retries the Client gateway carrier wrapper for truncated chunk JSON', async () => {
+  vi.useFakeTimers()
+  const f = fixture('abcd')
+  const reader = new SegmentedTextRead(f.gateway, { sessionId: ref.sessionId, path: '/file' },
+    { ...f.policy, textReadRetries: 1, textReadRetryDelayMs: 1 })
+  live.push(reader)
+  vi.mocked(f.gateway.readTextChunk).mockRejectedValueOnce(new RemoteError('gateway/internal',
+    'client api: userFiles/readTextChunk failed: Unexpected end of JSON input', {}))
+  const pending = collect(reader)
+  await vi.advanceTimersByTimeAsync(2)
+  expect((await pending).at(-1)).toMatchObject({ kind: 'complete', canonicalHash: hash('abcd') })
+  expect(f.gateway.readTextChunk).toHaveBeenCalledTimes(2)
+  expect(f.gateway.prepareTextRead).toHaveBeenCalledTimes(1)
 })
