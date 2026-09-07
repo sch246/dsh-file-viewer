@@ -32,6 +32,9 @@ it('retains shifted blocks and hashes across local insertion, cross-block delete
 
 it('splits large insertions on code points and reconstructs missed view transactions from unchanged block anchors', () => {
   const original = TextDocumentSnapshot.fromText('x'.repeat(96), policy)
+  const oversized = original.edit([{ from: 0, to: 16, insert: 'i'.repeat(35) }])
+  expect(oversized.blocks.slice(0, 2).map(block => block.byteLength)).toEqual([16, 19])
+  expect(oversized.blocks[2]).toBe(original.blocks[1])
   const edited = original.edit([{ from: 20, to: 21, insert: '😀你'.repeat(30) }])
   expect(edited.blocks.at(-1)).toBe(original.blocks.at(-1))
   for (const block of edited.blocks) {

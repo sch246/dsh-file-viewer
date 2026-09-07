@@ -45,6 +45,11 @@ export function splitTextBlocks(text: string, policy: TextBlockPolicy = defaultT
     bytes += size; offset += width
   }
   if (start < text.length) blocks.push(new TextBlock(text.slice(start)))
+  const tail = blocks.at(-1), previous = blocks.at(-2)
+  if (tail !== undefined && previous !== undefined && tail.byteLength < policy.minBytes
+    && previous.byteLength + tail.byteLength <= policy.maxBytes) {
+    blocks.splice(-2, 2, new TextBlock(previous.text + tail.text))
+  }
   return blocks
 }
 
