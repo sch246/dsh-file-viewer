@@ -59,6 +59,8 @@ export type {
   ResourceWorkbenchClientService,
 } from './resource.ts'
 export { ResourceHandlerId, ResourceMissingError, ResourceSaveConflictError, ResourceConfirmationRequiredError, ResourceSourceId } from './resource.ts'
+export { TextBlock, TextDocumentSnapshot as BlockTextDocument, splitTextBlocks } from './text-document.ts'
+export type { TextChange, TextBlockPolicy } from './text-document.ts'
 export {
   IMAGE_RESOURCE_HANDLER_ID,
   RESOURCE_WORKBENCH_VIEW_ID,
@@ -114,6 +116,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const host = createResourceViewHost(ctx.rightSidebar)
   const runtime = new ResourceWorkbenchRuntime({
     host,
+    textBlockPolicy: { minBytes: metadata.textBlockMinBytes, targetBytes: metadata.textBlockTargetBytes, maxBytes: metadata.textBlockMaxBytes },
     largeEditCheckDelayMs: metadata.largeEditCheckDelayMs,
     largeFileBytes: metadata.largeFileBytes,
     progressiveFlushIntervalMs: metadata.progressiveFlushIntervalMs,

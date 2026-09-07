@@ -23,7 +23,7 @@ function fixture(raw = 'abcdefghijklmnop', chunkBytes = 4) {
     }),
     finishTextRead: vi.fn(async () => ({ version: 'revision', sizeBytes: bytes.length, canonicalHash: hash(raw.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n')) })),
   }
-  const policy = { ...pollPolicy(), textReadRetries: 0 }
+  const policy = { ...pollPolicy(), textReadRetries: 0, textBlockMinBytes: 4, textBlockTargetBytes: 4, textBlockMaxBytes: 8 }
   const reader = new SegmentedTextRead(gateway, { sessionId: ref.sessionId, path: '/file' }, policy)
   live.push(reader)
   return { gateway, reader, policy, changeVersion: () => { version = 'stat2' } }
@@ -141,9 +141,15 @@ it('retains shared initial and staged refresh prefixes, validates final hash onc
   const filesystem = new FilesystemResourceSource({ ...f.gateway, deltaText: vi.fn(async () => ({ kind: 'manual-required', reason: 'base-missing' })),
     patchText: vi.fn(), readBytes: vi.fn(), saveBytes: vi.fn() }, f.policy)
   const hashText = vi.fn(hashFileViewerText)
-  const service = new FileViewerService({ hashText })
+  const service = new FileViewerService({ hashText, textBlockPolicy: { minBytes: 4, targetBytes: 4, maxBytes: 8 } })
   live.push(service)
-  const create = vi.fn(() => filesystem.createTextRead(ref as never))
+  const received: import('../src/client/text-document.ts').TextBlock[] = []
+  const create = vi.fn(() => {
+    const reader = filesystem.createTextRead(ref as never)
+    return { dispose: () => reader.dispose(), stream: async function* (signal: AbortSignal, access?: import('../src/client/service.ts').FileViewerTextAccess) {
+      for await (const event of reader.stream(signal, access)) { if (event.kind === 'chunk') received.push(...(event.blocks ?? [])); yield event }
+    } }
+  })
   service.registerSource({ id: ref.sourceId, load: vi.fn(), createTextRead: create,
     loadDelta: async () => ({ kind: 'manual-required', reason: 'base-missing' }) })
   vi.mocked(f.gateway.finishTextRead).mockRejectedValueOnce(new TypeError('finish disconnected'))
@@ -155,7 +161,11 @@ it('retains shared initial and staged refresh prefixes, validates final hash onc
   await service.refresh(id)
   expect(service.snapshot(id)).toMatchObject({ status: 'ready', text: 'abcdefghijklmnop', loadProgress: { complete: true } })
   expect(f.gateway.readTextChunk).toHaveBeenCalledTimes(chunks)
-  expect(hashText).toHaveBeenCalledTimes(1)
+  expect(hashText.mock.calls.filter(([text]) => text === 'abcdefghijklmnop')).toHaveLength(1)
+  const complete = service.snapshot(id)
+  if (complete.status !== 'ready') throw new Error('expected complete document')
+  expect(complete.document.blocks).toEqual(received)
+  complete.document.blocks.forEach((block, index) => { expect(block).toBe(received[index]); expect(block.hash).toBe(hash(block.text)) })
   service.edit(id, 'Local edits')
   await Promise.resolve()
   vi.mocked(f.gateway.finishTextRead).mockRejectedValueOnce(new TypeError('refresh disconnected'))

@@ -5,6 +5,9 @@ export interface FileViewerMetadata {
   readonly hugeResourcePollIntervalMs: number
   readonly resourcePollBackoffMaxMs: number
   readonly maxDeltaBytes: number
+  readonly textBlockMinBytes: number
+  readonly textBlockTargetBytes: number
+  readonly textBlockMaxBytes: number
   readonly largeEditCheckDelayMs: number
   readonly textReadConcurrency: number
   readonly textReadTimeoutMs: number

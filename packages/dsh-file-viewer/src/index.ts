@@ -15,7 +15,11 @@ export interface Config {
   hugeResourcePollIntervalMs: number
   resourcePollBackoffMaxMs: number
   maxDeltaBytes: number
-  /** Input idle time before a large document starts its next complete local hash. */
+  /** Canonical UTF-8 block sizes; local edits rebalance only neighboring blocks. */
+  textBlockMinBytes: number
+  textBlockTargetBytes: number
+  textBlockMaxBytes: number
+  /** Input idle time before dirty block hashes are checked. */
   largeEditCheckDelayMs: number
   /** Maximum concurrent unary chunk requests for one open document. */
   textReadConcurrency: number
@@ -39,6 +43,9 @@ const fields: z<Config> = z.object({
   hugeResourcePollIntervalMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
   resourcePollBackoffMaxMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(60_000),
   maxDeltaBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(1024 * 1024),
+  textBlockMinBytes: z.number().step(1).min(4).max(Number.MAX_SAFE_INTEGER).default(512 * 1024),
+  textBlockTargetBytes: z.number().step(1).min(4).max(Number.MAX_SAFE_INTEGER).default(1024 * 1024),
+  textBlockMaxBytes: z.number().step(1).min(4).max(Number.MAX_SAFE_INTEGER).default(2 * 1024 * 1024),
   largeEditCheckDelayMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(300),
   textReadConcurrency: z.number().step(1).min(1).max(16).default(3),
   textReadTimeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(15_000),
@@ -52,6 +59,7 @@ const fields: z<Config> = z.object({
 
 /** Validated ordered byte tiers and resource polling configuration. */
 export const Config: z<Config> = z.transform(fields, (value) => {
+  if (value.textBlockMinBytes > value.textBlockTargetBytes || value.textBlockTargetBytes > value.textBlockMaxBytes) throw new Error('file-viewer: text block byte sizes must be ordered')
   if (value.hugeFileBytes <= value.largeFileBytes) throw new Error('file-viewer: hugeFileBytes must exceed largeFileBytes')
   if (value.largeResourcePollIntervalMs < value.resourcePollIntervalMs || value.hugeResourcePollIntervalMs < value.largeResourcePollIntervalMs
     || value.resourcePollBackoffMaxMs < value.hugeResourcePollIntervalMs) throw new Error('file-viewer: polling intervals and backoff maximum must be ordered')

@@ -1,3 +1,4 @@
+import { splitTextBlocks } from './text-document.ts'
 import type {
   UserFileReadTextRequest, UserFileTextReadPlan, UserFileTextChunkRequest, UserFileTextChunk,
   UserFileFinishTextReadRequest, UserFilePatchResult,
@@ -102,6 +103,10 @@ export class SegmentedTextRead implements ResourceTextRead {
     return text.replace(/\r\n?/g, '\n')
   }
 
+  #blocks(text: string) {
+    return splitTextBlocks(text, { minBytes: this.policy.textBlockMinBytes, targetBytes: this.policy.textBlockTargetBytes, maxBytes: this.policy.textBlockMaxBytes })
+  }
+
   #ranges(): { offset: number; length: number }[] {
     const ranges = this.#offset === 0 ? [] : [{ offset: 0, length: this.#offset }]
     for (const [offset, bytes] of [...this.#buffers].sort(([a], [b]) => a - b)) {
@@ -166,7 +171,8 @@ export class SegmentedTextRead implements ResourceTextRead {
           const text = this.#decode(buffered)
           this.#buffers.delete(this.#offset)
           this.#offset += buffered.length
-          yield { kind: 'chunk', text, bytesRead: this.#offset }
+          const blocks = this.#blocks(text)
+          yield { kind: 'chunk', text, blocks, bytesRead: this.#offset }
           continue
         }
         const result = await Promise.race(pending.values())
@@ -178,7 +184,8 @@ export class SegmentedTextRead implements ResourceTextRead {
       if (!this.#decoded) {
         const text = this.#decode()
         this.#decoded = true
-        yield { kind: 'chunk', text, bytesRead: this.#offset }
+        const blocks = this.#blocks(text)
+        yield { kind: 'chunk', text, blocks, bytesRead: this.#offset }
       }
       const result = await this.#request(s => this.gateway.finishTextRead({ ...request, readVersion: plan.readVersion }, s), signal)
       signal.throwIfAborted()

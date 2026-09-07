@@ -1,3 +1,4 @@
+import { TextDocumentSnapshot, type TextBlock, type TextChange, type TextBlockPolicy, defaultTextBlockPolicy } from './text-document.ts'
 import { applyTextPatches, TextPatchError } from '@dsh-external/dsh-user-files/text-patch'
 import type { UserFileDeltaResult, UserFileTextPatch } from '@dsh-external/dsh-user-files/types'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -28,6 +29,7 @@ export interface FileViewerLocation {
 /** Canonical source text and its opaque revision. */
 export interface FileViewerLoadedText {
   readonly text: string
+  readonly document?: TextDocumentSnapshot
   /** Expected canonical SHA-256, verified before this observation becomes usable. */
   readonly canonicalHash?: string
   readonly sizeBytes?: number
@@ -40,7 +42,7 @@ export interface FileViewerLoadedText {
 export type FileViewerTextStreamEvent =
   | { readonly kind: 'start'; readonly sizeBytes: number; readonly resume?: boolean; readonly bytesRead?: number; readonly title?: string; readonly location?: FileViewerLocation }
   | { readonly kind: 'progress'; readonly receivedRanges: readonly FileViewerReceivedRange[] }
-  | { readonly kind: 'chunk'; readonly text: string; readonly bytesRead: number }
+  | { readonly kind: 'chunk'; readonly text: string; readonly blocks?: readonly TextBlock[]; readonly bytesRead: number }
   | { readonly kind: 'complete'; readonly version: unknown; readonly sizeBytes: number; readonly canonicalHash?: string }
 
 /** Verified received byte interval; gaps have no downloaded content. */
@@ -71,9 +73,9 @@ export interface FileViewerWatchContext {
   sizeBytes(): number | undefined
 }
 
-/** Exact editor transactions for an already validated remote update. */
+/** Exact shared-document transactions in the preceding snapshot. */
 export interface FileViewerTextUpdate {
-  readonly previousText: string
+  readonly previousDocument: TextDocumentSnapshot
   readonly changes: readonly { readonly from: number; readonly to: number; readonly insert: string }[]
 }
 
@@ -206,7 +208,14 @@ export type FileViewerInstanceSnapshot =
   | (CommonSnapshot & { readonly status: 'loading' | 'failed' | 'confirmation-required' })
   | (CommonSnapshot & {
     readonly status: 'ready'
+    readonly document: TextDocumentSnapshot
+    readonly baseDocument: TextDocumentSnapshot
+    readonly sourceDocument?: TextDocumentSnapshot
+    readonly localChecked?: boolean
+    readonly localEqualsBase?: boolean
+    /** Explicit full-text projection; nonenumerable so metadata copies cannot materialize it. */
     readonly text: string
+    /** Standard SHA-256 when known; dirty multi-block checks do not synthesize it. */
     readonly localHash?: string
     readonly baseText: string
     readonly baseHash: string
@@ -260,9 +269,9 @@ type AutomationPauseReason = 'conflict' | 'failure' | 'confirmation'
 
 interface InstanceRecord {
   localHashTimer?: ReturnType<typeof setTimeout> | undefined
-  pendingLocalHash?: { generation: number; text: string; notBefore: number } | undefined
-  localHashWork?: { text: string; promise: Promise<string> } | undefined
-  textRead?: { source: FileViewerSource; reader: FileViewerTextRead | undefined; text: string; bytesRead: number; streamId: number; flush?: (() => void) | undefined } | undefined
+  pendingLocalHash?: { generation: number; document: TextDocumentSnapshot; notBefore: number } | undefined
+  localHashWork?: { document: TextDocumentSnapshot; promise: Promise<void> } | undefined
+  textRead?: { source: FileViewerSource; reader: FileViewerTextRead | undefined; blocks: TextBlock[]; text: string; bytesRead: number; streamId: number; flush?: (() => void) | undefined } | undefined
 
   allowLargeFile: boolean
   allowHugeFile: boolean
@@ -290,6 +299,7 @@ export interface FileViewerServiceOptions {
   readonly storage?: FileViewerBrowserStorage
   readonly automationDebounceMs?: number
   readonly largeEditCheckDelayMs?: number
+  readonly textBlockPolicy?: TextBlockPolicy
   readonly progressiveFlushIntervalMs?: number
   readonly persistenceDebounceMs?: number
   readonly globalAutomationDefaults?: Partial<FileViewerAutomationPreferences>
@@ -326,7 +336,7 @@ export async function hashFileViewerText(text: string): Promise<string> {
 
 /** True when local content differs from the common base. */
 export function isFileViewerDirty(snapshot: FileViewerInstanceSnapshot): boolean {
-  return snapshot.status === 'ready' && (snapshot.localHash === undefined || snapshot.localHash !== snapshot.baseHash)
+  return snapshot.status === 'ready' && (snapshot.localHash === undefined ? snapshot.localEqualsBase !== true : snapshot.localHash !== snapshot.baseHash)
 }
 
 function errorMessage(error: unknown): string | undefined {
@@ -385,9 +395,10 @@ function defaultBrowserStorage(): FileViewerBrowserStorage | undefined {
   }
 }
 
-function replaceBase(snapshot: ReadySnapshot, text: string, hash: string, version: unknown): ReadySnapshot {
+function replaceBase(snapshot: ReadySnapshot, text: string, hash: string, version: unknown, document?: TextDocumentSnapshot): ReadySnapshot {
   const { baseVersion: _baseVersion, ...rest } = snapshot
-  return { ...rest, baseText: text, baseHash: hash, ...(version === undefined ? {} : { baseVersion: version }) }
+  const baseDocument = document ?? (snapshot.localHash === hash ? snapshot.document : snapshot.latestSourceHash === hash && snapshot.sourceDocument !== undefined ? snapshot.sourceDocument : snapshot.baseHash === hash ? snapshot.baseDocument : TextDocumentSnapshot.fromText(text, snapshot.document.policy))
+  return { ...rest, baseText: text, baseDocument, baseHash: hash, ...(version === undefined ? {} : { baseVersion: version }) }
 }
 
 function replaceLatestSource(snapshot: ReadySnapshot, loaded: FileViewerLoadedText, hash: string): ReadySnapshot {
@@ -401,36 +412,36 @@ function replaceLatestSource(snapshot: ReadySnapshot, loaded: FileViewerLoadedTe
   return {
     ...rest,
     latestSourceText: loaded.text,
+    sourceDocument: loaded.document ?? (snapshot.latestSourceHash === hash && snapshot.sourceDocument !== undefined ? snapshot.sourceDocument : snapshot.localHash === hash ? snapshot.document : snapshot.baseHash === hash ? snapshot.baseDocument : TextDocumentSnapshot.fromText(loaded.text, snapshot.document.policy)),
     latestSourceHash: hash,
     ...(loaded.version === undefined ? {} : { latestSourceVersion: loaded.version }),
     ...(loaded.location === undefined ? {} : { location: loaded.location }),
   }
 }
 
-function replaceLocalTextWithoutHash(snapshot: ReadySnapshot, text: string): ReadySnapshot {
-  const { localHash: _localHash, ...rest } = snapshot
-  return { ...rest, text }
-}
-
 function deriveSync(snapshot: ReadySnapshot): ReadySnapshot {
   const localHash = snapshot.localHash
-  const latestSourceHash = snapshot.latestSourceHash
-  if (localHash === undefined || latestSourceHash === undefined || snapshot.sourceStale) {
+  const sourceHash = snapshot.latestSourceHash
+  if ((localHash === undefined && !snapshot.localChecked) || sourceHash === undefined || snapshot.sourceStale) {
     return { ...snapshot, syncStatus: 'unknown' }
   }
-  let next = snapshot
-  if (next.latestSourceHash === next.baseHash) {
-    next = replaceBase(next, next.latestSourceText ?? next.baseText, next.baseHash, next.latestSourceVersion)
+  const equalsBase = localHash === undefined ? snapshot.document.equals(snapshot.baseDocument) : localHash === snapshot.baseHash
+  const equalsSource = localHash === undefined ? snapshot.sourceDocument !== undefined && snapshot.document.equals(snapshot.sourceDocument) : localHash === sourceHash
+  let next = { ...snapshot, localEqualsBase: equalsBase }
+  if (sourceHash === snapshot.baseHash) next = { ...next, baseDocument: snapshot.sourceDocument ?? snapshot.baseDocument, baseVersion: snapshot.latestSourceVersion }
+  if (equalsSource) {
+    return { ...replaceBase(next, snapshot.latestSourceText!, sourceHash, snapshot.latestSourceVersion), localHash: sourceHash,
+      localEqualsBase: true, syncStatus: 'synced' }
   }
-  if (localHash === latestSourceHash) {
-    return {
-      ...replaceBase(next, next.latestSourceText ?? next.text, localHash, next.latestSourceVersion),
-      syncStatus: 'synced',
-    }
-  }
-  if (localHash === next.baseHash) return { ...next, syncStatus: 'source-ahead' }
-  if (latestSourceHash === next.baseHash) return { ...next, syncStatus: 'local-ahead' }
-  return { ...next, syncStatus: 'diverged' }
+  if (equalsBase) return { ...next, localHash: snapshot.baseHash, syncStatus: 'source-ahead' }
+  return { ...next, syncStatus: sourceHash === snapshot.baseHash ? 'local-ahead' : 'diverged' }
+}
+
+/** Full-text compatibility is deliberately nonenumerable: metadata copies cannot materialize Local. */
+function exposeText(snapshot: FileViewerInstanceSnapshot): FileViewerInstanceSnapshot {
+  if (snapshot.status !== 'ready') return snapshot
+  Object.defineProperty(snapshot, 'text', { configurable: true, enumerable: false, get: () => snapshot.document.toString() })
+  return snapshot
 }
 
 function patchOffsets(text: string, ranges: readonly UserFileTextPatch[]): FileViewerTextUpdate['changes'] {
@@ -454,6 +465,7 @@ export class FileViewerService {
   private readonly persistenceDebounceMs: number
   private readonly confirmDiscard: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
   private readonly hashText: (text: string) => Promise<string>
+  private readonly textBlockPolicy: TextBlockPolicy
   private readonly largeFileBytes: number | undefined
   private readonly hugeFileBytes: number | undefined
   private globalAutomation: FileViewerAutomationPreferences
@@ -469,6 +481,7 @@ export class FileViewerService {
     this.persistenceDebounceMs = options.persistenceDebounceMs ?? 700
     this.confirmDiscard = options.confirmDiscard ?? (() => false)
     this.hashText = options.hashText ?? hashFileViewerText
+    this.textBlockPolicy = options.textBlockPolicy ?? defaultTextBlockPolicy
     this.largeFileBytes = options.largeFileBytes
     this.hugeFileBytes = options.hugeFileBytes
     this.globalAutomation = this.readGlobalAutomation(options.globalAutomationDefaults)
@@ -558,6 +571,8 @@ export class FileViewerService {
       draftTimer: undefined,
       persistedDraft: undefined,
     }
+    let published = record.snapshot
+    Object.defineProperty(record, 'snapshot', { get: () => published, set: (value: FileViewerInstanceSnapshot) => { published = exposeText(value) } })
     if (sizeBytes !== undefined) record.snapshot = { ...record.snapshot, sizeBytes }
     this.instances.set(instanceId, record)
     this.refs.set(keyOf(ref), instanceId)
@@ -587,19 +602,32 @@ export class FileViewerService {
     return () => { listeners.delete(listener) }
   }
 
-  /** Replace local text and schedule enabled automation after its exact hash resolves. */
+  /** @param instanceId Shared document. @param text Complete text at an explicit replacement API. */
   edit(instanceId: string, text: string): void {
+    const value = this.record(instanceId).snapshot
+    if (value.status !== 'ready') return
+    this.editChanges(instanceId, [{ from: 0, to: value.document.length, insert: text }])
+  }
+
+  /** @param instanceId Shared document. @param changes CodeMirror ranges in the preceding document's UTF-16 coordinates. */
+  editChanges(instanceId: string, changes: readonly TextChange[]): void {
     const record = this.record(instanceId)
-    if (record.snapshot.status !== 'ready') return
-    record.editGeneration += 1
+    if (record.snapshot.status !== 'ready' || changes.length === 0) return
+    const previousDocument = record.snapshot.document
+    const document = previousDocument.edit(changes)
+    record.editGeneration++
     const generation = ++record.hashGeneration
-    record.snapshot = deriveSync(replaceLocalTextWithoutHash(record.snapshot, text))
+    const { localHash: _hash, ...retained } = record.snapshot
+    record.snapshot = { ...retained, document, localChecked: false, localEqualsBase: false,
+      syncStatus: 'unknown', textUpdate: { previousDocument, changes } }
     this.scheduleDraftPersistence(record)
     this.notify(record)
-    if (record.snapshot.sizeTier !== 'normal' || (this.largeFileBytes !== undefined && text.length > this.largeFileBytes)) {
-      record.pendingLocalHash = { generation, text, notBefore: performance.now() + this.largeEditCheckDelayMs }
-      this.scheduleLocalHash(record)
-    } else this.hashLocalText(instanceId, record, generation, text)
+    const delayed = record.snapshot.sizeTier !== 'normal' || (this.largeFileBytes !== undefined && document.byteLength > this.largeFileBytes)
+    record.pendingLocalHash = { generation, document, notBefore: performance.now() + (delayed ? this.largeEditCheckDelayMs : 0) }
+    if (!delayed && record.localHashWork === undefined) {
+      record.pendingLocalHash = undefined
+      this.hashLocalText(instanceId, record, generation, document)
+    } else this.scheduleLocalHash(record)
   }
 
   /** Save local text only through a conditional source write. */
@@ -795,13 +823,14 @@ export class FileViewerService {
     this.sources.clear()
   }
 
-  private hashLocalText(instanceId: string, record: InstanceRecord, generation: number, text: string): void {
-    const work = { text, promise: this.hashText(text) }
+  private hashLocalText(instanceId: string, record: InstanceRecord, generation: number, document: TextDocumentSnapshot): void {
+    const work = { document, promise: document.check(this.hashText) }
     record.localHashWork = work
     void work.promise.then(
-      hash => {
+      () => {
         if (!this.hashCurrent(instanceId, record, generation)) return
-        let next = deriveSync({ ...record.snapshot, localHash: hash })
+        const hash = document.blocks.length === 1 ? document.blocks[0]!.hash : undefined
+        let next = deriveSync({ ...record.snapshot, localChecked: true, ...(hash === undefined ? {} : { localHash: hash }) })
         next = this.reconcilePause(record, next)
         record.snapshot = next
         this.scheduleDraftPersistence(record)
@@ -837,12 +866,17 @@ export class FileViewerService {
     record.localHashTimer = undefined
     const pending = record.pendingLocalHash
     if (pending === undefined || record.localHashWork !== undefined) return
+    if (pending.notBefore <= performance.now()) {
+      record.pendingLocalHash = undefined
+      if (this.hashCurrent(record.snapshot.instanceId, record, pending.generation)) this.hashLocalText(record.snapshot.instanceId, record, pending.generation, pending.document)
+      return
+    }
     record.localHashTimer = setTimeout(() => {
       record.localHashTimer = undefined
       if (record.pendingLocalHash !== pending) return
       record.pendingLocalHash = undefined
       if (this.hashCurrent(record.snapshot.instanceId, record, pending.generation)) {
-        this.hashLocalText(record.snapshot.instanceId, record, pending.generation, pending.text)
+        this.hashLocalText(record.snapshot.instanceId, record, pending.generation, pending.document)
       }
     }, Math.max(0, pending.notBefore - performance.now()))
   }
@@ -878,7 +912,7 @@ export class FileViewerService {
         const text = delta.kind === 'patch' ? await applyTextPatches(previous.latestSourceText, delta.ranges, this.hashText) : previous.latestSourceText
         verifiedHash = delta.kind === 'unchanged' ? previous.latestSourceHash : await this.hashText(text)
         if (verifiedHash !== delta.canonicalHash) throw new Error('file-viewer: source delta hash mismatch')
-        loaded = { text, version: delta.version, sizeBytes: delta.sizeBytes }
+        loaded = { text, document: delta.kind === 'patch' ? previous.sourceDocument!.edit(patchOffsets(previous.latestSourceText, delta.ranges)) : previous.sourceDocument!, version: delta.version, sizeBytes: delta.sizeBytes }
       } else loaded = source.createTextRead !== undefined || (mode === 'initial' && record.allowLargeFile && source.stream !== undefined)
         ? await this.readStream(record, source, operation)
         : await source.load(record.snapshot.ref, operation.controller.signal, this.textAccess(record))
@@ -942,6 +976,10 @@ export class FileViewerService {
         restored = { ...persisted, baseHash, localHash }
       }
       if (loaded.canonicalHash !== undefined && hash !== loaded.canonicalHash) throw new Error('file-viewer: completed source hash mismatch')
+      const document = loaded.document ?? TextDocumentSnapshot.fromText(loaded.text, this.textBlockPolicy)
+      if (document.blocks.length === 1) document.blocks[0]!.hash = hash
+      else await document.check(this.hashText)
+      loaded = { ...loaded, document }
     } catch (error: unknown) {
       if (!this.complete(record.read, operation)) return undefined
       this.releaseTextRead(record)
@@ -960,7 +998,7 @@ export class FileViewerService {
   private async readStream(record: InstanceRecord, source: FileViewerSource, operation: ActiveOperation): Promise<FileViewerLoadedText> {
     const signal = operation.controller.signal
     if (record.textRead?.source !== source || source.createTextRead === undefined) this.releaseTextRead(record)
-    const state = record.textRead ??= { source, reader: source.createTextRead?.(record.snapshot.ref), text: '', bytesRead: 0, streamId: operation.generation }
+    const state = record.textRead ??= { source, reader: source.createTextRead?.(record.snapshot.ref), blocks: [], text: '', bytesRead: 0, streamId: operation.generation }
     const preview = record.snapshot.status !== 'ready'
     let metadata: Extract<FileViewerTextStreamEvent, { kind: 'start' }> | undefined
     let completed: Extract<FileViewerTextStreamEvent, { kind: 'complete' }> | undefined
@@ -988,7 +1026,7 @@ export class FileViewerService {
         if (event.kind === 'start') {
           if (metadata !== undefined) throw new Error('file-viewer: duplicate text stream start')
           metadata = event
-          if (!event.resume) { state.text = ''; state.bytesRead = 0; state.streamId = operation.generation; first = true }
+          if (!event.resume) { state.blocks = []; state.text = ''; state.bytesRead = 0; state.streamId = operation.generation; first = true }
           if ((event.bytesRead ?? 0) !== state.bytesRead) throw new Error('file-viewer: inconsistent resumed prefix')
           this.observeSize(record, event.sizeBytes)
           flush()
@@ -1002,6 +1040,7 @@ export class FileViewerService {
           if (metadata === undefined || event.bytesRead < state.bytesRead || event.bytesRead > metadata.sizeBytes) throw new Error('file-viewer: invalid text stream progress')
           state.bytesRead = event.bytesRead
           state.text += event.text
+          state.blocks.push(...(event.blocks ?? TextDocumentSnapshot.fromText(event.text, this.textBlockPolicy).blocks))
           if (first && event.text !== '') { first = false; flush() }
           else if (!first) timer ??= setTimeout(flush, this.progressiveFlushIntervalMs)
         } else {
@@ -1012,7 +1051,7 @@ export class FileViewerService {
       signal.throwIfAborted()
       if (metadata === undefined || completed === undefined) throw new Error('file-viewer: text stream ended before completion')
       flush()
-      return { text: state.text, sizeBytes: completed.sizeBytes, version: completed.version,
+      return { text: state.text, document: TextDocumentSnapshot.fromBlocks(state.blocks, this.textBlockPolicy), sizeBytes: completed.sizeBytes, version: completed.version,
         ...(completed.canonicalHash === undefined ? {} : { canonicalHash: completed.canonicalHash }),
         ...(metadata.title === undefined ? {} : { title: metadata.title }),
         ...(metadata.location === undefined ? {} : { location: metadata.location }) }
@@ -1071,7 +1110,11 @@ export class FileViewerService {
     const { manualUpdateRequired: _manual, ...previous } = record.snapshot as FileViewerInstanceSnapshot & { manualUpdateRequired?: string }
     let next: ReadySnapshot
     if (previous.status !== 'ready') {
+      const document = restored === undefined ? loaded.document ?? TextDocumentSnapshot.fromText(loaded.text, this.textBlockPolicy) : TextDocumentSnapshot.fromText(restored.localText, this.textBlockPolicy)
+      const baseDocument = restored === undefined || restored.baseText === restored.localText ? document : TextDocumentSnapshot.fromText(restored.baseText, this.textBlockPolicy)
+      const sourceDocument = restored === undefined || restored.localText === loaded.text ? document : TextDocumentSnapshot.fromText(loaded.text, this.textBlockPolicy)
       next = deriveSync({
+        document, baseDocument, sourceDocument,
         ...(previous.sizeBytes === undefined ? {} : { sizeBytes: previous.sizeBytes }),
         sizeTier: previous.sizeTier, largeDefaultsApplied: previous.largeDefaultsApplied, draftPersistence: previous.draftPersistence,
         ...(previous.loadProgress === undefined ? {} : { loadProgress: { ...previous.loadProgress, complete: true } }),
@@ -1116,7 +1159,7 @@ export class FileViewerService {
       }, loaded, hash)
       if (pull) {
         record.hashGeneration += 1
-        next = replaceBase({ ...next, text: loaded.text, localHash: hash }, loaded.text, hash, loaded.version)
+        next = replaceBase({ ...next, document: loaded.document ?? next.sourceDocument!, localHash: hash }, loaded.text, hash, loaded.version)
       }
       next = deriveSync(next)
     }
@@ -1275,7 +1318,7 @@ export class FileViewerService {
     const automatic = current.automation.autoUpdate && record.pauseReason === undefined && record.presented
     let localText: string | undefined
     let localHash: string | undefined
-    const capturedText = current.text
+    const capturedText = current.document.toString()
     if (automatic && current.baseHash === event.baseHash) {
       try {
         localText = capturedText === previous.latestSourceText ? sourceText
@@ -1290,11 +1333,11 @@ export class FileViewerService {
     current = record.snapshot
     const { manualUpdateRequired: _manual, ...retained } = clearFailure(current)
     let next = replaceLatestSource({ ...retained, sourceStale: false, resourceMissing: false },
-      { text: sourceText, version: event.delta.version, sizeBytes: event.delta.sizeBytes }, sourceHash)
-    if (automatic && localText !== undefined && localHash !== undefined && current.text === capturedText) {
+      { text: sourceText, document: previous.sourceDocument!.edit(patchOffsets(previous.latestSourceText, event.delta.ranges)), version: event.delta.version, sizeBytes: event.delta.sizeBytes }, sourceHash)
+    if (automatic && localText !== undefined && localHash !== undefined && current.document.toString() === capturedText) {
       record.hashGeneration++
-      next = replaceBase({ ...next, text: localText, localHash,
-        textUpdate: { previousText: capturedText, changes: patchOffsets(capturedText, event.delta.ranges) },
+      next = replaceBase({ ...next, document: current.document.edit(patchOffsets(capturedText, event.delta.ranges)), localHash,
+        textUpdate: { previousDocument: current.document, changes: patchOffsets(capturedText, event.delta.ranges) },
         ...(localHash === sourceHash ? { lastSyncedAt: Date.now() } : {}) }, sourceText, sourceHash, event.delta.version)
       record.pauseReason = undefined
     } else if (automatic) {
@@ -1341,18 +1384,18 @@ export class FileViewerService {
       this.publishSaveBlock(record, { code: 'save-conflict', message: 'source changed since the local base was observed' })
       return
     }
-    if (!overwrite && (!isFileViewerDirty(value) || value.text === value.baseText)) return
-    if (overwrite && !value.sourceStale && value.text === value.latestSourceText) return
+    if (!overwrite && (!isFileViewerDirty(value) || value.document.toString() === value.baseText)) return
+    if (overwrite && !value.sourceStale && value.document.toString() === value.latestSourceText) return
 
     const operation = this.begin(record.save, 'saving')
     this.clearTimer(record, 'autoSave')
     this.notify(record)
     this.clearLocalHash(record)
-    const savedText = value.text
+    const savedText = value.document.toString()
     let savedHash = value.localHash
     if (savedHash === undefined) {
       try {
-        savedHash = await (record.localHashWork?.text === savedText ? record.localHashWork.promise : this.hashText(savedText))
+        savedHash = await this.hashText(savedText)
       } catch (error: unknown) {
         if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
         record.pauseReason = 'failure'
@@ -1390,8 +1433,8 @@ export class FileViewerService {
       if ('canonicalHash' in saved && saved.canonicalHash !== savedHash) {
         const retained = clearFailure(record.snapshot)
         record.pauseReason = 'failure'
-        record.snapshot = replaceBase({ ...retained, ...(retained.text === savedText ? { localHash: savedHash } : {}), resourceMissing: false, sourceStale: true,
-          syncStatus: 'unknown', savedWithOtherChanges: true, automationPaused: true }, savedText, savedHash, saved.version)
+        record.snapshot = replaceBase({ ...retained, ...(retained.document.toString() === savedText ? { localHash: savedHash } : {}), resourceMissing: false, sourceStale: true,
+          syncStatus: 'unknown', savedWithOtherChanges: true, automationPaused: true }, savedText, savedHash, saved.version, value.document)
         this.clearAutomationTimers(record)
         this.scheduleDraftPersistence(record)
         this.notify(record)
@@ -1401,13 +1444,13 @@ export class FileViewerService {
       const { manualUpdateRequired: _manual, ...savedSnapshot } = clearFailure(record.snapshot)
       let next = replaceLatestSource({
         ...savedSnapshot,
-        ...(savedSnapshot.text === savedText ? { localHash: savedHash } : {}),
+        ...(savedSnapshot.document.toString() === savedText ? { localHash: savedHash } : {}),
         savedWithOtherChanges: false,
         lastSyncedAt: Date.now(),
         resourceMissing: false,
         sourceStale: false,
-      }, { text: savedText, version: saved.version }, savedHash)
-      next = replaceBase(next, savedText, savedHash, saved.version)
+      }, { text: savedText, document: value.document, version: saved.version }, savedHash)
+      next = replaceBase(next, savedText, savedHash, saved.version, value.document)
       next = this.reconcilePause(record, deriveSync(next))
       record.snapshot = next
       this.scheduleDraftPersistence(record)
@@ -1447,7 +1490,7 @@ export class FileViewerService {
     record.pauseReason = undefined
     let next = replaceBase({
       ...clearFailure(value),
-      text: value.latestSourceText,
+      document: value.sourceDocument!,
       localHash: value.latestSourceHash,
       syncStatus: 'synced',
       lastSyncedAt: Date.now(),
@@ -1504,7 +1547,7 @@ export class FileViewerService {
     if (this.storage === undefined || record.snapshot.status !== 'ready' || !record.snapshot.draftPersistence) return
     const written = {
       baseText: record.snapshot.baseText,
-      localText: record.snapshot.text,
+      localText: record.snapshot.document.toString(),
       automation: record.snapshot.automation,
     }
     const value: PersistedDraft = { format: DRAFT_FORMAT_VERSION, ...written }
@@ -1574,7 +1617,7 @@ export class FileViewerService {
 
   private canAutoSave(value: ReadySnapshot): boolean {
     return value.automation.autoSave && value.conditionalSaveSupported && !value.automationPaused
-      && !value.sourceStale && value.syncStatus === 'local-ahead' && value.localHash !== undefined
+      && !value.sourceStale && value.syncStatus === 'local-ahead'
       && value.latestSourceHash === value.baseHash
   }
 

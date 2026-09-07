@@ -60,7 +60,7 @@ it('timestamps actual loads, pulls and equal-hash saves, preserving edits made d
   service.edit(id, 'c'); await Promise.resolve()
   await watch({ kind: 'manual-required', reason: 'too-large' })
   const saving = service.save(id)
-  service.edit(id, 'd'); await Promise.resolve()
+  service.edit(id, 'd'); await vi.advanceTimersByTimeAsync(0)
   vi.setSystemTime(3000); finish({ canonicalHash: 'c', version: 3 }); await saving
   expect(service.snapshot(id)).toMatchObject({ text: 'd', baseText: 'c', latestSourceText: 'c', syncStatus: 'local-ahead', lastSyncedAt: 3000 })
   expect(service.snapshot(id)).not.toHaveProperty('manualUpdateRequired')
