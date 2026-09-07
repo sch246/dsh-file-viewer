@@ -19,7 +19,7 @@ export type FileViewerLocaleKey =
   | 'handlerLoading'
   | 'globalAutoUpdate' | 'globalAutoSave'
   | 'syncedJustNow' | 'syncedSecondsAgo' | 'syncedMinutesAgo' | 'syncedHoursAgo' | 'syncedDaysAgo' | 'savedOtherChanges'
-  | 'incompleteFile' | 'stopLoading' | 'retryLoading'
+  | 'incompleteFile' | 'loadInterrupted' | 'stopLoading' | 'retryLoading'
   | 'imageDecodeFailed'
   | 'confirmHandlerSwitch'
   | 'lineNumbers' | 'defaultLineNumbers' | 'synchronization'
@@ -42,6 +42,7 @@ export const en: Record<FileViewerLocaleKey, string> = {
   syncedDaysAgo: 'Synced {days}d ago',
   savedOtherChanges: 'Your changes were saved. The source also contains other changes; refresh to view them. Automatic synchronization is paused.',
   incompleteFile: 'Incomplete file — read-only. Editing becomes available after loading finishes.',
+  loadInterrupted: 'Loading interrupted. Partial content is read-only; retry loading to complete the file.',
   stopLoading: 'Stop loading',
   retryLoading: 'Retry loading',
   hugeFilePrompt: 'This file is very large. Loading it may use much more browser memory than the file size and make the page unresponsive. Continue to load the complete file.',
@@ -126,6 +127,7 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   syncedDaysAgo: '同步于{days}天前',
   savedOtherChanges: '你的修改已保存，源文件还包含其他变化。可更新查看；自动同步已暂停。',
   incompleteFile: '文件尚未加载完整，当前只读。加载完成后可编辑。',
+  loadInterrupted: '加载已中断。已加载的部分内容只读，请重新加载以获取完整文件。',
   stopLoading: '停止加载',
   retryLoading: '重新加载',
   hugeFilePrompt: '此文件很大。加载后的浏览器内存占用可能远超文件大小，并可能导致页面无响应。继续后将加载完整文件。',

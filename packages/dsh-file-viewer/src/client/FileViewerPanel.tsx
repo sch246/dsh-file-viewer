@@ -316,8 +316,9 @@ function ReadyPanel({
   return (
     <section className="dsh-file-viewer-root" onKeyDown={onKeyDown}>
       <LoadProgress state={state} label={t('loading')} />
-      {state.status === 'partial' && <div className="dsh-file-viewer-notice" role="status">
-        {t('incompleteFile')}
+      {state.status === 'partial' && <div className={state.failure === undefined ? 'dsh-file-viewer-notice' : 'dsh-file-viewer-failure'}
+        role={state.failure === undefined ? 'status' : 'alert'}>
+        {t(state.failure === undefined ? 'incompleteFile' : 'loadInterrupted')}
         {state.operation !== 'idle'
           ? <button type="button" onClick={cancelLoad}>{t('stopLoading')}</button>
           : <button type="button" onClick={refresh}>{t('retryLoading')}</button>}

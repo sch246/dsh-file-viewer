@@ -12,6 +12,7 @@ import { createResourceWorkbenchClientService } from '../src/client/face.ts'
 import { createTextResourceView } from '../src/client/text-handler.tsx'
 import { FilesystemResourceSource, type FilesystemSourceGateway } from '../src/client/filesystem-source.ts'
 import { en } from '../src/client/locales.ts'
+import { FILE_VIEWER_CSS } from '../src/client/styles.ts'
 
 const runtimes: ResourceWorkbenchRuntime[] = []
 beforeEach(() => { vi.stubGlobal('crypto', webcrypto) })
@@ -342,7 +343,8 @@ it('shows the first stream chunk immediately, coalesces appends, and only enable
   let loading!: Promise<void>
   await act(async () => { loading = f.service.confirmTextLoad(view); await vi.advanceTimersByTimeAsync(0) })
   expect(f.service.textSnapshot(view)).toMatchObject({ status: 'partial', text: 'first' })
-  expect(screen.getByText(en.incompleteFile)).toBeTruthy()
+  expect(screen.getByText(en.incompleteFile).getAttribute('role')).toBe('status')
+  expect(screen.queryByRole('alert')).toBeNull()
   expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50')
   expect(f.createEditor).toHaveBeenCalledTimes(1)
   expect(f.createEditor.mock.calls[0]![0]).toMatchObject({ readOnly: true })
@@ -391,12 +393,23 @@ it('keeps stopped or failed partial text read-only, retries from the start and p
   expect(stream.mock.calls[0]![2].aborted).toBe(true)
   expect(f.service.textSnapshot(view)).toMatchObject({ status: 'partial', text: 'first', operation: 'idle' })
   expect(screen.getByRole('button', { name: en.retryLoading })).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
   await act(async () => { end.resolve(); await loading; await f.service.refreshText(view) })
   expect(f.service.textSnapshot(view)).toMatchObject({ status: 'partial', text: 'first', failure: { code: 'load-failed' } })
+  render(<style>{FILE_VIEWER_CSS}</style>)
+  const failure = screen.getByRole('alert')
+  expect(failure.textContent).toContain(en.loadInterrupted)
+  expect(getComputedStyle(failure).color).toBe('var(--dsw-alias-state-error-primary)')
+  expect(getComputedStyle(screen.getByText('connection lost')).color).toBe('var(--dsw-alias-state-error-primary)')
+  expect(screen.getByRole('button', { name: en.retryLoading })).toBeTruthy()
+  expect(screen.getByText('first')).toBeTruthy()
+  expect(f.createEditor.mock.results[0]!.value.setReadOnly).not.toHaveBeenCalledWith(false)
   f.runtime.flushDrafts()
   expect(f.storage.setItem).not.toHaveBeenCalled()
   expect(f.storage.removeItem).not.toHaveBeenCalled()
   await act(async () => { await f.service.refreshText(view) })
   expect(f.service.textSnapshot(view)).toMatchObject({ status: 'ready', text: 'saved edits', latestSourceText: 'first last' })
+  expect(screen.queryByText(en.loadInterrupted)).toBeNull()
+  expect(screen.queryByText('connection lost')).toBeNull()
   expect(f.gateway.patchText).not.toHaveBeenCalled()
 })

@@ -13,7 +13,7 @@ export const FILE_VIEWER_CSS = `
 .dsh-file-viewer-progress{position:absolute;top:0;left:0;right:0;height:3px;z-index:25;pointer-events:none;border-radius:0}
 .dsh-file-viewer-progress>div{height:100%;background:#000;border-radius:0}
 .dsh-file-viewer-progress.is-complete{animation:dsh-file-progress-fade .5s .2s forwards}
-.dsh-file-viewer-notice button{margin-left:8px}
+.dsh-file-viewer-notice button,.dsh-file-viewer-failure button{margin-left:8px}
 .dsh-file-viewer-root{position:relative;display:flex;flex-direction:column;height:100%;min-height:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1)}
 .dsh-file-viewer-float{position:absolute;top:5px;right:8px;z-index:20;display:flex;flex-direction:column;align-items:flex-end;max-width:calc(100% - 16px);pointer-events:none}
 .dsh-file-viewer-float button,.dsh-file-viewer-float label{pointer-events:auto}
@@ -39,8 +39,8 @@ export const FILE_VIEWER_CSS = `
 .dsh-file-viewer-load-confirmation{display:flex;flex-direction:column;align-items:flex-start;gap:10px}.dsh-file-viewer-load-confirmation button{border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:inherit;padding:6px 12px;cursor:pointer}
 .dsh-file-viewer-state{padding:16px;color:var(--dsw-alias-label-secondary)}
 .dsh-file-viewer-failure,.dsh-file-viewer-notice{padding:6px 10px;font-size:12px}
-.dsh-file-viewer-failure{color:var(--dsw-alias-state-error-primary)}
-.dsh-file-viewer-failure-detail{display:block;margin-top:2px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.dsh-file-viewer-failure,.dsh-file-viewer-state[role=alert]{color:var(--dsw-alias-state-error-primary)}
+.dsh-file-viewer-failure-detail{display:block;margin-top:2px;overflow-wrap:anywhere}
 .dsh-file-viewer-notice{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2)}
 .dsh-file-viewer-conflict{align-items:flex-start;flex-wrap:wrap;padding:8px 10px;background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 8%,transparent)}
 .dsh-file-viewer-conflict span{flex:1 1 220px;color:var(--dsw-alias-label-secondary);font-size:12px}
