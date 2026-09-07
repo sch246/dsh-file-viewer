@@ -71,7 +71,7 @@ function pathSegments(path: string): readonly { readonly label: string; readonly
   const rest = normalized.slice(root.length).split(separator).filter(Boolean)
   const segments: { label: string; selectionHint: { path: string } }[] = []
   let current = root
-  if (root !== '') segments.push({ label: root, selectionHint: { path: root } })
+  if (root !== '') segments.push({ label: root.replaceAll('\\', '/'), selectionHint: { path: root } })
   for (const part of rest) {
     current = current === '' || current.endsWith(separator) ? `${current}${part}` : `${current}${separator}${part}`
     segments.push({ label: part, selectionHint: { path: current } })

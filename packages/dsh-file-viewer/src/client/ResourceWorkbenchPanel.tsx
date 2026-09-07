@@ -21,16 +21,20 @@ function ResourceLocation({
     return <nav className="dsh-file-viewer-location" aria-label={label}>{service.snapshot(viewId).descriptor.name}</nav>
   }
   const selectable = location.selectable === true || location.selectorId !== undefined
+  const segments = location.segments ?? []
+  const separatorBefore = (index: number) => index > 0 && !segments[index - 1]!.label.endsWith('/') ? '/' : ''
+  const text = [location.label, segments.map((segment, index) => separatorBefore(index) + segment.label).join('')]
+    .filter(value => value !== undefined).join(' ')
   return (
-    <nav className="dsh-file-viewer-location" aria-label={label}>
+    <nav className="dsh-file-viewer-location" aria-label={label} title={text}>
       {location.label !== undefined && (
         selectable
           ? <button type="button" onClick={() => { void service.selectLocation(viewId) }}>{location.label}</button>
           : <span title={location.label}>{location.label}</span>
       )}
-      {location.segments?.map((segment, index) => (
+      {segments.map((segment, index) => (
         <span className="dsh-file-viewer-location-segment" key={`${index}:${segment.label}`}>
-          {index > 0 && <span aria-hidden="true">›</span>}
+          {separatorBefore(index)}
           {selectable
             ? <button type="button" onClick={() => { void service.selectLocation(viewId, segment.selectionHint) }}>{segment.label}</button>
             : <span>{segment.label}</span>}

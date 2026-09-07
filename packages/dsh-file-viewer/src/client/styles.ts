@@ -21,10 +21,10 @@ export const FILE_VIEWER_CSS = `
 .dsh-file-viewer-status.is-synced{color:var(--dsw-alias-state-success-primary,#287a4a)}.dsh-file-viewer-status.is-local-ahead{color:var(--dsw-alias-brand-primary)}.dsh-file-viewer-status.is-source-ahead{color:var(--dsw-alias-state-warning-primary,#936600)}.dsh-file-viewer-status.is-diverged,.dsh-file-viewer-status.is-error{color:var(--dsw-alias-state-error-primary)}
 .dsh-file-viewer-warning{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:#d97706;color:#fff;font-size:10px;font-weight:700;line-height:1;flex:none;cursor:help}
 .dsh-file-viewer-activity{white-space:nowrap}.dsh-file-viewer-pending-dots{display:inline-block;width:3ch;text-align:left}
-.dsh-file-viewer-action-group,.dsh-file-viewer-location,.dsh-file-viewer-conflict{display:flex;align-items:center;gap:6px}
-.dsh-file-viewer-location{min-width:0;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:nowrap}
-.dsh-file-viewer-location>span,.dsh-file-viewer-location-segment{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.dsh-file-viewer-location button{border:0;background:transparent;color:inherit;padding:0;text-decoration:underline;cursor:pointer}
+.dsh-file-viewer-action-group,.dsh-file-viewer-conflict{display:flex;align-items:center;gap:6px}
+.dsh-file-viewer-location{display:block;flex:1;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;color:var(--dsw-alias-label-secondary);font-size:12px;white-space:nowrap;user-select:text}
+.dsh-file-viewer-location-segment{display:inline}
+.dsh-file-viewer-location button{display:inline;border:0;background:transparent;color:inherit;padding:0;text-decoration:underline;cursor:pointer;user-select:text}
 .dsh-file-viewer-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding-top:4px;max-width:100%;font-size:12px;pointer-events:auto}
 .dsh-file-viewer-toolbar [hidden]{display:none}
 .dsh-file-viewer-action-group{position:relative;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2)}
