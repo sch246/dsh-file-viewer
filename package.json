@@ -7,11 +7,13 @@
   "scripts": {
     "build": "bash scripts/build-host.sh",
     "typecheck": "bash scripts/typecheck-host.sh",
-    "test": "vitest run packages/dsh-file-viewer/tests packages/dsh-file-viewer-editor/tests",
+    "test": "node node_modules/vitest/vitest.mjs run packages/dsh-file-viewer/tests packages/dsh-file-viewer-editor/tests",
     "setup": "bash scripts/setup-host.sh",
     "uninstall": "bash scripts/uninstall-host.sh",
     "install:local": "node scripts/install-local.mjs",
-    "test:setup": "node --test scripts/profile-peers.test.mjs"
+    "test:setup": "node --test scripts/profile-peers.test.mjs",
+    "inspect": "bash scripts/setup-host.sh --check",
+    "remove": "bash scripts/uninstall-host.sh"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.0-rc",
@@ -45,5 +47,6 @@
     "overrides": {
       "vite": "7.3.6"
     }
-  }
+  },
+  "license": "MIT"
 }

@@ -8,8 +8,7 @@ VIEWER_NAME='@dsh-external/dsh-file-viewer'
 EDITOR_NAME='@dsh-external/dsh-file-viewer-editor'
 CHECKOUT="${DSH_CHECKOUT:?setup: set DSH_CHECKOUT to an explicit Harness checkout}"
 PROFILE="${DSH_PROFILE:?setup: set DSH_PROFILE to an explicit profile name}"
-PROFILE_HOME="${DSH_HOME:-${HOME:?setup: HOME is required when DSH_HOME is unset}}"
-if [ -z "${DSH_HOME:-}" ]; then PROFILE_HOME="$PROFILE_HOME/.dsh"; fi
+PROFILE_HOME="${DSH_HOME:?set DSH_HOME to the selected Harness home}"
 PROFILE_DIR="$PROFILE_HOME/profiles/$PROFILE"
 MODE="${1:---check}"
 
@@ -18,8 +17,12 @@ if [ ! -f "$CHECKOUT/package.json" ] || ! git -C "$CHECKOUT" rev-parse --is-insi
   exit 1
 fi
 
+run_dsh() {
+  (cd "$CHECKOUT" && DSH_HOME="$PROFILE_HOME" node --import tsx/esm apps/cli/src/bin.ts "$@")
+}
+
 run_plugin() {
-  pnpm --dir "$CHECKOUT" dsh plugin --profile "$PROFILE" "$@"
+  run_dsh plugin --profile "$PROFILE" "$@"
 }
 
 verify_profile_install() {
@@ -41,7 +44,7 @@ NODE
   test "$(realpath "$PROFILE_DIR/node_modules/$VIEWER_NAME")" = "$(realpath "$VIEWER_PACKAGE")"
   test "$(realpath "$PROFILE_DIR/node_modules/$EDITOR_NAME")" = "$(realpath "$EDITOR_PACKAGE")"
   local dump
-  dump="$(pnpm --dir "$CHECKOUT" dsh --profile "$PROFILE" --dump-config)"
+  dump="$(run_dsh --profile "$PROFILE" --dump-config)"
   grep -Fq "$VIEWER_NAME" <<<"$dump"
   grep -Fq "$EDITOR_NAME" <<<"$dump"
 }

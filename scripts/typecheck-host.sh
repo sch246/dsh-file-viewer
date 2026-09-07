@@ -16,6 +16,6 @@ rm -f "$ROOT/harness"
 ln -s "$CHECKOUT" "$ROOT/harness"
 
 cd "$ROOT"
-"$ROOT/node_modules/.bin/tsc" -p packages/dsh-file-viewer/tsconfig.host.json --pretty false --noEmit
-"$ROOT/node_modules/.bin/tsc" -p packages/dsh-file-viewer/tsconfig.client.json --pretty false --noEmit
-"$ROOT/node_modules/.bin/tsc" -p packages/dsh-file-viewer-editor/tsconfig.json --pretty false --noEmit
+node "$ROOT/node_modules/typescript/bin/tsc" -p packages/dsh-file-viewer/tsconfig.host.json --pretty false --noEmit
+node "$ROOT/node_modules/typescript/bin/tsc" -p packages/dsh-file-viewer/tsconfig.client.json --pretty false --noEmit
+node "$ROOT/node_modules/typescript/bin/tsc" -p packages/dsh-file-viewer-editor/tsconfig.json --pretty false --noEmit

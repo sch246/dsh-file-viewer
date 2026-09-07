@@ -1,5 +1,21 @@
 # DeepSeek Harness Resource Workbench
 
+## Workspace operations
+
+The root is a development workspace; installable packages live under `packages/`. Run these root entries with prepared repository-local dependencies. `DSH_CHECKOUT` selects compatible Host source/declarations; profile operations also require explicit `DSH_HOME` and `DSH_PROFILE`.
+
+| Root entry | Direct command from this repository | Effect |
+| --- | --- | --- |
+| `build` | `bash scripts/build-host.sh` | Build owned package artifacts. |
+| `typecheck` | `bash scripts/typecheck-host.sh` | Check owned Host and Client programs. |
+| `setup` | `bash scripts/setup-host.sh` | Inspect by default; append `--install` for installation. |
+| `inspect` | `bash scripts/setup-host.sh --check` | Inspect only. |
+| `remove` | `bash scripts/uninstall-host.sh` | Inspect by default; append `--remove` for removal. |
+
+Build, typecheck and existing tests call installed Node tools directly; they never install dependencies. Tool versions are TypeScript 5.9.3, tsdown 0.22.14 and Vitest 4.1.8, with pnpm 10.17.1 declared for explicit dependency preparation. Use independent dependency directories when reusing existing package contents. Installation and removal retain the existing `dsh plugin` transactions and never restart services. The `uninstall` alias, where present, has the same inspection default as `remove`.
+
+Each repository and package keeps its own version: compatibility means satisfying declared API ranges, not equal version numbers. Optional cooperation does not make another feature a required dependency. Root and distributed package licenses are MIT, with their copyright notices retained.
+
 ## Summary
 
 This repository adds generic resource opening to the DeepSeek Harness Web right-sidebar workbench. Client plugins register sources and lazy handlers through `ctx.resourceWorkbench`; text, bytes and source metadata remain separate capabilities. The built-in text editor keeps exact Base, Local and Source state, while the image handler reads bytes without decoding them as text. The viewer owns the `filesystem` source over `@dsh-external/dsh-user-files`. Sidebar and that shared authenticated provider are required; manager directory navigation and Links recognition are independent optional features. All filesystem clicks use the Host `openWorkspaceFile` helper and its common opening policy.
@@ -177,8 +193,8 @@ Setup reuses installed shared-provider and sidebar versions satisfying the viewe
 Removal deletes viewer and editor profile dependencies in one operation and retains sidebar and the shared provider for other consumers. It does not change Harness source or restart a service.
 
 ```sh
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run uninstall --check
-DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run uninstall --remove
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run remove --check
+DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run remove --remove
 ```
 
 -----

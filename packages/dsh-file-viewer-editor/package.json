@@ -11,7 +11,7 @@
     "./client": { "types": "./lib/types/client.d.ts", "default": "./lib/client.js" },
     "./package.json": "./package.json"
   },
-  "files": ["lib", "README.md"],
+  "files": ["lib", "README.md", "LICENSE"],
   "scripts": { "build": "bash ../../scripts/build-host.sh" },
   "dsh": { "client": { "platform": "web" } },
   "dependencies": {

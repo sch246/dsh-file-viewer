@@ -5,8 +5,7 @@ VIEWER_NAME='@dsh-external/dsh-file-viewer'
 EDITOR_NAME='@dsh-external/dsh-file-viewer-editor'
 CHECKOUT="${DSH_CHECKOUT:?uninstall: set DSH_CHECKOUT to an explicit Harness checkout}"
 PROFILE="${DSH_PROFILE:?uninstall: set DSH_PROFILE to an explicit profile name}"
-PROFILE_HOME="${DSH_HOME:-${HOME:?uninstall: HOME is required when DSH_HOME is unset}}"
-if [ -z "${DSH_HOME:-}" ]; then PROFILE_HOME="$PROFILE_HOME/.dsh"; fi
+PROFILE_HOME="${DSH_HOME:?set DSH_HOME to the selected Harness home}"
 PROFILE_DIR="$PROFILE_HOME/profiles/$PROFILE"
 MODE="${1:---check}"
 
@@ -29,8 +28,12 @@ console.log(`uninstall: viewer bundle=${(manifest.dsh?.profile?.bundles ?? []).i
 NODE
 }
 
+run_dsh() {
+  (cd "$CHECKOUT" && DSH_HOME="$PROFILE_HOME" node --import tsx/esm apps/cli/src/bin.ts "$@")
+}
+
 run_plugin() {
-  pnpm --dir "$CHECKOUT" dsh plugin --profile "$PROFILE" "$@"
+  run_dsh plugin --profile "$PROFILE" "$@"
 }
 
 verify_profile_removed() {
@@ -75,7 +78,7 @@ NODE
     echo 'uninstall: no Harness source or service was changed; the running Bundle set is unchanged until its next externally managed start'
     ;;
   *)
-    echo 'usage: pnpm run uninstall [--check|--remove]' >&2
+    echo 'usage: pnpm run remove [--check|--remove]' >&2
     exit 2
     ;;
 esac
