@@ -15,6 +15,16 @@ export interface Config {
   hugeResourcePollIntervalMs: number
   resourcePollBackoffMaxMs: number
   maxDeltaBytes: number
+  /** Input idle time before a large document starts its next complete local hash. */
+  largeEditCheckDelayMs: number
+  /** Maximum concurrent unary chunk requests for one open document. */
+  textReadConcurrency: number
+  /** Timeout for each prepared-read request attempt. */
+  textReadTimeoutMs: number
+  /** Additional attempts for transient request failures; zero disables retries. */
+  textReadRetries: number
+  /** Initial exponential retry delay, capped by textReadTimeoutMs. */
+  textReadRetryDelayMs: number
   /** Minimum interval between buffered progressive appends after the first chunk. */
   progressiveFlushIntervalMs: number
   /** File bytes above which background work defaults off for a new document. */
@@ -29,6 +39,11 @@ const fields: z<Config> = z.object({
   hugeResourcePollIntervalMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
   resourcePollBackoffMaxMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(60_000),
   maxDeltaBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(1024 * 1024),
+  largeEditCheckDelayMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(300),
+  textReadConcurrency: z.number().step(1).min(1).max(16).default(3),
+  textReadTimeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(15_000),
+  textReadRetries: z.number().step(1).min(0).max(10).default(3),
+  textReadRetryDelayMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(250),
   progressiveFlushIntervalMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(300),
   largeFileBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(10 * 1024 * 1024),
   hugeFileBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(100 * 1024 * 1024),

@@ -6,7 +6,7 @@ import { hashFileViewerText } from '../src/client/service.ts'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { ResourceWorkbenchPanel } from '../src/client/ResourceWorkbenchPanel.tsx'
 import { formatFileSize } from '../src/client/file-size.ts'
-import type { ResourceTextAccess } from '../src/client/resource.ts'
+import { ResourceConfirmationRequiredError, type ResourceSource, type ResourceTextStreamEvent, type ResourceTextAccess } from '../src/client/resource.ts'
 import { ResourceWorkbenchRuntime, TEXT_RESOURCE_HANDLER_ID, type ResourceViewHost } from '../src/client/workbench.ts'
 import { createResourceWorkbenchClientService } from '../src/client/face.ts'
 import { createTextResourceView } from '../src/client/text-handler.tsx'
@@ -14,11 +14,13 @@ import { FilesystemResourceSource, type FilesystemSourceGateway } from '../src/c
 import { en } from '../src/client/locales.ts'
 import { FILE_VIEWER_CSS } from '../src/client/styles.ts'
 
+type TestStream = (sessionId: import('@deepseek-ai/dsh-session/types').SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess) => AsyncIterable<ResourceTextStreamEvent>
+
 const runtimes: ResourceWorkbenchRuntime[] = []
 beforeEach(() => { vi.stubGlobal('crypto', webcrypto) })
 afterEach(() => { cleanup(); for (const runtime of runtimes.splice(0)) runtime.dispose(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
-function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeFileBytes?: number } = {}, initialSize = initial.length, streamText?: FilesystemSourceGateway['streamText']) {
+function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeFileBytes?: number } = {}, initialSize = initial.length, streamText?: TestStream) {
   const hosted = new Map<string, Parameters<ResourceViewHost['open']>[1]>()
   const host: ResourceViewHost = {
     open: async (_session, input) => { hosted.set(input.id, input); return 'group' },
@@ -41,12 +43,9 @@ function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeF
   const contentRead = vi.fn()
   const gate = (size: number, access?: ResourceTextAccess) => {
     const limit = access?.allowLargeFile ? access.maxConfirmedBytes : Math.min(4, access?.maxConfirmedBytes ?? Infinity)
-    if (limit !== undefined && size > limit) throw {
-      code: 'user-files/confirmation-required',
-      details: { path: '/file.txt', sizeBytes: size, thresholdBytes: limit },
-    }
+    if (limit !== undefined && size > limit) throw new ResourceConfirmationRequiredError(size, limit)
   }
-  const gateway: FilesystemSourceGateway = {
+  const gateway = {
     ...(streamText === undefined ? {} : { streamText }),
     deltaText: vi.fn(async (_session, _path, baseHash, _background, _max, signal, access) => {
       signal.throwIfAborted(); gate(diskSize, access)
@@ -77,7 +76,19 @@ function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeF
     }),
     readBytes: vi.fn(), saveBytes: vi.fn(),
   }
-  const source = new FilesystemResourceSource(gateway, pollPolicy(50))
+  const filesystem = new FilesystemResourceSource(gateway as unknown as FilesystemSourceGateway, pollPolicy(50))
+  // Synthetic byte sizes isolate document policy from the physical-byte transfer protocol.
+  const source: ResourceSource = {
+    id: filesystem.id,
+    readText: async (ref, signal, access) => {
+      const loaded = await gateway.readText(ref.sessionId, ref.resourceId, signal, access)
+      return { text: loaded.text, version: loaded.version, descriptor: { size: loaded.sizeBytes } }
+    },
+    ...(streamText === undefined ? {} : { streamText: (ref, signal, access) => streamText(ref.sessionId, ref.resourceId, signal, access) }),
+    readTextDelta: filesystem.readTextDelta.bind(filesystem),
+    saveTextDelta: filesystem.saveTextDelta.bind(filesystem),
+    watchText: filesystem.watchText.bind(filesystem),
+  }
   const offSource = runtime.registerSource(source)
   runtime.registerHandler({ id: TEXT_RESOURCE_HANDLER_ID, label: 'text', match: () => ({ role: 'default' }), load: async () => ({ View: () => null }) })
   const service = createResourceWorkbenchClientService(runtime)
@@ -327,9 +338,10 @@ function deferred() {
 it('shows the first stream chunk immediately, coalesces appends, and only enables editing after validated completion', async () => {
   vi.useFakeTimers()
   const middle = deferred(), end = deferred()
-  const stream = vi.fn<NonNullable<FilesystemSourceGateway['streamText']>>(async function* () {
+  const stream = vi.fn<NonNullable<TestStream>>(async function* () {
     yield { kind: 'start' as const, path: '/file.txt', sizeBytes: 10 }
     yield { kind: 'chunk' as const, text: 'first', bytesRead: 5 }
+    yield { kind: 'progress', receivedRanges: [{ offset: 0, length: 5 }, { offset: 8, length: 2 }] }
     await middle.promise
     yield { kind: 'chunk' as const, text: ' la', bytesRead: 8 }
     await end.promise
@@ -346,6 +358,7 @@ it('shows the first stream chunk immediately, coalesces appends, and only enable
   expect(screen.getByText(en.incompleteFile).getAttribute('role')).toBe('status')
   expect(screen.queryByRole('alert')).toBeNull()
   expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50')
+  expect([...screen.getByRole('progressbar').children].map(node => [node.style.left, node.style.width])).toEqual([['0%', '50%'], ['80%', '20%']])
   expect(f.createEditor).toHaveBeenCalledTimes(1)
   expect(f.createEditor.mock.calls[0]![0]).toMatchObject({ readOnly: true })
   await act(async () => { middle.resolve(); await vi.advanceTimersByTimeAsync(299) })
@@ -369,11 +382,11 @@ it('shows the first stream chunk immediately, coalesces appends, and only enable
   expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('100')
 })
 
-it('keeps stopped or failed partial text read-only, retries from the start and preserves a saved draft until completion', async () => {
+it('keeps stopped or failed generic stream text read-only, retries from the start and preserves a saved draft until completion', async () => {
   vi.useFakeTimers()
   const end = deferred()
   let attempt = 0
-  const stream = vi.fn<NonNullable<FilesystemSourceGateway['streamText']>>(async function* (_session, _path, signal) {
+  const stream = vi.fn<NonNullable<TestStream>>(async function* (_session, _path, signal) {
     attempt += 1
     yield { kind: 'start' as const, path: '/file.txt', sizeBytes: 10 }
     yield { kind: 'chunk' as const, text: 'first', bytesRead: 5 }

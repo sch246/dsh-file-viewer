@@ -120,6 +120,7 @@ export interface ResourceWorkbenchOptions {
   readonly storage?: FileViewerBrowserStorage
   readonly confirmDiscard?: FileViewerServiceOptions['confirmDiscard']
   readonly automationDebounceMs?: number
+  readonly largeEditCheckDelayMs?: number
   readonly progressiveFlushIntervalMs?: number
   readonly persistenceDebounceMs?: number
   readonly hashText?: (text: string) => Promise<string>
@@ -283,6 +284,7 @@ export class ResourceWorkbenchRuntime {
       ...(options.persistenceDebounceMs === undefined ? {} : { persistenceDebounceMs: options.persistenceDebounceMs }),
       ...(options.progressiveFlushIntervalMs === undefined ? {} : { progressiveFlushIntervalMs: options.progressiveFlushIntervalMs }),
       ...(options.hashText === undefined ? {} : { hashText: options.hashText }),
+      ...(options.largeEditCheckDelayMs === undefined ? {} : { largeEditCheckDelayMs: options.largeEditCheckDelayMs }),
       ...(options.largeFileBytes === undefined ? {} : { largeFileBytes: options.largeFileBytes }),
       ...(options.hugeFileBytes === undefined ? {} : { hugeFileBytes: options.hugeFileBytes }),
     })
@@ -314,6 +316,19 @@ export class ResourceWorkbenchRuntime {
         },
         ...(source.readTextDelta === undefined ? {} : {
           loadDelta: (ref, baseHash, signal, access) => source.readTextDelta!(ref as unknown as ResourceRef, baseHash, signal, access),
+        }),
+        ...(source.createTextRead === undefined ? {} : {
+          createTextRead: ref => {
+            const reader = source.createTextRead!(ref as unknown as ResourceRef)
+            return { dispose: () => reader.dispose(), stream: async function* (signal, access) {
+              for await (const event of reader.stream(signal, access)) {
+                if (event.kind !== 'start') { yield event; continue }
+                const { descriptor, ...metadata } = event
+                yield { ...metadata, ...(descriptor?.name === undefined ? {} : { title: descriptor.name }),
+                  ...(descriptor?.location === undefined ? {} : { location: descriptor.location }) }
+              }
+            } }
+          },
         }),
         ...(source.streamText === undefined ? {} : {
           stream: async function* (ref, signal, access) {

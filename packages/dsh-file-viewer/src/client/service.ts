@@ -28,6 +28,8 @@ export interface FileViewerLocation {
 /** Canonical source text and its opaque revision. */
 export interface FileViewerLoadedText {
   readonly text: string
+  /** Expected canonical SHA-256, verified before this observation becomes usable. */
+  readonly canonicalHash?: string
   readonly sizeBytes?: number
   readonly version?: unknown
   readonly title?: string
@@ -36,9 +38,21 @@ export interface FileViewerLoadedText {
 
 /** Sequential canonical text; only complete supplies a usable revision. */
 export type FileViewerTextStreamEvent =
-  | { readonly kind: 'start'; readonly sizeBytes: number; readonly title?: string; readonly location?: FileViewerLocation }
+  | { readonly kind: 'start'; readonly sizeBytes: number; readonly resume?: boolean; readonly bytesRead?: number; readonly title?: string; readonly location?: FileViewerLocation }
+  | { readonly kind: 'progress'; readonly receivedRanges: readonly FileViewerReceivedRange[] }
   | { readonly kind: 'chunk'; readonly text: string; readonly bytesRead: number }
-  | { readonly kind: 'complete'; readonly version: unknown; readonly sizeBytes: number }
+  | { readonly kind: 'complete'; readonly version: unknown; readonly sizeBytes: number; readonly canonicalHash?: string }
+
+/** Verified received byte interval; gaps have no downloaded content. */
+export interface FileViewerReceivedRange { readonly offset: number; readonly length: number }
+
+/** One document-owned resumable read; only its caller owns accumulated canonical text. */
+export interface FileViewerTextRead {
+  /** @param signal Attempt cancellation. @param access Document permission. @returns Resumed canonical chunks and source validation metadata. */
+  stream(signal: AbortSignal, access?: FileViewerTextAccess): AsyncIterable<FileViewerTextStreamEvent>
+  /** Abort active work and release transport state. */
+  dispose(): void
+}
 
 /** Source save result. */
 export interface FileViewerSavedText { readonly version?: unknown; readonly sizeBytes?: number }
@@ -109,6 +123,8 @@ export interface FileViewerSource {
   load(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerLoadedText>
   /** @param ref Document identity. @param baseHash Verified Source baseline. @param signal Cancellation. @param access Read approval. @returns Guarded observation or explicit full-read requirement. */
   loadDelta?(ref: FileViewerDocumentRef, baseHash: string, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerDeltaResult>
+  /** @param ref Shared document identity. @returns One resumable read retained through failed attempts until completion or disposal. */
+  createTextRead?(ref: FileViewerDocumentRef): FileViewerTextRead
   stream?(ref: FileViewerDocumentRef, signal: AbortSignal, access?: FileViewerTextAccess): AsyncIterable<FileViewerTextStreamEvent>
   save?(ref: FileViewerDocumentRef, text: string, version: unknown, signal: AbortSignal, access?: FileViewerTextAccess): Promise<FileViewerSavedText>
   /** @param ref Document identity. @param baseText Captured canonical Base. @param text Captured Local. @param signal Cancellation. @param access Existing-content approval. @returns Actual published canonical hash; unrelated source changes may remain. */
@@ -164,7 +180,7 @@ interface CommonSnapshot {
   /** Runtime-only instant of an actual load, pull, or equal-content publication. */
   readonly lastSyncedAt?: number
 
-  readonly loadProgress?: { readonly bytesRead: number; readonly totalBytes: number; readonly complete: boolean }
+  readonly loadProgress?: { readonly bytesRead: number; readonly totalBytes: number; readonly complete: boolean; readonly receivedRanges?: readonly FileViewerReceivedRange[] }
 
   /** Last exact source byte size; local edits do not re-encode the complete document. */
   readonly sizeBytes?: number
@@ -243,6 +259,11 @@ interface ActiveOperation {
 type AutomationPauseReason = 'conflict' | 'failure' | 'confirmation'
 
 interface InstanceRecord {
+  localHashTimer?: ReturnType<typeof setTimeout> | undefined
+  pendingLocalHash?: { generation: number; text: string; notBefore: number } | undefined
+  localHashWork?: { text: string; promise: Promise<string> } | undefined
+  textRead?: { source: FileViewerSource; reader: FileViewerTextRead | undefined; text: string; bytesRead: number; streamId: number; flush?: (() => void) | undefined } | undefined
+
   allowLargeFile: boolean
   allowHugeFile: boolean
   snapshot: FileViewerInstanceSnapshot
@@ -268,6 +289,7 @@ interface InstanceRecord {
 export interface FileViewerServiceOptions {
   readonly storage?: FileViewerBrowserStorage
   readonly automationDebounceMs?: number
+  readonly largeEditCheckDelayMs?: number
   readonly progressiveFlushIntervalMs?: number
   readonly persistenceDebounceMs?: number
   readonly globalAutomationDefaults?: Partial<FileViewerAutomationPreferences>
@@ -427,6 +449,7 @@ export class FileViewerService {
   private readonly refs = new Map<string, string>()
   private readonly storage: FileViewerBrowserStorage | undefined
   private readonly debounceMs: number
+  private readonly largeEditCheckDelayMs: number
   private readonly progressiveFlushIntervalMs: number
   private readonly persistenceDebounceMs: number
   private readonly confirmDiscard: (snapshot: ReadySnapshot) => boolean | Promise<boolean>
@@ -441,6 +464,7 @@ export class FileViewerService {
   constructor(options: FileViewerServiceOptions = {}) {
     this.storage = options.storage ?? defaultBrowserStorage()
     this.debounceMs = options.automationDebounceMs ?? 700
+    this.largeEditCheckDelayMs = options.largeEditCheckDelayMs ?? 300
     this.progressiveFlushIntervalMs = options.progressiveFlushIntervalMs ?? 300
     this.persistenceDebounceMs = options.persistenceDebounceMs ?? 700
     this.confirmDiscard = options.confirmDiscard ?? (() => false)
@@ -572,7 +596,10 @@ export class FileViewerService {
     record.snapshot = deriveSync(replaceLocalTextWithoutHash(record.snapshot, text))
     this.scheduleDraftPersistence(record)
     this.notify(record)
-    this.hashLocalText(instanceId, record, generation, text)
+    if (record.snapshot.sizeTier !== 'normal' || (this.largeFileBytes !== undefined && text.length > this.largeFileBytes)) {
+      record.pendingLocalHash = { generation, text, notBefore: performance.now() + this.largeEditCheckDelayMs }
+      this.scheduleLocalHash(record)
+    } else this.hashLocalText(instanceId, record, generation, text)
   }
 
   /** Save local text only through a conditional source write. */
@@ -600,8 +627,10 @@ export class FileViewerService {
   /** @param instanceId Document whose partial read should stop without discarding received text. */
   cancelLoad(instanceId: string): void {
     const record = this.record(instanceId)
-    if (record.snapshot.status !== 'partial') return
+    if (record.read.kind !== 'loading' && !(record.read.kind === 'refreshing' && record.textRead !== undefined)) return
+    record.textRead?.flush?.()
     this.cancel(record.read, new Error('file load stopped'))
+    if (record.snapshot.status === 'loading') record.snapshot = { ...record.snapshot, status: 'failed' }
     this.notify(record)
   }
 
@@ -767,7 +796,9 @@ export class FileViewerService {
   }
 
   private hashLocalText(instanceId: string, record: InstanceRecord, generation: number, text: string): void {
-    void this.hashText(text).then(
+    const work = { text, promise: this.hashText(text) }
+    record.localHashWork = work
+    void work.promise.then(
       hash => {
         if (!this.hashCurrent(instanceId, record, generation)) return
         let next = deriveSync({ ...record.snapshot, localHash: hash })
@@ -789,7 +820,31 @@ export class FileViewerService {
         this.notify(record)
         this.clearAutomationTimers(record)
       },
-    )
+    ).finally(() => {
+      if (record.localHashWork === work) record.localHashWork = undefined
+      this.scheduleLocalHash(record)
+    })
+  }
+
+  private clearLocalHash(record: InstanceRecord): void {
+    clearTimeout(record.localHashTimer)
+    record.localHashTimer = undefined
+    record.pendingLocalHash = undefined
+  }
+
+  private scheduleLocalHash(record: InstanceRecord): void {
+    clearTimeout(record.localHashTimer)
+    record.localHashTimer = undefined
+    const pending = record.pendingLocalHash
+    if (pending === undefined || record.localHashWork !== undefined) return
+    record.localHashTimer = setTimeout(() => {
+      record.localHashTimer = undefined
+      if (record.pendingLocalHash !== pending) return
+      record.pendingLocalHash = undefined
+      if (this.hashCurrent(record.snapshot.instanceId, record, pending.generation)) {
+        this.hashLocalText(record.snapshot.instanceId, record, pending.generation, pending.text)
+      }
+    }, Math.max(0, pending.notBefore - performance.now()))
   }
 
   private async read(
@@ -802,7 +857,7 @@ export class FileViewerService {
       this.requireConfirmation(record, record.snapshot.loadConfirmation)
       return undefined
     }
-    if (mode === 'manual') this.detachWatch(record)
+    if (mode === 'manual' && source?.loadDelta !== undefined) this.detachWatch(record)
     const operation = this.begin(record.read, operationName)
     this.notify(record)
     if (source === undefined) {
@@ -824,7 +879,7 @@ export class FileViewerService {
         verifiedHash = delta.kind === 'unchanged' ? previous.latestSourceHash : await this.hashText(text)
         if (verifiedHash !== delta.canonicalHash) throw new Error('file-viewer: source delta hash mismatch')
         loaded = { text, version: delta.version, sizeBytes: delta.sizeBytes }
-      } else loaded = mode === 'initial' && record.allowLargeFile && source.stream !== undefined
+      } else loaded = source.createTextRead !== undefined || (mode === 'initial' && record.allowLargeFile && source.stream !== undefined)
         ? await this.readStream(record, source, operation)
         : await source.load(record.snapshot.ref, operation.controller.signal, this.textAccess(record))
     } catch (error: unknown) {
@@ -886,70 +941,85 @@ export class FileViewerService {
         hash = sourceHash
         restored = { ...persisted, baseHash, localHash }
       }
+      if (loaded.canonicalHash !== undefined && hash !== loaded.canonicalHash) throw new Error('file-viewer: completed source hash mismatch')
     } catch (error: unknown) {
       if (!this.complete(record.read, operation)) return undefined
+      this.releaseTextRead(record)
       const failure = toFailure('hash-failed', error)
       this.publishReadFailure(record, failure)
       return failure
     }
 
     if (!this.complete(record.read, operation) || this.instances.get(record.snapshot.instanceId) !== record) return undefined
+    this.releaseTextRead(record)
+    if (record.snapshot.loadProgress !== undefined) record.snapshot = { ...record.snapshot, loadProgress: { ...record.snapshot.loadProgress, complete: true } }
     this.applyObserved(record, source, loaded, hash, mode, restored)
     return undefined
   }
 
   private async readStream(record: InstanceRecord, source: FileViewerSource, operation: ActiveOperation): Promise<FileViewerLoadedText> {
     const signal = operation.controller.signal
-    let text = ''
-    let pending: string[] = []
-    let bytesRead = 0
+    if (record.textRead?.source !== source || source.createTextRead === undefined) this.releaseTextRead(record)
+    const state = record.textRead ??= { source, reader: source.createTextRead?.(record.snapshot.ref), text: '', bytesRead: 0, streamId: operation.generation }
+    const preview = record.snapshot.status !== 'ready'
     let metadata: Extract<FileViewerTextStreamEvent, { kind: 'start' }> | undefined
     let completed: Extract<FileViewerTextStreamEvent, { kind: 'complete' }> | undefined
+    let ranges: readonly FileViewerReceivedRange[] | undefined
     let timer: ReturnType<typeof setTimeout> | undefined
-    let first = true
+    let first = state.text === ''
     const flush = () => {
+      clearTimeout(timer)
       timer = undefined
       if (!this.current(record.read, operation) || metadata === undefined) return
-      text += pending.join('')
-      pending = []
-      record.snapshot = { ...clearFailure(record.snapshot), status: 'partial', text, streamId: operation.generation,
-        loadProgress: { bytesRead, totalBytes: metadata.sizeBytes, complete: false } }
+      const snapshot: FileViewerInstanceSnapshot = preview && (!first || completed !== undefined)
+        ? { ...record.snapshot, status: 'partial' as const, text: state.text, streamId: state.streamId } : record.snapshot
+      record.snapshot = { ...snapshot,
+        loadProgress: { bytesRead: state.bytesRead, totalBytes: metadata.sizeBytes, complete: false,
+          ...(ranges === undefined ? {} : { receivedRanges: ranges }) } }
       this.notify(record)
     }
+    state.flush = flush
     try {
-      for await (const event of source.stream!(record.snapshot.ref, signal, this.textAccess(record))) {
+      const events = state.reader?.stream(signal, this.textAccess(record)) ?? source.stream!(record.snapshot.ref, signal, this.textAccess(record))
+      for await (const event of events) {
         signal.throwIfAborted()
         if (!this.current(record.read, operation)) throw new Error('file-viewer: stale text stream')
         if (completed !== undefined) throw new Error('file-viewer: text stream continued after completion')
         if (event.kind === 'start') {
           if (metadata !== undefined) throw new Error('file-viewer: duplicate text stream start')
           metadata = event
+          if (!event.resume) { state.text = ''; state.bytesRead = 0; state.streamId = operation.generation; first = true }
+          if ((event.bytesRead ?? 0) !== state.bytesRead) throw new Error('file-viewer: inconsistent resumed prefix')
           this.observeSize(record, event.sizeBytes)
-          record.snapshot = { ...record.snapshot, loadProgress: { bytesRead: 0, totalBytes: event.sizeBytes, complete: false } }
+          flush()
+        } else if (event.kind === 'progress') {
+          ranges = event.receivedRanges
+          // Positional receipt is cheap metadata; text publication remains coalesced.
+          record.snapshot = { ...record.snapshot, loadProgress: { bytesRead: state.bytesRead, totalBytes: metadata!.sizeBytes,
+            complete: false, receivedRanges: ranges } }
           this.notify(record)
         } else if (event.kind === 'chunk') {
-          if (metadata === undefined || event.bytesRead < bytesRead || event.bytesRead > metadata.sizeBytes) throw new Error('file-viewer: invalid text stream progress')
-          bytesRead = event.bytesRead
-          pending.push(event.text)
+          if (metadata === undefined || event.bytesRead < state.bytesRead || event.bytesRead > metadata.sizeBytes) throw new Error('file-viewer: invalid text stream progress')
+          state.bytesRead = event.bytesRead
+          state.text += event.text
           if (first && event.text !== '') { first = false; flush() }
           else if (!first) timer ??= setTimeout(flush, this.progressiveFlushIntervalMs)
         } else {
-          if (metadata === undefined || bytesRead !== metadata.sizeBytes || event.sizeBytes !== metadata.sizeBytes) throw new Error('file-viewer: incomplete text stream')
+          if (metadata === undefined || state.bytesRead !== metadata.sizeBytes || event.sizeBytes !== metadata.sizeBytes) throw new Error('file-viewer: incomplete text stream')
           completed = event
         }
       }
       signal.throwIfAborted()
       if (metadata === undefined || completed === undefined) throw new Error('file-viewer: text stream ended before completion')
-      clearTimeout(timer)
       flush()
-      return { text, sizeBytes: completed.sizeBytes, version: completed.version,
+      return { text: state.text, sizeBytes: completed.sizeBytes, version: completed.version,
+        ...(completed.canonicalHash === undefined ? {} : { canonicalHash: completed.canonicalHash }),
         ...(metadata.title === undefined ? {} : { title: metadata.title }),
         ...(metadata.location === undefined ? {} : { location: metadata.location }) }
     } catch (error: unknown) {
-      clearTimeout(timer)
       flush()
       throw error
-    } finally { clearTimeout(timer) }
+    } finally { clearTimeout(timer); if (state.flush === flush) state.flush = undefined }
   }
 
   private requireConfirmation(record: InstanceRecord, error: FileViewerLoadConfirmation): void {
@@ -1277,11 +1347,12 @@ export class FileViewerService {
     const operation = this.begin(record.save, 'saving')
     this.clearTimer(record, 'autoSave')
     this.notify(record)
+    this.clearLocalHash(record)
     const savedText = value.text
     let savedHash = value.localHash
     if (savedHash === undefined) {
       try {
-        savedHash = await this.hashText(savedText)
+        savedHash = await (record.localHashWork?.text === savedText ? record.localHashWork.promise : this.hashText(savedText))
       } catch (error: unknown) {
         if (!this.complete(record.save, operation) || record.snapshot.status !== 'ready') return
         record.pauseReason = 'failure'
@@ -1319,7 +1390,7 @@ export class FileViewerService {
       if ('canonicalHash' in saved && saved.canonicalHash !== savedHash) {
         const retained = clearFailure(record.snapshot)
         record.pauseReason = 'failure'
-        record.snapshot = replaceBase({ ...retained, resourceMissing: false, sourceStale: true,
+        record.snapshot = replaceBase({ ...retained, ...(retained.text === savedText ? { localHash: savedHash } : {}), resourceMissing: false, sourceStale: true,
           syncStatus: 'unknown', savedWithOtherChanges: true, automationPaused: true }, savedText, savedHash, saved.version)
         this.clearAutomationTimers(record)
         this.scheduleDraftPersistence(record)
@@ -1330,6 +1401,7 @@ export class FileViewerService {
       const { manualUpdateRequired: _manual, ...savedSnapshot } = clearFailure(record.snapshot)
       let next = replaceLatestSource({
         ...savedSnapshot,
+        ...(savedSnapshot.text === savedText ? { localHash: savedHash } : {}),
         savedWithOtherChanges: false,
         lastSyncedAt: Date.now(),
         resourceMissing: false,
@@ -1564,7 +1636,15 @@ export class FileViewerService {
     if (this.refs.get(keyOf(record.snapshot.ref)) === id) this.refs.delete(keyOf(record.snapshot.ref))
   }
 
+  private releaseTextRead(record: InstanceRecord): void {
+    record.textRead?.reader?.dispose()
+    record.textRead = undefined
+  }
+
   private stop(record: InstanceRecord, reason: Error): void {
+    this.clearLocalHash(record)
+    record.hashGeneration += 1
+    this.releaseTextRead(record)
     for (const state of [record.read, record.save, record.external]) this.cancel(state, reason)
     this.detachWatch(record)
     record.savePromise = undefined

@@ -217,7 +217,10 @@ function LoadProgress({ state, label }: { readonly state: FileViewerInstanceSnap
   const percent = progress.complete ? 100 : progress.totalBytes === 0 ? 0 : Math.min(99, 100 * progress.bytesRead / progress.totalBytes)
   return <div className={`dsh-file-viewer-progress${progress.complete ? ' is-complete' : ''}`}
     role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)}>
-    <div style={{ width: `${percent}%` }} />
+    {(progress.complete || progress.receivedRanges === undefined)
+      ? <div style={{ left: 0, width: `${percent}%` }} />
+      : progress.receivedRanges.map(range => <div key={range.offset} style={{ left: `${100 * range.offset / progress.totalBytes}%`,
+        width: `${100 * range.length / progress.totalBytes}%` }} />)}
   </div>
 }
 
@@ -325,6 +328,12 @@ function ReadyPanel({
         {state.failure !== undefined && <FailureDetail failure={state.failure} t={t} />}
       </div>}
       {ready !== undefined && <>
+      {state.loadProgress?.complete === false && <div className="dsh-file-viewer-notice" role="status">
+        {t('incompleteFile')}
+        {state.operation === 'refreshing'
+          ? <button type="button" onClick={cancelLoad}>{t('stopLoading')}</button>
+          : <button type="button" disabled={busy} onClick={refresh}>{t('retryLoading')}</button>}
+      </div>}
       <div className="dsh-file-viewer-float" ref={controlsRef}
         onMouseEnter={() => { changePresentation({ expanded: true }) }}
         onFocus={() => { changePresentation({ expanded: true }) }}
@@ -441,11 +450,12 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
   if (state.status !== 'ready' && state.status !== 'partial') {
     if (state.status === 'confirmation-required') return <LoadConfirmation state={state}
       onLoad={() => { props.confirmLoad(props.instanceId) }} t={props.t} />
-    if (state.status === 'loading') return <section className="dsh-file-viewer-root"><LoadProgress state={state} label={props.t('loading')} /><div className="dsh-file-viewer-state" role="status">{props.t('loading')}</div></section>
+    if (state.status === 'loading') return <section className="dsh-file-viewer-root"><LoadProgress state={state} label={props.t('loading')} /><div className="dsh-file-viewer-state" role="status">{props.t('loading')}<button type="button" onClick={() => props.cancelLoad(props.instanceId)}>{props.t('stopLoading')}</button></div></section>
     return (
       <div className="dsh-file-viewer-state" role="alert">
         {state.failure === undefined ? props.t('loadFailed') : props.t(failureKey(state.failure))}
         {state.failure !== undefined && <FailureDetail failure={state.failure} t={props.t} />}
+        <button type="button" onClick={() => props.refresh(props.instanceId)}>{props.t('retryLoading')}</button>
       </div>
     )
   }

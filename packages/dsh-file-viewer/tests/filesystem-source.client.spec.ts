@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { FilesystemResourceSource, type FilesystemSourceGateway } from '../src/client/filesystem-source.ts'
 import { pollPolicy } from './poll-policy.ts'
@@ -10,7 +11,9 @@ afterEach(() => { for (const dispose of disposers.splice(0)) dispose(); vi.useRe
 function gateway(): FilesystemSourceGateway {
   return {
     deltaText: vi.fn(async () => ({ kind: 'patch', ranges: [], canonicalHash: 'next', version: 'v2', sizeBytes: 1 })),
-    readText: vi.fn(async (_session, path) => ({ path, text: 'base', version: 'v1', sizeBytes: 4 })),
+    prepareTextRead: vi.fn(async () => ({ path: '/file', sizeBytes: 0, chunkBytes: 4, readVersion: 'stat' })),
+    readTextChunk: vi.fn(),
+    finishTextRead: vi.fn(async () => ({ version: 'v1', sizeBytes: 0, canonicalHash: createHash('sha256').update('').digest('hex') })),
     readBytes: vi.fn(async (_session, path) => ({ path, dataBase64: 'AP8=', version: 'v1' })),
     patchText: vi.fn(async () => ({ version: 'v2', canonicalHash: 'actual', sizeBytes: 4 })),
     saveBytes: vi.fn(async () => ({ version: 'v2' })),
@@ -32,7 +35,7 @@ it('awaits the complete consumer cycle and skips other text/byte watches without
   await source.readTextDelta(ref, 'base', signal())
   expect(vi.mocked(remote.deltaText).mock.calls.at(-1)?.[3]).toBe(false)
   await source.readText(ref, signal())
-  expect(remote.readText).toHaveBeenCalledTimes(1)
+  expect(remote.prepareTextRead).toHaveBeenCalledTimes(1)
   release()
   await vi.advanceTimersByTimeAsync(1)
   // No queued cross-document callbacks burst when processing releases the permit.
@@ -73,6 +76,6 @@ it('stops background work on unavailable deltas and never silently invokes full 
   disposers.push(source.watchText(ref, listener, undefined, context()))
   await vi.advanceTimersByTimeAsync(1000)
   expect(remote.deltaText).toHaveBeenCalledTimes(1)
-  expect(remote.readText).not.toHaveBeenCalled()
+  expect(remote.prepareTextRead).not.toHaveBeenCalled()
   expect(listener).toHaveBeenCalledWith({ kind: 'manual-required', reason: 'too-large' })
 })

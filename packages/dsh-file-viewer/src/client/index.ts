@@ -54,6 +54,7 @@ export type {
   ResourceTextWatchEvent,
   ResourceTextAccess,
   ResourceTextStreamEvent,
+  ResourceTextRead,
   ResourceViewSnapshot,
   ResourceWorkbenchClientService,
 } from './resource.ts'
@@ -113,6 +114,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const host = createResourceViewHost(ctx.rightSidebar)
   const runtime = new ResourceWorkbenchRuntime({
     host,
+    largeEditCheckDelayMs: metadata.largeEditCheckDelayMs,
     largeFileBytes: metadata.largeFileBytes,
     progressiveFlushIntervalMs: metadata.progressiveFlushIntervalMs,
     hugeFileBytes: metadata.hugeFileBytes,
@@ -154,9 +156,10 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const offTextHandler = runtime.registerHandler(textHandler)
   const offImageHandler = runtime.registerHandler(imageHandler)
   const source = new FilesystemResourceSource({
-    streamText: (sessionId, path, signal, access) => ctx.remote.userFiles.streamText({ sessionId, path, ...access }, signal),
+    prepareTextRead: async (request, signal) => valueOf(await ctx.remote.userFiles.prepareTextRead(request, signal)),
+    readTextChunk: async (request, signal) => valueOf(await ctx.remote.userFiles.readTextChunk(request, signal)),
+    finishTextRead: async (request, signal) => valueOf(await ctx.remote.userFiles.finishTextRead(request, signal)),
     deltaText: async (sessionId, path, baseHash, background, maxPatchBytes, signal, access) => valueOf(await ctx.remote.userFiles.deltaText({ sessionId, path, baseHash, background, maxPatchBytes, ...access }, signal)),
-    readText: async (sessionId, path, signal, access) => valueOf(await ctx.remote.userFiles.readText({ sessionId, path, ...access }, signal)),
     readBytes: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.readBytes({ sessionId, path }, signal)),
     patchText: async (sessionId, path, ranges, signal, access) => valueOf(await ctx.remote.userFiles.patchText({ sessionId, path, ranges, ...access }, signal)),
     saveBytes: async (sessionId, path, dataBase64, version, signal) => valueOf(await ctx.remote.userFiles.saveBytes({ sessionId, path, dataBase64, version }, signal)),

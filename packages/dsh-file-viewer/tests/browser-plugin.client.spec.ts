@@ -1,3 +1,5 @@
+import { createHash, webcrypto } from 'node:crypto'
+import { pollPolicy } from './poll-policy.ts'
 // @vitest-environment jsdom
 import { Context } from '@deepseek-ai/cordis'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
@@ -42,10 +44,15 @@ describe('file viewer browser plugin', () => {
       closeInstance: vi.fn(async () => {}),
     }
     ctx.provide('rightSidebar', rightSidebar)
-    const readText = vi.fn(async () => ({ ok: true, value: { path: '/workspace/file.txt', text: 'remote text', version: 'v1', sizeBytes: 11 } }))
+    vi.stubGlobal('crypto', webcrypto)
+    onTestFinished(() => vi.unstubAllGlobals())
+    const prepareTextRead = vi.fn(async () => ({ ok: true, value: { path: '/workspace/file.txt', chunkBytes: 1024, readVersion: 'stat', sizeBytes: 11 } }))
+    const canonicalHash = createHash('sha256').update('remote text').digest('hex')
+    const readTextChunk = vi.fn(async () => ({ ok: true, value: { offset: 0, dataBase64: btoa('remote text'), sha256: canonicalHash } }))
+    const finishTextRead = vi.fn(async () => ({ ok: true, value: { version: 'v1', sizeBytes: 11, canonicalHash } }))
     const resolve = vi.fn(async () => ({ ok: true, value: { path: '/workspace/file.txt', name: 'file.txt', kind: 'file', mediaType: 'text/plain' } }))
-    const fileViewer = { metadata: async () => ({ ok: true, value: { resourcePollIntervalMs: 2000, largeFileBytes: 8, hugeFileBytes: 80 } }) }
-    const userFiles = { resolve, readText }
+    const fileViewer = { metadata: async () => ({ ok: true, value: { ...pollPolicy(2000), largeFileBytes: 8, hugeFileBytes: 80 } }) }
+    const userFiles = { resolve, prepareTextRead, readTextChunk, finishTextRead }
     const session = { openWorkspacePath: vi.fn(async () => ({ ok: true, value: undefined })) }
     ctx.provide('sessions', { list: { getSnapshot: () => ({ byId: { 'standalone-viewer': { cwd: '/workspace' } } }) } } as never)
     ctx.provide('remote.session', session as never)
@@ -64,7 +71,7 @@ describe('file viewer browser plugin', () => {
 
     const sessionId = 'standalone-viewer' as SessionId
     await ctx.waterfall('chat/open-workspace-file', { sessionId, path: 'file.txt', preview: true, target: { fromInstanceId: 'tree', direction: 'right' } }, async () => {})
-    expect(readText).toHaveBeenCalledWith({ sessionId, path: '/workspace/file.txt', allowLargeFile: false, maxConfirmedBytes: 80 }, expect.any(AbortSignal))
+    expect(prepareTextRead).toHaveBeenCalledWith({ sessionId, path: '/workspace/file.txt', allowLargeFile: false, maxConfirmedBytes: 80 }, expect.any(AbortSignal))
     expect(rightSidebar.openInstance).toHaveBeenLastCalledWith(sessionId, expect.objectContaining({
       viewId: RESOURCE_WORKBENCH_VIEW_ID,
       restoreDescriptor: expect.objectContaining({ ref: { sessionId, sourceId: 'filesystem', resourceId: '/workspace/file.txt' } }),

@@ -80,7 +80,15 @@ export interface ResourceLoadedText {
 
 /** Sequential text events with source-owned opening metadata. */
 export type ResourceTextStreamEvent = Exclude<FileViewerTextStreamEvent, { kind: 'start' }>
-  | { readonly kind: 'start'; readonly sizeBytes: number; readonly descriptor?: Partial<Omit<ResourceDescriptor, 'ref'>> }
+  | { readonly kind: 'start'; readonly sizeBytes: number; readonly resume?: boolean; readonly bytesRead?: number; readonly descriptor?: Partial<Omit<ResourceDescriptor, 'ref'>> }
+
+/** Document-owned source read that retains only transport state between attempts. */
+export interface ResourceTextRead {
+  /** @param signal Attempt cancellation; completed chunks remain resumable. @param access Document permission. @returns Contiguous text, independent receipt ranges and final revision/digest. */
+  stream(signal: AbortSignal, access?: ResourceTextAccess): AsyncIterable<ResourceTextStreamEvent>
+  /** Abort outstanding requests and release retained transfer state. */
+  dispose(): void
+}
 
 /** Source bytes with an opaque revision and optional refreshed metadata. */
 export interface ResourceLoadedBytes {
@@ -113,6 +121,8 @@ export interface ResourceSource {
   readonly defaults?: Partial<ResourceAutomationPreferences>
   /** @param ref Exact resource identity. @param selection Persisted source-owned hint. @returns Nothing after opening the location. */
   selectLocation?(ref: ResourceRef, selection?: unknown): Promise<void>
+  /** @param ref Exact resource identity. @returns In-page resumable read retained by the shared document, released on completion, last close or source disposal. */
+  createTextRead?(ref: ResourceRef): ResourceTextRead
   /** @param ref Exact resource identity. @param signal Cancellation signal. @param access Explicit document permission. @returns Ordered provisional chunks and a completion revision, used for approved initial loads. */
   streamText?(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): AsyncIterable<ResourceTextStreamEvent>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @param access Explicit document permission; approval rejection precedes content reads. @returns Complete canonical source text and revision. */

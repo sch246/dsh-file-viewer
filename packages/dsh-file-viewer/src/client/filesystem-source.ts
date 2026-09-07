@@ -1,3 +1,4 @@
+import { SegmentedTextRead, type SegmentedTextGateway } from './segmented-text-read.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
   ResourceSourceId,
@@ -17,14 +18,12 @@ import type { FileViewerWatchContext } from './service.ts'
 import type { FileViewerMetadata } from '../types.ts'
 import { hashFileViewerText, isMissingResourceError, isConfirmationRequiredError } from './service.ts'
 import type {
-  UserFileBytesDocument, UserFileRevision, UserFileTextDocument, UserFileSaveResult, UserFileTextStreamEvent, UserFileTextPatch, UserFilePatchResult, UserFileDeltaResult,
+  UserFileBytesDocument, UserFileRevision, UserFileSaveResult, UserFileTextPatch, UserFilePatchResult, UserFileDeltaResult,
 } from '@dsh-external/dsh-user-files/types'
 
 /** Filesystem-source operations implemented by the generated Remote adapter. */
-export interface FilesystemSourceGateway {
-  streamText?(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): AsyncIterable<UserFileTextStreamEvent>
+export interface FilesystemSourceGateway extends SegmentedTextGateway {
   deltaText(sessionId: SessionId, path: string, baseHash: string, background: boolean, maxPatchBytes: number, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileDeltaResult>
-  readText(sessionId: SessionId, path: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileTextDocument>
   readBytes(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileBytesDocument>
   patchText(sessionId: SessionId, path: string, ranges: readonly UserFileTextPatch[], signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFilePatchResult>
   saveBytes(
@@ -89,10 +88,6 @@ function descriptor(path: string): NonNullable<ResourceLoadedText['descriptor']>
   }
 }
 
-function loadedText(document: UserFileTextDocument): ResourceLoadedText {
-  return { text: document.text, version: document.version, descriptor: { ...descriptor(document.path), size: document.sizeBytes } }
-}
-
 function loadedBytes(document: UserFileBytesDocument): ResourceLoadedBytes {
   const binary = atob(document.dataBase64)
   const bytes = new Uint8Array(binary.length)
@@ -114,7 +109,6 @@ export class FilesystemResourceSource implements ResourceSource {
   readonly id = ResourceSourceId('filesystem')
   readonly supportsConditionalByteSave = true
   readonly openExternal?: (ref: ResourceRef, signal: AbortSignal) => Promise<void>
-  readonly streamText?: NonNullable<ResourceSource['streamText']>
   readonly #gateway: FilesystemSourceGateway
   readonly #policy: FileViewerMetadata
   #backgroundBusy = false
@@ -124,23 +118,6 @@ export class FilesystemResourceSource implements ResourceSource {
   constructor(gateway: FilesystemSourceGateway, policy: FileViewerMetadata) {
     this.#gateway = gateway
     this.#policy = policy
-    if (gateway.streamText !== undefined) {
-      this.streamText = async function* (ref, signal, access) {
-        const iterator = gateway.streamText!(ref.sessionId, ref.resourceId, signal, access)[Symbol.asyncIterator]()
-        try {
-          while (true) {
-            const item = await readResource(() => iterator.next())
-            signal.throwIfAborted()
-            if (item.done) break
-            const event = item.value
-            if (event.kind === 'start') yield { kind: 'start', sizeBytes: event.sizeBytes, descriptor: { ...descriptor(event.path), size: event.sizeBytes } }
-            else {
-              yield event
-            }
-          }
-        } finally { await iterator.return?.() }
-      }
-    }
     if (gateway.openExternal !== undefined) {
       this.openExternal = async (ref, signal) => {
         await gateway.openExternal?.(ref.sessionId, ref.resourceId, signal)
@@ -158,9 +135,36 @@ export class FilesystemResourceSource implements ResourceSource {
 
   /** Load canonical LF text with exact source size, location and revision. */
   async readText(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceLoadedText> {
-    const document = await readResource(() => this.#gateway.readText(ref.sessionId, ref.resourceId, signal, access))
-    signal.throwIfAborted()
-    return loadedText(document)
+    const reader = this.createTextRead(ref)
+    let text = ''
+    let result: ResourceLoadedText | undefined
+    try {
+      for await (const event of reader.stream(signal, access)) {
+        if (event.kind === 'chunk') text += event.text
+        if (event.kind === 'complete') {
+          if (await hashFileViewerText(text) !== event.canonicalHash) throw new Error('file-viewer: completed source hash mismatch')
+          result = { text, version: event.version, descriptor: { ...descriptor(ref.resourceId), size: event.sizeBytes } }
+        }
+      }
+      if (result === undefined) throw new Error('file-viewer: incomplete text read')
+      return result
+    } finally { reader.dispose() }
+  }
+
+  /** Retain resumable transport state for one shared document until its owner releases it. */
+  createTextRead(ref: ResourceRef): import('./resource.ts').ResourceTextRead {
+    const reader = new SegmentedTextRead(this.#gateway, { sessionId: ref.sessionId, path: ref.resourceId }, this.#policy)
+    return { dispose: () => reader.dispose(), stream: async function* (signal, access) {
+      const iterator = reader.stream(signal, access)[Symbol.asyncIterator]()
+      try {
+        while (true) {
+          const item = await readResource(() => iterator.next())
+          if (item.done) break
+          yield item.value.kind === 'start'
+            ? { ...item.value, descriptor: { ...descriptor(ref.resourceId), size: item.value.sizeBytes } } : item.value
+        }
+      } finally { await iterator.return?.() }
+    } }
   }
 
   /** Load exact bounded bytes without decoding or text rejection. */
