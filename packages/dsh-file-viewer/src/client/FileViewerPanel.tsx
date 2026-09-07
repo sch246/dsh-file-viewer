@@ -2,7 +2,7 @@ import { formatFileSize } from './file-size.ts'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
-import type { FileViewerEditorModule } from './editor-module.ts'
+import type { FileViewerEditorModule, FileViewerTextChange } from './editor-module.ts'
 import type {
   FileViewerFailure,
   FileViewerAutomationPreferences,
@@ -12,6 +12,8 @@ import { isFileViewerDirty } from './service.ts'
 import { useSyncAge } from './sync-age.ts'
 import { usePendingDots } from './pending-dots.ts'
 import { defaultLineNumbers, setDefaultLineNumbers, subscribeLineNumberDefault } from './line-number-default.ts'
+
+type EditorDocument = Extract<FileViewerInstanceSnapshot, { status: 'ready' }>['document']
 
 type EditorSnapshot = Extract<FileViewerInstanceSnapshot, { status: 'ready' | 'partial' }>
 
@@ -28,7 +30,7 @@ class TextPresentation {
 export interface FileViewerPanelInjected {
   snapshot(instanceId: string): FileViewerInstanceSnapshot
   subscribe(instanceId: string, listener: () => void): () => void
-  edit(instanceId: string, text: string): void
+  editChanges(instanceId: string, changes: readonly FileViewerTextChange[]): void
   save(instanceId: string): void
   refresh(instanceId: string): void
   confirmLoad(instanceId: string): void
@@ -92,14 +94,15 @@ function FailureDetail({ failure, t }: {
 }
 
 interface EditorHostProps {
-  readonly text: string
+  readonly text?: string
+  readonly document?: EditorDocument
   readonly appendKey?: number
   readonly textUpdate?: import('./service.ts').FileViewerTextUpdate
   readonly readOnly: boolean
   readonly comparison?: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]['comparison']
   readonly lineNumbers: boolean
   readonly loadEditor: () => Promise<FileViewerEditorModule>
-  readonly onChange: (text: string) => void
+  readonly onChange: (changes: readonly FileViewerTextChange[]) => EditorDocument | undefined
   readonly viewState?: unknown
   readonly onViewStateChange?: (state: unknown) => void
   readonly loadingLabel: string
@@ -108,13 +111,13 @@ interface EditorHostProps {
 
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
-  text, appendKey, textUpdate, readOnly, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
+  text, document, appendKey, textUpdate, readOnly, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<FileViewerEditorModule['createFileViewerEditor']>>()
-  const textRef = useRef(text)
+  const inputRef = useRef({ text, document, appendKey })
   const readOnlyRef = useRef(readOnly)
-  const appliedRef = useRef({ text, appendKey })
+  const appliedRef = useRef({ text, document, appendKey })
   const comparisonRef = useRef(comparison)
   const lineNumbersRef = useRef(lineNumbers)
   const viewStateRef = useRef(viewState)
@@ -122,7 +125,7 @@ export function EditorHost({
   const onViewStateChangeRef = useRef(onViewStateChange)
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
   readOnlyRef.current = readOnly
-  textRef.current = text
+  inputRef.current = { text, document, appendKey }
   comparisonRef.current = comparison
   lineNumbersRef.current = lineNumbers
   viewStateRef.current = viewState
@@ -135,11 +138,14 @@ export function EditorHost({
       if (!live || parentRef.current === null) return
       const handle = editor.createFileViewerEditor({
         parent: parentRef.current,
-        text: textRef.current,
+        text: inputRef.current.document?.toString() ?? inputRef.current.text ?? '',
         readOnly: readOnlyRef.current,
         ...(comparisonRef.current === undefined ? {} : { comparison: comparisonRef.current }),
         lineNumbers: lineNumbersRef.current,
-        onChange: value => { onChangeRef.current(value) },
+        onChange: changes => {
+          const document = onChangeRef.current(changes)
+          if (document !== undefined) appliedRef.current = { document, text: undefined, appendKey: undefined }
+        },
         viewState: viewStateRef.current,
         onViewStateChange: value => { onViewStateChangeRef.current?.(value) },
       })
@@ -147,7 +153,7 @@ export function EditorHost({
         handle.destroy()
         return
       }
-      appliedRef.current = { text: textRef.current, appendKey }
+      appliedRef.current = inputRef.current
       handleRef.current = handle
       setState('ready')
     }, () => {
@@ -164,14 +170,25 @@ export function EditorHost({
     const handle = handleRef.current
     if (handle === undefined) return
     const previous = appliedRef.current
-    const finishing = appendKey === undefined && previous.appendKey !== undefined && text.startsWith(previous.text)
-    if (finishing || (appendKey !== undefined && previous.appendKey === appendKey && text.length >= previous.text.length)) {
-      handle.appendText(text.slice(previous.text.length))
-    } else if (textUpdate !== undefined && textUpdate.previousText === previous.text && text !== previous.text) {
-      handle.applyChanges(text, textUpdate.changes)
-    } else handle.setText(text)
-    appliedRef.current = { text, appendKey }
-  }, [text, appendKey, textUpdate])
+    if (document !== undefined) {
+      if (document === previous.document) return
+      if (textUpdate !== undefined && textUpdate.previousDocument === previous.document && previous.document !== undefined) {
+        handle.applyChanges(textUpdate.changes)
+      } else if (previous.document !== undefined) {
+        for (const changes of document.updatesSince(previous.document)) handle.applyChanges(changes)
+      } else {
+        const complete = document.toString()
+        if (previous.appendKey !== undefined && previous.text !== undefined && complete.startsWith(previous.text)) {
+          handle.appendText(complete.slice(previous.text.length))
+        } else handle.setText(complete)
+      }
+    } else if (text !== undefined) {
+      if (appendKey !== undefined && previous.appendKey === appendKey && previous.text !== undefined && text.startsWith(previous.text)) {
+        handle.appendText(text.slice(previous.text.length))
+      } else handle.setText(text)
+    }
+    appliedRef.current = { text, document, appendKey }
+  }, [text, document, appendKey, textUpdate])
   useEffect(() => { handleRef.current?.setReadOnly(readOnly) }, [readOnly])
   useEffect(() => {
     handleRef.current?.setComparison(comparison)
@@ -243,7 +260,7 @@ function ReadyPanel({
   presentation, retainPresentation, onViewStateChange, t,
 }: {
   readonly state: EditorSnapshot
-  readonly edit: (text: string) => void
+  readonly edit: (changes: readonly FileViewerTextChange[]) => EditorDocument | undefined
   readonly save: () => void
   readonly refresh: () => void
   readonly confirmLoad: () => void
@@ -275,11 +292,13 @@ function ReadyPanel({
     presentation.largeDefaultsApplied = true
   }
   const showDifferences = presentation.differences
+  const baseText = showDifferences ? ready?.baseText : undefined
+  const sourceText = showDifferences ? ready?.latestSourceText : undefined
   const comparison = useMemo(() => ready !== undefined && showDifferences ? {
-    baseText: ready?.baseText ?? '',
-    ...(ready?.latestSourceText === undefined ? {} : { sourceText: ready?.latestSourceText }),
+    baseText: baseText ?? '',
+    ...(sourceText === undefined ? {} : { sourceText }),
     labels: { local: t('local'), source: t('source'), noDifferences: t('noDifferences') },
-  } : undefined, [showDifferences, ready?.baseText, ready?.latestSourceText, t])
+  } : undefined, [showDifferences, baseText, sourceText, t])
   const lineNumberDefault = useSyncExternalStore(subscribeLineNumberDefault, defaultLineNumbers, defaultLineNumbers)
   const controlsRef = useRef<HTMLDivElement>(null)
   const statusRef = useRef<HTMLButtonElement>(null)
@@ -409,7 +428,7 @@ function ReadyPanel({
       </>}
       <div className="dsh-file-viewer-primary-editor">
         <EditorHost
-          text={state.text}
+          {...(state.status === 'ready' ? { document: state.document } : { text: state.text })}
           {...(ready?.textUpdate === undefined ? {} : { textUpdate: ready.textUpdate })}
           {...(state.status === 'partial' ? { appendKey: state.streamId } : {})}
           readOnly={!ready?.saveSupported}
@@ -463,7 +482,11 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
     <ReadyPanel
       key={props.instanceId}
       state={state}
-      edit={text => { props.edit(props.instanceId, text) }}
+      edit={changes => {
+        props.editChanges(props.instanceId, changes)
+        const current = props.snapshot(props.instanceId)
+        return current.status === 'ready' ? current.document : undefined
+      }}
       save={() => { props.save(props.instanceId) }}
       refresh={() => { props.refresh(props.instanceId) }}
       confirmLoad={() => { props.confirmLoad(props.instanceId) }}

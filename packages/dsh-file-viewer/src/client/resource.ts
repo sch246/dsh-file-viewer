@@ -1,3 +1,4 @@
+import type { FileViewerTextChange } from './editor-module.ts'
 import type { ComponentType } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {
@@ -284,6 +285,8 @@ export interface ResourceWorkbenchClientService {
   subscribeText(viewId: string, listener: () => void): () => void
   /** @param viewId Text resource view. @param text New shared local text. Pins the view after its first edit. */
   editText(viewId: string, text: string): void
+  /** @param viewId Text resource view. @param changes Ordered UTF-16 ranges in the current shared document. Pins its first edit. */
+  editTextChanges(viewId: string, changes: readonly FileViewerTextChange[]): void
   /** @param viewId Text resource view. @returns Nothing after guarded saving. */
   saveText(viewId: string): Promise<void>
   /** @param viewId Text resource view. @returns Nothing after source observation. */

@@ -1,3 +1,4 @@
+import type { FileViewerTextChange } from './editor-module.ts'
 import type { RightSidebarService } from '@dsh-external/dsh-right-sidebar/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ResourceBytesWatchEvent, ResourceAutomationPreferences } from './resource.ts'
@@ -61,6 +62,7 @@ export function createResourceWorkbenchClientService(
     textSnapshot: (viewId: string) => runtime.textSnapshot(viewId),
     subscribeText: (viewId: string, listener: () => void) => runtime.subscribeText(viewId, listener),
     editText: (viewId: string, text: string) => { runtime.editText(viewId, text) },
+    editTextChanges: (viewId: string, changes: readonly FileViewerTextChange[]) => { runtime.editTextChanges(viewId, changes) },
     saveText: (viewId: string) => runtime.saveText(viewId),
     refreshText: (viewId: string) => runtime.refreshText(viewId),
     cancelTextLoad: (viewId: string) => runtime.cancelTextLoad(viewId),

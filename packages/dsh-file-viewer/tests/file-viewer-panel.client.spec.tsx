@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileViewerPanel, type FileViewerPanelProps } from '../src/client/FileViewerPanel.tsx'
 import type { FileViewerInstanceSnapshot } from '../src/client/service.ts'
+import { TextDocumentSnapshot } from '../src/client/text-document.ts'
+import type { FileViewerEditorModule, FileViewerTextChange } from '../src/client/editor-module.ts'
 import { FileViewerSourceId } from '../src/client/service.ts'
 import { en } from '../src/client/locales.ts'
 
@@ -22,6 +24,7 @@ function ready(
     operation: 'idle',
     activities: { updating: false, saving: false },
     text: 'local',
+    document: TextDocumentSnapshot.fromText('local'),
     localHash: 'local-hash',
     baseText: 'base',
     baseHash: 'base-hash',
@@ -50,7 +53,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     instanceId,
     snapshot: () => snapshot,
     subscribe: () => () => {},
-    edit: vi.fn(),
+    editChanges: vi.fn(),
     save: vi.fn(),
     refresh: vi.fn(),
     confirmLoad: vi.fn(), cancelLoad: vi.fn(),
@@ -67,7 +70,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     loadEditor: async () => ({
       createFileViewerEditor: ({ parent }) => {
         parent.dataset.editor = 'mounted'
-        return { appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+        return { applyChanges: vi.fn(), appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
       },
     }),
     t: key => en[key],
@@ -77,6 +80,64 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('FileViewerPanel', () => {
+  it('shares batched range edits without replaying the origin or flattening documents', async () => {
+    let current = ready({ document: TextDocumentSnapshot.fromText('a\nb\nc\n'), syncStatus: 'local-ahead' })
+    const listeners = new Set<() => void>()
+    const editors: { text: string; input: (changes: readonly FileViewerTextChange[]) => void; received: unknown[] }[] = []
+    const apply = (text: string, changes: readonly FileViewerTextChange[]) => {
+      for (const change of [...changes].reverse()) text = text.slice(0, change.from) + change.insert + text.slice(change.to)
+      return text
+    }
+    const loadEditor: () => Promise<FileViewerEditorModule> = async () => ({
+      createFileViewerEditor: options => {
+        const editor = { text: options.text, received: [] as unknown[], input: (changes: readonly FileViewerTextChange[]) => {
+          editor.text = apply(editor.text, changes)
+          options.onChange(changes)
+        } }
+        editors.push(editor)
+        return {
+          applyChanges: changes => { editor.received.push(changes); editor.text = apply(editor.text, changes) },
+          setText: () => { throw new Error('full editor replacement') },
+          appendText: () => {}, setReadOnly: () => {}, setComparison: () => {}, setLineNumbers: () => {},
+          captureViewState: () => undefined, destroy: () => {},
+        }
+      },
+    })
+    const input: FileViewerPanelProps = {
+      ...props(current),
+      snapshot: () => current,
+      subscribe: (_id, listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+      editChanges: (_id, changes) => {
+        const document = current.document.edit(changes)
+        current = ready({ document, syncStatus: 'local-ahead' })
+        Object.defineProperty(current, 'text', { get() { throw new Error('ready text read') } })
+        Object.defineProperty(current, 'baseText', { get() { throw new Error('comparison text read') } })
+        for (const listener of listeners) listener()
+      },
+      loadEditor,
+    }
+    render(<><FileViewerPanel {...input} /><FileViewerPanel {...input} instanceId="second" /></>)
+    await waitFor(() => { expect(editors).toHaveLength(2) })
+    const [first, second] = editors
+    const flatten = vi.spyOn(TextDocumentSnapshot.prototype, 'toString')
+    try {
+      act(() => {
+        first!.input([{ from: 0, to: 1, insert: 'A' }])
+        first!.input([{ from: 1, to: 1, insert: '!' }])
+      })
+      expect(first!.text).toBe('A!\nb\nc\n')
+      expect(second!.text).toBe(first!.text)
+      expect(first!.received).toHaveLength(0)
+      expect(second!.received).toHaveLength(2)
+      act(() => { second!.input([{ from: 5, to: 6, insert: 'C' }]) })
+      expect(first!.text).toBe('A!\nb\nC\n')
+      expect(second!.text).toBe(first!.text)
+      expect(first!.received).toHaveLength(1)
+      expect(second!.received).toHaveLength(2)
+      expect(flatten).not.toHaveBeenCalled()
+    } finally { flatten.mockRestore() }
+  })
+
   it('presents conflicts, provider locations, and explicitly confirmed resolutions', async () => {
     const input = props(ready())
     const { container } = render(<FileViewerPanel {...input} />)
@@ -129,7 +190,7 @@ describe('FileViewerPanel', () => {
         createFileViewerEditor: ({ parent, comparison }) => {
           parent.dataset.editor = 'mounted'
           comparisons.push(comparison)
-          return { appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: value => { comparisons.push(value) }, setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+          return { applyChanges: vi.fn(), appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: value => { comparisons.push(value) }, setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
         },
       }),
     }
@@ -168,7 +229,7 @@ describe('FileViewerPanel', () => {
       failure: { code: 'load-failed', message: 'the file is not UTF-8 text' },
     }
     const view = render(<FileViewerPanel {...props(failed)} />)
-    expect(screen.getByRole('alert').textContent).toBe(`${en.loadFailed}the file is not UTF-8 text`)
+    expect(screen.getByRole('alert').textContent).toBe(`${en.loadFailed}the file is not UTF-8 text${en.retryLoading}`)
 
     // A deleted resource is a distinct state, not a generic load failure.
     const missing: FileViewerInstanceSnapshot = {
@@ -177,7 +238,7 @@ describe('FileViewerPanel', () => {
     }
     view.rerender(<FileViewerPanel {...props(missing)} />)
     expect(screen.getByRole('alert').textContent)
-      .toBe(`${en.resourceMissing}path "/root/bot/test.txt" was not found`)
+      .toBe(`${en.resourceMissing}path "/root/bot/test.txt" was not found${en.retryLoading}`)
   })
 
   it('saves immediately on Ctrl+S and gates automatic controls by source capabilities', () => {

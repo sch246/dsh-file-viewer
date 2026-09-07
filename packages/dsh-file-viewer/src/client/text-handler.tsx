@@ -18,7 +18,7 @@ export function createTextResourceView(dependencies: TextResourceHandlerDependen
         instanceId={viewId}
         snapshot={() => service.textSnapshot(viewId)}
         subscribe={(_id, listener) => service.subscribeText(viewId, listener)}
-        edit={(_id, text) => { service.editText(viewId, text) }}
+        editChanges={(_id, changes) => { service.editTextChanges(viewId, changes) }}
         save={() => { void service.saveText(viewId) }}
         cancelLoad={() => { service.cancelTextLoad(viewId) }}
         confirmLoad={() => { void service.confirmTextLoad(viewId) }}

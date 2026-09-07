@@ -59,7 +59,7 @@ it('edits the retained local view, updates source, toggles numbering and omits e
   expect(onChange).not.toHaveBeenCalled()
 
   local.dispatch({ changes: { from: 5, insert: ' edit' } })
-  expect(onChange).toHaveBeenLastCalledWith('local edit\n')
+  expect(onChange).toHaveBeenLastCalledWith([{ from: 5, to: 5, insert: ' edit' }])
   onChange.mockClear()
   handle.setComparison({ ...comparison, sourceText: 'latest\n' })
   expect(source.state.doc.toString()).toBe('latest\n')

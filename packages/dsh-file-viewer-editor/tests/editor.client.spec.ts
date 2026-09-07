@@ -74,7 +74,7 @@ describe('CodeMirror editor handle', () => {
 
     expect(undo(restoredFirst.view)).toBe(true)
     expect(restoredFirst.view.state.doc.toString()).toBe('first')
-    expect(newChange).toHaveBeenLastCalledWith('first')
+    expect(newChange).toHaveBeenLastCalledWith([{ from: 5, to: 10, insert: '' }])
     expect(oldChange).not.toHaveBeenCalled()
     expect(restoredSecond.view.state.doc.toString()).toBe('second draft')
     expect(undo(restoredSecond.view)).toBe(true)
@@ -115,7 +115,7 @@ describe('CodeMirror editor handle', () => {
     expect(undo(restored.view)).toBe(false)
   })
 
-  it('reuses the retained text so unchanged source state dispatches nothing', () => {
+  it('leaves unchanged source state and undo history intact', () => {
     const onViewStateChange = vi.fn()
     const { handle, view } = mount({ text: 'same', onViewStateChange })
     handle.setText('same')
@@ -206,13 +206,32 @@ describe('CodeMirror editor handle', () => {
     view.dispatch({ changes: { from: 4, to: 5, insert: 'C' }, selection: { anchor: 4, head: 5 } })
     onChange.mockClear()
     view.scrollDOM.scrollTop = 123
-    handle.applyChanges('long\nb\nC\n', [{ from: 0, to: 2, insert: 'long\n' }])
+    handle.applyChanges([{ from: 0, to: 2, insert: 'long\n' }])
     expect(view.state.selection.main).toMatchObject({ anchor: 7, head: 8 })
     expect(view.scrollDOM.scrollTop).toBe(123)
     expect(onChange).not.toHaveBeenCalled()
     expect(undo(view)).toBe(true)
     expect(view.state.doc.toString()).toBe('long\nb\nc\n')
     expect(undo(view)).toBe(false)
+  })
+
+  it('emits disjoint input and undo ranges without serializing the full document', () => {
+    const onChange = vi.fn()
+    const text = 'unchanged line\n'.repeat(10000)
+    const { view, handle } = mount({ text, onChange })
+    const serialize = vi.spyOn(Object.getPrototypeOf(view.state.doc), 'toString')
+    try {
+      view.dispatch({ changes: [{ from: 1, to: 3, insert: '漢😀' }, { from: 50, to: 51, insert: '' }] })
+      expect(onChange).toHaveBeenLastCalledWith([
+        { from: 1, to: 3, insert: '漢😀' }, { from: 50, to: 51, insert: '' },
+      ])
+      handle.applyChanges([{ from: 100, to: 100, insert: 'peer' }])
+      expect(undo(view)).toBe(true)
+      expect(serialize).not.toHaveBeenCalled()
+      expect(onChange).toHaveBeenLastCalledWith([
+        { from: 1, to: 4, insert: 'nc' }, { from: 51, to: 51, insert: 'n' },
+      ])
+    } finally { serialize.mockRestore() }
   })
 
   it('rejects foreign view state before attaching an editor', () => {

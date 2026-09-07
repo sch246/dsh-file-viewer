@@ -1,3 +1,5 @@
+import type { TextChange } from './text-document.ts'
+
 /** Exact comparison inputs and caller-localized pane labels. */
 export interface FileViewerComparison {
   readonly baseText: string
@@ -5,20 +7,23 @@ export interface FileViewerComparison {
   readonly labels: { readonly local: string; readonly source: string; readonly noDifferences: string }
 }
 
+/** One UTF-16 replacement in the document before a transaction. */
+export type FileViewerTextChange = TextChange
+
 /** Editor factory supplied by the independent graph row; view state stays opaque to the viewer. */
 export interface FileViewerEditorModule {
   createFileViewerEditor(options: {
     readonly parent: HTMLElement
     readonly text: string
     readonly readOnly: boolean
-    readonly onChange: (text: string) => void
+    readonly onChange: (changes: readonly FileViewerTextChange[]) => void
     readonly lineNumbers?: boolean
     readonly comparison?: FileViewerComparison
     readonly viewState?: unknown
     readonly onViewStateChange?: (state: unknown) => void
   }): {
     setText(text: string): void
-    applyChanges(text: string, changes: readonly { readonly from: number; readonly to: number; readonly insert: string }[]): void
+    applyChanges(changes: readonly FileViewerTextChange[]): void
     appendText(text: string): void
     setReadOnly(readOnly: boolean): void
     setLineNumbers(enabled: boolean): void

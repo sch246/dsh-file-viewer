@@ -11,12 +11,15 @@ export interface FileViewerComparison {
   readonly labels: { readonly local: string; readonly source: string; readonly noDifferences: string }
 }
 
+/** One UTF-16 replacement in the document before a transaction. */
+export interface FileViewerTextChange { readonly from: number; readonly to: number; readonly insert: string }
+
 /** Parameters for one retained local CodeMirror instance. */
 export interface FileViewerEditorOptions {
   readonly parent: HTMLElement
   readonly text: string
   readonly readOnly: boolean
-  readonly onChange: (text: string) => void
+  readonly onChange: (changes: readonly FileViewerTextChange[]) => void
   readonly lineNumbers?: boolean
   readonly comparison?: FileViewerComparison
   /** Opaque, memory-only snapshot captured by this module for the same resource view. */
@@ -30,7 +33,7 @@ export interface FileViewerEditorHandle {
   /** Replace source text without recording an undo step or invoking onChange. */
   setText(text: string): void
   /** Apply validated source ranges, mapping selection and undo positions without recording an undo step. */
-  applyChanges(text: string, changes: readonly { readonly from: number; readonly to: number; readonly insert: string }[]): void
+  applyChanges(changes: readonly FileViewerTextChange[]): void
   /** Append canonical source text without moving selection, recording undo or invoking onChange. */
   appendText(text: string): void
   /** Reconfigure editing permission without replacing the view or its history. */
@@ -53,8 +56,8 @@ class ViewState {
   ) {}
 }
 
-/** Each local view retains its exact text so no presentation step reserializes the document. */
-interface Binding { options: FileViewerEditorOptions; applying: boolean; text: string }
+/** External transactions suppress the local-edit callback. */
+interface Binding { options: Pick<FileViewerEditorOptions, 'onChange' | 'onViewStateChange'>; applying: boolean }
 
 const bindings = new WeakMap<EditorView, Binding>()
 
@@ -69,10 +72,12 @@ function reportViewState(view: EditorView): void {
 // Captured states must not retain a disposed view or its callbacks.
 const updateListener = EditorView.updateListener.of((update) => {
   const binding = bindings.get(update.view)
-  // Applied source text is already known, so only user and history changes are serialized, once.
   if (update.docChanged && binding && !binding.applying) {
-    binding.text = update.state.doc.toString()
-    binding.options.onChange(binding.text)
+    const changes: FileViewerTextChange[] = []
+    update.changes.iterChanges((from, to, _fromB, _toB, insert) => {
+      changes.push({ from, to, insert: insert.toString() })
+    })
+    binding.options.onChange(changes)
   }
   if (update.docChanged || update.selectionSet) reportViewState(update.view)
 })
@@ -272,10 +277,11 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   const view = new EditorView({ parent: localPane.host, state, scrollTo,
     dispatchTransactions: transactions => {
       view.update(transactions)
-      if (transactions.some(transaction => transaction.docChanged)) refresh()
+      if (comparison && transactions.some(transaction => transaction.docChanged)) refresh()
     },
   })
-  const binding: Binding = { options, applying: false, text: options.text }
+  const binding: Binding = { options: { onChange: options.onChange,
+    ...(options.onViewStateChange === undefined ? {} : { onViewStateChange: options.onViewStateChange }) }, applying: false }
   bindings.set(view, binding)
   if (prior) { view.scrollDOM.scrollTop = prior.scrollTop; view.scrollDOM.scrollLeft = prior.scrollLeft }
 
@@ -375,7 +381,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
       view.dispatch({ effects: [numbering.reconfigure(numbersEnabled ? lineNumbers() : []), presentationEffect.of(emptyPresentation)] })
       return
     }
-    const localText = binding.text
+    const localText = view.state.doc.toString()
     const hasSource = comparison.sourceText !== undefined && comparison.sourceText !== comparison.baseText && comparison.sourceText !== localText
     onlySource = hasSource && localText === comparison.baseText
     localPane.element.hidden = onlySource
@@ -414,49 +420,28 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   refresh()
   return {
     setText: text => {
-      if (text === binding.text) return
-      // The dispatch refreshes comparison synchronously, so the retained text leads it.
-      const previous = binding.text
-      const previousDocument = view.state.doc
+      if (view.state.doc.eq(Text.of(text.split('\n')))) return
       binding.applying = true
-      binding.text = text
-      try {
-        view.dispatch(replaceText(view.state, text))
-      } catch (error: unknown) {
-        binding.text = view.state.doc === previousDocument ? previous : view.state.doc.toString()
-        throw error
-      } finally { binding.applying = false }
+      try { view.dispatch(replaceText(view.state, text)) } finally { binding.applying = false }
     },
-    applyChanges: (text, changes) => {
-      const previous = binding.text
-      const previousDocument = view.state.doc
+    applyChanges: changes => {
       const top = view.scrollDOM.scrollTop, left = view.scrollDOM.scrollLeft
       binding.applying = true
-      binding.text = text
       try {
         view.dispatch({ changes: [...changes], annotations: Transaction.addToHistory.of(false) })
         view.scrollDOM.scrollTop = top
         view.scrollDOM.scrollLeft = left
-      } catch (error: unknown) {
-        binding.text = view.state.doc === previousDocument ? previous : view.state.doc.toString()
-        throw error
       } finally { binding.applying = false }
     },
     appendText: text => {
       if (text === '') return
-      const previous = binding.text
-      const previousDocument = view.state.doc
       const top = view.scrollDOM.scrollTop, left = view.scrollDOM.scrollLeft
       binding.applying = true
-      binding.text += text
       try {
         view.dispatch({ changes: { from: view.state.doc.length, insert: Text.of(text.split('\n')) },
           selection: view.state.selection, annotations: Transaction.addToHistory.of(false) })
         view.scrollDOM.scrollTop = top
         view.scrollDOM.scrollLeft = left
-      } catch (error: unknown) {
-        binding.text = view.state.doc === previousDocument ? previous : view.state.doc.toString()
-        throw error
       } finally { binding.applying = false }
     },
     setReadOnly: readOnly => { view.dispatch({ effects: editing.reconfigure(EditorState.readOnly.of(readOnly)) }) },

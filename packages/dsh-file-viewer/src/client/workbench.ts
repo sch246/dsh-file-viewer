@@ -1,3 +1,5 @@
+import type { TextBlockPolicy } from './text-document.ts'
+import type { FileViewerTextChange } from './editor-module.ts'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
   FileViewerService,
@@ -124,6 +126,8 @@ export interface ResourceWorkbenchOptions {
   readonly progressiveFlushIntervalMs?: number
   readonly persistenceDebounceMs?: number
   readonly hashText?: (text: string) => Promise<string>
+  /** Canonical UTF-8 targets for shared document blocks. */
+  readonly textBlockPolicy?: TextBlockPolicy
   /** Validated byte tiers for background defaults and explicit huge-file loading. */
   readonly largeFileBytes?: number
   readonly hugeFileBytes?: number
@@ -284,6 +288,7 @@ export class ResourceWorkbenchRuntime {
       ...(options.persistenceDebounceMs === undefined ? {} : { persistenceDebounceMs: options.persistenceDebounceMs }),
       ...(options.progressiveFlushIntervalMs === undefined ? {} : { progressiveFlushIntervalMs: options.progressiveFlushIntervalMs }),
       ...(options.hashText === undefined ? {} : { hashText: options.hashText }),
+      ...(options.textBlockPolicy === undefined ? {} : { textBlockPolicy: options.textBlockPolicy }),
       ...(options.largeEditCheckDelayMs === undefined ? {} : { largeEditCheckDelayMs: options.largeEditCheckDelayMs }),
       ...(options.largeFileBytes === undefined ? {} : { largeFileBytes: options.largeFileBytes }),
       ...(options.hugeFileBytes === undefined ? {} : { hugeFileBytes: options.hugeFileBytes }),
@@ -765,6 +770,12 @@ export class ResourceWorkbenchRuntime {
   /** Edit shared text and pin the first edited preview. */
   editText(viewId: string, text: string): void {
     this.documents.edit(this.#documentId(viewId), text)
+    this.markEdited(viewId)
+  }
+
+  /** @param viewId Text view. @param changes Ordered UTF-16 replacements in its current shared document. */
+  editTextChanges(viewId: string, changes: readonly FileViewerTextChange[]): void {
+    this.documents.editChanges(this.#documentId(viewId), changes)
     this.markEdited(viewId)
   }
 
