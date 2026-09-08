@@ -1,0 +1,7 @@
+# Full-document commands and contributed presentation
+
+CodeMirror owns the complete loaded document and only virtualizes rendered lines. Its maintained command and search extensions therefore own file-end navigation, extended selection and search/replace; the workbench continues receiving incremental UTF-16 changes. Source comparison views share navigation and search but remain read-only. Browser typography reconfigures existing views rather than rebuilding their document or undo state.
+
+Resource handlers can declare participation in the shared text document. Text editing and Markdown preview observe the same Local document and count as presentations of it; switching between them neither discards edits nor suspends synchronization. Handler-specific opaque state remains keyed by view and handler. Leaving text-document participation and closing the last owner retain the existing dirty and custom-handler guards. The Markdown handler uses Host Markdown primitives and the same approval/error state as text editing.
+
+The workbench owns one language registry per runtime. Optional Client plugins register tokenizer descriptors with disposers; a selected descriptor loads a plain StreamParser object. The separate editor package alone constructs CodeMirror language extensions, avoiding incompatible copies of EditorState across browser bundles. The supplied language pack depends on the viewer API; neither viewer nor editor requires the pack. Removing a contribution restores plain text and invalidates pending loads.

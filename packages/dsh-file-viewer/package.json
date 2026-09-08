@@ -1,7 +1,7 @@
 {
   "name": "@dsh-external/dsh-file-viewer",
-  "version": "0.1.0",
-  "description": "Generic resource workbench with lazy text and image handlers for DeepSeek Harness Web",
+  "version": "0.1.1",
+  "description": "Generic resource workbench with text, image and Markdown handlers for DeepSeek Harness Web",
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",
@@ -62,7 +62,8 @@
         "@dsh-external/dsh-right-sidebar",
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-ui-chat",
-        "@dsh-external/dsh-user-files"
+        "@dsh-external/dsh-user-files",
+        "@deepseek-ai/dsh-client-ui-primitives"
       ],
       "external": [
         "@dsh-external/dsh-file-viewer-editor/client"
@@ -82,7 +83,8 @@
     "@deepseek-ai/dsh-api-remotes": "0.1.2-alpha.2",
     "@deepseek-ai/dsh-client-ui-chat": "0.1.2-alpha.2",
     "@deepseek-ai/dsh-typert-protocol": "0.1.2-alpha.2",
-    "@deepseek-ai/schemastery": ">=3.18.2 <4"
+    "@deepseek-ai/schemastery": ">=3.18.2 <4",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.2-alpha.2"
   },
   "dependencies": {
     "@dsh-external/dsh-file-viewer-editor": "workspace:^",

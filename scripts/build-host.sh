@@ -16,7 +16,7 @@ fi
 rm -f "$ROOT/harness"
 ln -s "$CHECKOUT" "$ROOT/harness"
 
-rm -rf "$PACKAGE/lib" "$ROOT/packages/dsh-file-viewer-editor/lib"
+rm -rf "$PACKAGE/lib" "$ROOT/packages/dsh-file-viewer-editor/lib" "$ROOT/packages/dsh-file-viewer-languages/lib"
 node "$ROOT/node_modules/typescript/bin/tsc" -p "$PACKAGE/tsconfig.host.json" --pretty false
 (cd "$PACKAGE" && node "$ROOT/node_modules/tsdown/dist/run.mjs" --config tsdown.host.config.ts)
 node "$ROOT/scripts/generate-typert-host.mjs"
@@ -31,3 +31,6 @@ done
 for artifact in "$ROOT/packages/dsh-file-viewer-editor/lib/index.js" "$ROOT/packages/dsh-file-viewer-editor/lib/client.js"; do
   test -f "$artifact" || { echo "build: missing $artifact" >&2; exit 1; }
 done
+
+node "$ROOT/node_modules/typescript/bin/tsc" -p "$ROOT/packages/dsh-file-viewer-languages/tsconfig.json" --pretty false
+(cd "$ROOT/packages/dsh-file-viewer-languages" && node "$ROOT/node_modules/tsdown/dist/run.mjs" --config tsdown.config.ts)

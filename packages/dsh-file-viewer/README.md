@@ -33,7 +33,7 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=we
 
 ### What you get
 
-The Bundle inserts the browser `@dsh-external/dsh-file-viewer` row and the independent `@dsh-external/dsh-file-viewer-editor` graph row. The browser service exposes generic source, handler and opening actions through `ctx.resourceWorkbench`. Each resource view uses the static `resource-workbench` sidebar renderer; its selected text, image or contributed handler module loads on demand.
+The Bundle inserts the browser `@dsh-external/dsh-file-viewer` row and the independent `@dsh-external/dsh-file-viewer-editor` graph row. The browser service exposes generic source, handler and opening actions through `ctx.resourceWorkbench`. Each resource view uses the static `resource-workbench` sidebar renderer; its selected text, image, Markdown or contributed handler module loads on demand.
 
 The Bundle registers the `filesystem` source before restoration and file-opening consumers. Its shared provider supplies text with explicit large-file confirmation, bounded bytes and revision-guarded saves independently of Links enablement. Viewer handles supported files through `chat/open-workspace-file`; directories and unsupported handlers delegate. Breadcrumbs and explicit system opening use the same Host helper; the viewer waits for `sessions` and `remote.session` before registering its runtime. The viewer metadata Remote supplies `resourcePollIntervalMs` (2000 ms in the Bundle); validated Host Config supplies ordered `largeFileBytes` (10 MiB) and `hugeFileBytes` (100 MiB) policy tiers. Above the large tier, automatic synchronization, browser draft writes and differences default off once and remain manually enableable; content polling stops while both automation choices are off. Above the huge tier, Continue loading gives stronger inline confirmation. Provider thresholds/byte limits and manager directory polling stay with their respective owners. Other sources can still register independent content capabilities and source-owned location selection.
 
@@ -50,6 +50,8 @@ Edits publish UTF-16 transaction ranges into one shared block document. Unchange
 Synchronization defaults initialize newly opened text documents, subject to one-time large-tier defaults; changes leave existing document choices intact. Exact document references share automation across views, while separate documents own independent choices. Draft restoration retains those choices. See [synchronization](../../README.md#synchronize-a-document) for source defaults, capability requirements and global-default subscriptions.
 
 Confirmed missing resources retain their views and local drafts, including saved drafts restored before the source returns. Text automation stays paused until a successful observation. Sources supply the generic missing signal; sidebar only renders the optional marking. See [source registration and failures](../../README.md#open-resources-from-another-plugin).
+
+Markdown preview shares unsaved Local text and preserves editor history when switching handlers. Full-document navigation, search/replace, font settings and optional plugin-contributed syntax modes are described in [editor commands and appearance](../../README.md#editor-commands-and-appearance).
 
 The [handler dropdown](../../README.md#choose-a-handler) separates current-view selection from default associations. The text editor keeps synchronization and independent concurrent activities visible while its action stack expands on hover, focus or touch.
 

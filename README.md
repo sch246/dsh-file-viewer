@@ -24,6 +24,7 @@ This repository adds generic resource opening to the DeepSeek Harness Web right-
 
 - [Open resources from another plugin](#open-resources-from-another-plugin)
 - [Choose a handler](#choose-a-handler)
+- [Editor commands and appearance](#editor-commands-and-appearance)
 - [Synchronize a document](#synchronize-a-document)
 - [Recover browser drafts](#recover-browser-drafts)
 - [Use source locations](#use-source-locations)
@@ -96,6 +97,19 @@ Selection order is an explicit handler, a saved MIME or extension association, a
 The workbench bar displays selectable source breadcrumbs and the selected handler dropdown. Long locations remain complete on one horizontally scrollable line instead of shortening every segment. Filesystem breadcrumbs use copyable `/` separators (including Windows drive paths); directory actions retain the source path. Hovering the location shows its full text. In the dropdown, selecting a handler name switches the current view; its circular default toggle sets or cancels the association without switching views. A supported external-open action is also available there. Tab reaches each independent control; Escape and outside clicks close the dropdown.
 
 The image handler is the default for `image/*`; SVG also offers the text handler. It creates an object URL from `Uint8Array` and renders an `img` element, never native HTML. Custom byte editors use `readBytes`, `writeBytes`, `watchBytes`, `markEdited` and a retained `registerCloseGuard` controller without inheriting text hashing or normalization.
+
+The Markdown preview is available for Markdown names and MIME types in Open with. It renders the shared Local text, including unsaved edits, with the Host Markdown renderer. Switching between text and preview retains the same document, editor selection and undo state; normal close protection still applies. Preview follows the same source approval and loading state as editing. Raw HTML is inert; relative images and relative file links follow the Host renderer’s support rather than bypassing filesystem access.
+
+-----
+
+<a id="editor-commands-and-appearance"></a>
+## Editor commands and appearance
+
+Focus the editor to use Ctrl+Home/End for the beginning/end of the complete loaded document; add Shift to extend selection across the document. CodeMirror keeps the complete text while rendering its viewport, so off-screen content participates in selection, copying and commands. Incomplete progressive reads still contain only the received prefix and remain read-only. Ctrl+F opens editor search and Ctrl+H opens replace; search covers the complete loaded text. The Source comparison pane supports search and navigation but cannot replace text. Save and normal undo/redo retain their existing behavior.
+
+The floating editor controls provide font family, font size and language choices. Appearance preferences are browser-local and reconfigure existing views without replacing text or undo history. Light and dark modes distinguish line numbers with a separate gutter background, boundary and subdued color.
+
+Syntax highlighting is optional. Install the separate [language pack](packages/dsh-file-viewer-languages/README.md) to add common languages; the viewer and editor still work as plain text without it. Choose automatic filename detection, plain text or an explicit language in the editor. Other Client plugins can contribute descriptors through `ctx.resourceWorkbench.registerEditorLanguage`; each descriptor supplies an id, label, optional extensions/filenames and an asynchronous loader returning a plain CodeMirror StreamParser. The editor owns parser-to-extension conversion. Registrations return disposers; removing a provider restores plain text, and stale asynchronous loads cannot override a newer selection.
 
 -----
 
@@ -181,6 +195,8 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=we
 
 For large-file saves, inspect both reverse-proxy request-body limits and Harness `client-connection.maxRequestBodyBytes`. Patch JSON uploads can exceed replacement text size because of escaping, hashes and metadata; replacing every line can still approach a full-file upload. Adjust the actual save route and Host configuration together as needed; a configured tier or raised body ceiling does not establish memory capacity, browser storage availability or reliable operation at every file size.
 
+For optional syntax highlighting, build this workspace and add `packages/dsh-file-viewer-languages` through `dsh plugin --profile <name> add /absolute/path/to/packages/dsh-file-viewer-languages` from the selected Host with the selected `DSH_HOME`. The pack requires a compatible viewer API (^0.1.1), not an equal package version. It has its own Bundle and can be removed independently through the corresponding `dsh plugin remove` command. Setup of the viewer alone does not install the pack. Before removing the viewer, remove language packs that consume its service; retain independent manager and filesystem features.
+
 The prerelease `install:local` command uses `--lockfile=false`; it does not create a portable dependency lock. Normal `pnpm install` regenerates a lockfile after compatible dependencies are available from the registry. Tarballs are installation inputs and are not tracked in this repository.
 
 Setup reuses installed shared-provider and sidebar versions satisfying the viewer peer ranges. For an absent shared provider, setup uses the distributed provider resolved by this development installation; `DSH_USER_FILES` selects that resolution during `install:local`. Supply `DSH_SIDEBAR` as a package directory or tarball for an absent sidebar. Setup adds missing peers in the same plugin transaction. Sidebar package directories and tarballs are checked for their package name and compatible version before the transaction. Incompatible installed versions fail before mutation so their existing consumers can be reconciled. Build generates viewer Host metadata, Remote declarations, Client code and editor artifacts with repository-local executables. `resourcePollIntervalMs` belongs to the viewer Bundle and defaults to 2000 ms there; provider read limits remain provider configuration. Install adds the viewer Bundle and the independent CodeMirror package in one profile operation. The viewer Bundle contributes the source-neutral Client service and editor renderer; the editor package remains a plain dependency and separate browser graph row. An external operator controls service activation.
@@ -190,7 +206,7 @@ Setup reuses installed shared-provider and sidebar versions satisfying the viewe
 <a id="remove-the-packages"></a>
 ## Remove the packages
 
-Removal deletes viewer and editor profile dependencies in one operation and retains sidebar and the shared provider for other consumers. It does not change Harness source or restart a service.
+Removal deletes viewer, editor and the supplied optional language pack’s profile dependencies in one operation and retains sidebar and the shared provider for other consumers. It does not change Harness source or restart a service.
 
 ```sh
 DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=web pnpm run remove --check

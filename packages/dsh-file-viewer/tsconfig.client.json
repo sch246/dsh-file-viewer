@@ -39,6 +39,9 @@
     },
     {
       "path": "../../harness/packages/typert/protocol"
+    },
+    {
+      "path": "../../harness/packages/client/ui-primitives"
     }
   ]
 }
