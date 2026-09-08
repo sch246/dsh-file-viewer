@@ -1,0 +1,57 @@
+{
+  "name": "@dsh-external/dsh-file-viewer-languages",
+  "version": "0.1.0",
+  "description": "Optional stream language pack for the DeepSeek Harness resource workbench editor",
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/index.js.map",
+    "lib/client.js",
+    "lib/client.js.map",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bash ../../scripts/build-host.sh",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "test": "node --test tests/languages.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@dsh-external/dsh-file-viewer"
+      ]
+    }
+  },
+  "dependencies": {
+    "@codemirror/legacy-modes": "^6.5.4"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0-rc <5",
+    "@dsh-external/dsh-file-viewer": "^0.1.1"
+  },
+  "devDependencies": {
+    "@codemirror/language": "^6.12.4"
+  }
+}

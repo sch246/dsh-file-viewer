@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-file-viewer-languages
+      name: '@dsh-external/dsh-file-viewer-languages'
+      config: {}
