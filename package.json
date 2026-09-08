@@ -13,7 +13,8 @@
     "install:local": "node scripts/install-local.mjs",
     "test:setup": "node --test scripts/profile-peers.test.mjs",
     "inspect": "bash scripts/setup-host.sh --check",
-    "remove": "bash scripts/uninstall-host.sh"
+    "remove": "bash scripts/uninstall-host.sh",
+    "test:languages": "node --test packages/dsh-file-viewer-languages/tests/languages.test.mjs"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.0-rc",
