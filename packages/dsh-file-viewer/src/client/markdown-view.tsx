@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
-import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MarkdownContent } from './markdown-content.tsx'
 import { formatFileSize } from './file-size.ts'
 import type { FileViewerLocaleKey } from './locales.ts'
 import type { MarkdownLocaleKey } from './markdown-locales.ts'
@@ -18,7 +18,6 @@ export function createMarkdownResourceView(
     const copyLabel = markdown('copy')
     const copiedLabel = markdown('copied')
     const footnotes = markdown('footnotes')
-    const labels = useMemo(() => ({ code: { copyLabel, copiedLabel }, footnotes }), [copyLabel, copiedLabel, footnotes])
     const content = state.status === 'ready' ? state.document : state.status === 'partial' ? state.text : undefined
     const text = useMemo(() => content?.toString(), [content])
     const busy = state.operation !== 'idle'
@@ -48,7 +47,7 @@ export function createMarkdownResourceView(
           </button>}
       </div>
       {text !== undefined && <div className="dsh-resource-markdown-content">
-        <MarkdownText text={text} streaming={state.status === 'partial'} labels={labels} />
+        <MarkdownContent text={text} streaming={state.status === 'partial'} copyLabel={copyLabel} copiedLabel={copiedLabel} footnotes={footnotes} />
       </div>}
     </section>
   }
