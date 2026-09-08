@@ -458,6 +458,7 @@ export class FileViewerService {
   private readonly sources = new Map<FileViewerSourceId, FileViewerSource>()
   private readonly instances = new Map<string, InstanceRecord>()
   private readonly refs = new Map<string, string>()
+  private readonly saveAsReservations = new Set<string>()
   private readonly storage: FileViewerBrowserStorage | undefined
   private readonly debounceMs: number
   private readonly largeEditCheckDelayMs: number
@@ -542,6 +543,18 @@ export class FileViewerService {
       return existing
     }
 
+    if (this.saveAsReservations.has(keyOf(ref))) throw new Error('file-viewer: destination publication is in progress')
+    const record = this.createRecord(ref, sizeBytes)
+    const instanceId = record.snapshot.instanceId
+    const failure = await this.read(record, 'loading', 'initial')
+    if (failure !== undefined) throw new FileViewerOpenError(failure)
+    if (this.instances.get(instanceId) === record && record.snapshot.status === 'failed') {
+      throw new FileViewerOpenError(record.snapshot.failure ?? { code: 'load-failed' })
+    }
+    return instanceId
+  }
+
+  private createRecord(ref: FileViewerDocumentRef, sizeBytes?: number): InstanceRecord {
     const instanceId = `text-editor-${++this.nextInstance}`
     const record: InstanceRecord = {
       allowLargeFile: false,
@@ -576,12 +589,7 @@ export class FileViewerService {
     if (sizeBytes !== undefined) record.snapshot = { ...record.snapshot, sizeBytes }
     this.instances.set(instanceId, record)
     this.refs.set(keyOf(ref), instanceId)
-    const failure = await this.read(record, 'loading', 'initial')
-    if (failure !== undefined) throw new FileViewerOpenError(failure)
-    if (this.instances.get(instanceId) === record && record.snapshot.status === 'failed') {
-      throw new FileViewerOpenError(record.snapshot.failure ?? { code: 'load-failed' })
-    }
-    return instanceId
+    return record
   }
 
   /** Read one instance snapshot. */
@@ -633,6 +641,114 @@ export class FileViewerService {
   /** Save local text only through a conditional source write. */
   async save(instanceId: string): Promise<void> {
     await this.saveRecord(this.record(instanceId), false, false)
+  }
+
+  /**
+   * Publish captured Local to another identity without rereading either document.
+   * Existing dirty documents or drafts reject before writing. Edits made to a clean destination during
+   * publication retain both documents and reject the view transfer after the copy has been written.
+   * @param instanceId Original shared document.
+   * @param ref Prepared destination identity.
+   * @param publish Guarded source publication returning its exact canonical hash and metadata.
+   * @param signal Owning view/source cancellation.
+   * @returns Destination document id; later original edits remain Local over the captured saved Base.
+   */
+  async saveAs(instanceId: string, ref: FileViewerDocumentRef,
+    publish: (text: string, signal: AbortSignal) => Promise<FileViewerSavedDelta & { readonly title: string; readonly location?: FileViewerLocation }>,
+    signal: AbortSignal): Promise<string> {
+    const record = this.record(instanceId)
+    const captured = record.snapshot
+    if (captured.status !== 'ready') throw new Error('file-viewer: Save As requires fully loaded text')
+    const originalKey = keyOf(captured.ref), targetKey = keyOf(ref)
+    if (record.save.controller !== undefined || this.saveAsReservations.has(originalKey)
+      || this.saveAsReservations.has(targetKey)) throw new Error('file-viewer: a save is already in progress')
+    const targetId = this.refs.get(targetKey)
+    const target = targetId === undefined ? undefined : this.record(targetId)
+    if (target !== record) {
+      const draft = this.readDraft(ref)
+      if (draft !== undefined && draft.localText !== draft.baseText) throw new Error('file-viewer: destination has an unsaved browser draft')
+      if (target !== undefined && (target.snapshot.status !== 'ready'
+        || isFileViewerDirty(target.snapshot) || target.save.controller !== undefined)) {
+        throw new Error('file-viewer: destination has unsaved edits or an operation in progress')
+      }
+    }
+    const targetEdits = target?.editGeneration
+    const operation = this.begin(record.save, 'saving')
+    const combined = AbortSignal.any([signal, operation.controller.signal])
+    this.saveAsReservations.add(originalKey)
+    this.saveAsReservations.add(targetKey)
+    for (const participant of new Set([record, ...(target === undefined ? [] : [target])])) {
+      this.cancel(participant.read, new Error('Save As owns document publication'))
+      this.detachWatch(participant)
+      this.clearAutomationTimers(participant)
+    }
+    this.notify(record)
+    try {
+      const text = captured.document.toString()
+      const hash = captured.localHash ?? await this.hashText(text)
+      combined.throwIfAborted()
+      if (target !== undefined && target !== record && (this.instances.get(targetId!) !== target || target.editGeneration !== targetEdits)) {
+        throw new Error('file-viewer: destination changed while preparing Save As')
+      }
+      const pendingDraft = target !== record ? this.readDraft(ref) : undefined
+      if (pendingDraft !== undefined && pendingDraft.localText !== pendingDraft.baseText) {
+        throw new Error('file-viewer: destination has an unsaved browser draft')
+      }
+      const saved = await publish(text, combined)
+      combined.throwIfAborted()
+      if (!this.current(record.save, operation) || record.snapshot.status !== 'ready') throw new Error('file-viewer: Save As was cancelled')
+      if (saved.canonicalHash !== hash) throw new Error('file-viewer: saved copy canonical hash mismatch')
+      if (target !== undefined && target !== record && (this.instances.get(targetId!) !== target || target.editGeneration !== targetEdits)) {
+        throw new Error('file-viewer: copy was written, but the destination has new edits or was closed; the current tab was not switched')
+      }
+      const retainedDraft = target !== record ? this.readDraft(ref) : undefined
+      if (retainedDraft !== undefined && retainedDraft.localText !== retainedDraft.baseText) {
+        throw new Error('file-viewer: copy was written, but the destination has a new browser draft; the current tab was not switched')
+      }
+      const local = record.snapshot
+      const destination = target ?? this.createRecord(ref)
+      if (destination !== record) this.stop(destination, new Error('saved copy replaced the clean destination'))
+      const preferences = destination === target && target !== record ? destination.snapshot : local
+      const { failure: _failure, loadConfirmation: _confirmation, loadProgress: _progress,
+        manualUpdateRequired: _manual, textUpdate: _update, location: _location, ...retained } = local
+      destination.snapshot = deriveSync({ ...retained, instanceId: destination.snapshot.instanceId, ref,
+        title: saved.title, ...(saved.location === undefined ? {} : { location: saved.location }), document: local.document, baseDocument: captured.document,
+        sourceDocument: captured.document, baseText: text, baseHash: hash, baseVersion: saved.version,
+        latestSourceText: text, latestSourceHash: hash, latestSourceVersion: saved.version,
+        ...(local.document === captured.document ? { localHash: hash, localChecked: true } : {}),
+        automation: preferences.automation, draftPersistence: preferences.draftPersistence, largeDefaultsApplied: preferences.largeDefaultsApplied,
+        resourceMissing: false, sourceStale: false, savedWithOtherChanges: false, automationPaused: false,
+        lastSyncedAt: Date.now() })
+      destination.allowLargeFile = record.allowLargeFile
+      destination.allowHugeFile = record.allowHugeFile
+      destination.pauseReason = undefined
+      destination.persistedDraft = undefined
+      this.observeSize(destination, saved.sizeBytes)
+      this.flushDraft(destination)
+      this.notify(destination)
+      if (destination.snapshot.status === 'ready' && !destination.snapshot.localChecked && destination.snapshot.localHash === undefined) {
+        this.hashLocalText(destination.snapshot.instanceId, destination, ++destination.hashGeneration, destination.snapshot.document)
+      }
+      return destination.snapshot.instanceId
+    } catch (error: unknown) {
+      if (this.current(record.save, operation) && record.snapshot.status === 'ready') {
+        record.snapshot = { ...record.snapshot, failure: toFailure(isSaveConflictError(error) ? 'save-conflict' : 'save-failed', error) }
+      }
+      throw error
+    } finally {
+      this.complete(record.save, operation)
+      this.saveAsReservations.delete(originalKey)
+      this.saveAsReservations.delete(targetKey)
+      const destinationId = this.refs.get(targetKey)
+      const destination = destinationId === undefined ? undefined : this.instances.get(destinationId)
+      for (const participant of new Set([record, ...(target === undefined ? [] : [target]),
+        ...(destination === undefined ? [] : [destination])])) {
+        if (this.instances.get(participant.snapshot.instanceId) !== participant) continue
+        this.reconcileWatch(participant)
+        this.notify(participant)
+        this.scheduleAutomation(participant, true)
+      }
+    }
   }
 
   /** Read and manually pull latest source text when local text is clean. */
@@ -886,6 +1002,7 @@ export class FileViewerService {
     operationName: 'loading' | 'refreshing',
     mode: 'initial' | 'manual' | 'observe',
   ): Promise<FileViewerFailure | undefined> {
+    if (this.saveAsReservations.has(keyOf(record.snapshot.ref))) return undefined
     const source = this.sources.get(record.snapshot.ref.sourceId)
     if (record.snapshot.loadConfirmation !== undefined && source !== undefined) {
       this.requireConfirmation(record, record.snapshot.loadConfirmation)
@@ -1184,7 +1301,7 @@ export class FileViewerService {
   private reconcileWatch(record: InstanceRecord): void {
     const source = this.sources.get(record.snapshot.ref.sourceId)
     const value = record.snapshot
-    if (source === undefined || value.status !== 'ready' || value.loadConfirmation !== undefined || value.manualUpdateRequired !== undefined
+    if (this.saveAsReservations.has(keyOf(value.ref)) || source === undefined || value.status !== 'ready' || value.loadConfirmation !== undefined || value.manualUpdateRequired !== undefined
       || (value.sizeTier !== 'normal' && !value.automation.autoUpdate && !value.automation.autoSave)) {
       this.detachWatch(record)
       return
@@ -1353,6 +1470,7 @@ export class FileViewerService {
   }
 
   private saveRecord(record: InstanceRecord, automatic: boolean, overwrite: boolean): Promise<void> {
+    if (this.saveAsReservations.has(keyOf(record.snapshot.ref))) return Promise.resolve()
     if (record.savePromise !== undefined) return record.savePromise
     const promise = this.runSave(record, automatic, overwrite)
     record.savePromise = promise
@@ -1483,6 +1601,7 @@ export class FileViewerService {
   }
 
   private pullLatest(record: InstanceRecord): void {
+    if (this.saveAsReservations.has(keyOf(record.snapshot.ref))) return
     const value = record.snapshot
     if (value.status !== 'ready' || value.sourceStale
       || value.latestSourceText === undefined || value.latestSourceHash === undefined) return
@@ -1581,6 +1700,7 @@ export class FileViewerService {
   }
 
   private scheduleAutomation(record: InstanceRecord, reset: boolean): void {
+    if (this.saveAsReservations.has(keyOf(record.snapshot.ref))) return
     if (record.snapshot.status !== 'ready') return
     if (this.canAutoUpdate(record.snapshot)) {
       if (reset) clearTimeout(record.autoUpdateTimer)

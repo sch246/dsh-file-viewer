@@ -106,6 +106,7 @@ interface ViewRecord {
   transitionGeneration: number
   textAttachRequest: Promise<void> | undefined
   checkpointSuppressed: boolean
+  saveAsController?: AbortController | undefined
 }
 
 interface PersistedResourceView {
@@ -134,6 +135,8 @@ export interface ResourceWorkbenchOptions {
   /** Validated byte tiers for background defaults and explicit huge-file loading. */
   readonly largeFileBytes?: number
   readonly hugeFileBytes?: number
+  /** @param path Prepared destination. @returns Explicit overwrite approval; omission rejects replacement. */
+  readonly confirmSaveAsOverwrite?: (path: string) => boolean | Promise<boolean>
   readonly confirmHandlerSwitch?: (snapshot: ReturnType<FileViewerService['snapshot']>) => boolean | Promise<boolean>
 }
 
@@ -279,11 +282,13 @@ export class ResourceWorkbenchRuntime {
   readonly #views = new Map<string, ViewRecord>()
   readonly #associations = new Map<string, ResourceHandlerId>()
   readonly #confirmHandlerSwitch: NonNullable<ResourceWorkbenchOptions['confirmHandlerSwitch']>
+  readonly #confirmSaveAsOverwrite: NonNullable<ResourceWorkbenchOptions['confirmSaveAsOverwrite']>
   #disposed = false
 
   /** @param options - Sidebar host, persistence and text synchronization policy. */
   constructor(options: ResourceWorkbenchOptions) {
     this.#host = options.host
+    this.#confirmSaveAsOverwrite = options.confirmSaveAsOverwrite ?? (() => false)
     this.#confirmHandlerSwitch = options.confirmHandlerSwitch ?? (() => false)
     this.#storage = options.storage ?? defaultBrowserStorage()
     this.documents = new FileViewerService({
@@ -410,6 +415,7 @@ export class ResourceWorkbenchRuntime {
       this.#sourceDisposers.delete(source.id)
       for (const view of this.#views.values()) {
         if (view.descriptor.ref.sourceId !== source.id) continue
+        view.saveAsController?.abort(new Error('resource source unloaded'))
         this.#stopBytes(view, new Error('resource source unloaded'))
         if (view.documentId === undefined) view.handlerStatus = 'source-unavailable'
         this.#notify(view)
@@ -534,6 +540,7 @@ export class ResourceWorkbenchRuntime {
   /** Switch one view in place while retaining any shared text draft and editor state. */
   async switchHandler(viewId: string, handlerId: ResourceHandlerId): Promise<void> {
     const view = this.#view(viewId)
+    if (view.saveAsController !== undefined) return
     const generation = ++view.transitionGeneration
     if (!this.#matching(view.descriptor).some(row => row.handler.id === handlerId)) {
       this.#publishActionFailure(view, `Handler "${handlerId}" does not support this resource.`)
@@ -769,7 +776,17 @@ export class ResourceWorkbenchRuntime {
 
   /** Subscribe to the shared text document attached to one view. */
   subscribeText(viewId: string, listener: () => void): () => void {
-    return this.documents.subscribe(this.#documentId(viewId), listener)
+    let documentId = this.#documentId(viewId)
+    let unsubscribeDocument = this.documents.subscribe(documentId, listener)
+    const unsubscribeView = this.subscribe(viewId, () => {
+      const next = this.#documentId(viewId)
+      if (next === documentId) return
+      unsubscribeDocument()
+      documentId = next
+      unsubscribeDocument = this.documents.subscribe(documentId, listener)
+      listener()
+    })
+    return () => { unsubscribeView(); unsubscribeDocument() }
   }
 
   /** Edit shared text and pin the first edited preview. */
@@ -787,6 +804,61 @@ export class ResourceWorkbenchRuntime {
   /** Save shared text. */
   saveText(viewId: string): Promise<void> {
     return this.documents.save(this.#documentId(viewId))
+  }
+
+  /** Publish Local under a prepared identity, then move only this view in its existing sidebar instance. */
+  async saveTextAs(viewId: string, path: string): Promise<void> {
+    const view = this.#view(viewId)
+    if (view.saveAsController !== undefined) return
+    const source = this.#sources.get(view.descriptor.ref.sourceId)
+    if (source?.prepareTextSaveAs === undefined || source.saveTextAs === undefined) {
+      this.#publishActionFailure(view, 'Save As is unavailable for this source.')
+      return
+    }
+    const originalId = this.#documentId(viewId)
+    const controller = new AbortController()
+    view.saveAsController = controller
+    view.transitionGeneration++
+    let destinationId: string | undefined
+    view.failure = undefined
+    this.#notify(view)
+    try {
+      const target = await source.prepareTextSaveAs(view.descriptor.ref, path, controller.signal)
+      controller.signal.throwIfAborted()
+      if (target.descriptor.ref.sessionId !== view.descriptor.ref.sessionId || target.descriptor.ref.sourceId !== source.id) {
+        throw new Error('resource-workbench: Save As destination must belong to the same Session and source')
+      }
+      if (target.exists && !await this.#confirmSaveAsOverwrite(target.descriptor.ref.resourceId)) return
+      controller.signal.throwIfAborted()
+      const documentId = await this.documents.saveAs(originalId, toTextRef(target.descriptor.ref), async (text, signal) => {
+        const saved = await source.saveTextAs!(view.descriptor.ref, target, text, signal)
+        return { ...saved, title: target.descriptor.name,
+          ...(target.descriptor.location === undefined ? {} : { location: target.descriptor.location }) }
+      }, controller.signal)
+      destinationId = documentId
+      controller.signal.throwIfAborted()
+      const saved = this.documents.snapshot(documentId)
+      const descriptor = { ...target.descriptor, ...(saved.sizeBytes === undefined ? {} : { size: saved.sizeBytes }) }
+      this.#host.update(descriptor.ref.sessionId, viewId, {
+        title: descriptor.name, resourceMissing: false, restoreDescriptor: persistedDescriptor(descriptor, view.handlerId),
+      })
+      view.textSubscription?.()
+      view.descriptor = descriptor
+      view.documentId = documentId
+      view.resourceMissing = false
+      view.textSubscription = this.documents.subscribe(documentId, () => { this.#syncTextDescriptor(viewId, view) })
+      this.markEdited(viewId)
+      this.#notify(view)
+      if (originalId !== documentId && ![...this.#views.values()].some(other => other.documentId === originalId)) {
+        this.documents.discard(originalId)
+      }
+    } catch (error: unknown) {
+      if (!this.#disposed && destinationId !== undefined && destinationId !== originalId
+        && ![...this.#views.values()].some(other => other.documentId === destinationId)) this.documents.discard(destinationId)
+      if (this.#views.get(viewId) === view && !controller.signal.aborted) this.#publishActionFailure(view, failureMessage(error))
+    } finally {
+      if (view.saveAsController === controller) view.saveAsController = undefined
+    }
   }
 
   /** Observe shared text source state. */
@@ -909,6 +981,7 @@ export class ResourceWorkbenchRuntime {
   async #canClose(viewId: string): Promise<boolean> {
     const view = this.#views.get(viewId)
     if (view === undefined) return true
+    if (view.saveAsController !== undefined) return false
     const generation = ++view.transitionGeneration
     try {
       if (!await this.#acceptGuards(view)) return false
@@ -929,6 +1002,7 @@ export class ResourceWorkbenchRuntime {
     const view = this.#views.get(viewId)
     if (view === undefined) return
     this.#views.delete(viewId)
+    view.saveAsController?.abort(new Error('resource view closed'))
     this.#stopBytes(view, new Error('resource view closed'))
     view.closeGuards.clear()
     view.textSubscription?.()
@@ -1010,6 +1084,7 @@ export class ResourceWorkbenchRuntime {
     this.#sources.clear()
     this.#handlers.clear()
     for (const view of this.#views.values()) {
+      view.saveAsController?.abort(new Error('resource workbench disposed'))
       this.#stopBytes(view, new Error('resource workbench disposed'))
       view.closeGuards.clear()
       view.textSubscription?.()
@@ -1115,6 +1190,7 @@ export class ResourceWorkbenchRuntime {
   #capabilities(source: ResourceSource | undefined): ResourceCapabilities {
     return {
       text: source?.readText !== undefined,
+      textSaveAs: source?.prepareTextSaveAs !== undefined && source.saveTextAs !== undefined,
       bytes: source?.readBytes !== undefined,
       byteWrite: source?.saveBytes !== undefined,
       conditionalByteWrite: source?.saveBytes !== undefined && source.supportsConditionalByteSave === true,

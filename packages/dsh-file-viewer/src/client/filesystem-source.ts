@@ -6,6 +6,7 @@ import {
   ResourceSaveConflictError,
   ResourceConfirmationRequiredError,
   type ResourceTextAccess,
+  type ResourceTextSaveAsTarget,
   type ResourceBytesWatchEvent,
   type ResourceLoadedBytes,
   type ResourceLoadedText,
@@ -18,12 +19,14 @@ import type { FileViewerWatchContext } from './service.ts'
 import type { FileViewerMetadata } from '../types.ts'
 import { hashFileViewerText, isMissingResourceError, isConfirmationRequiredError } from './service.ts'
 import type {
-  UserFileBytesDocument, UserFileRevision, UserFileSaveResult, UserFileTextPatch, UserFilePatchResult, UserFileDeltaResult,
+  UserFileTextSaveAsPlan, UserFileSaveAsResult, UserFileBytesDocument, UserFileRevision, UserFileSaveResult, UserFileTextPatch, UserFilePatchResult, UserFileDeltaResult,
 } from '@dsh-external/dsh-user-files/types'
 
 /** Filesystem-source operations implemented by the generated Remote adapter. */
 export interface FilesystemSourceGateway extends SegmentedTextGateway {
   deltaText(sessionId: SessionId, path: string, baseHash: string, background: boolean, maxPatchBytes: number, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileDeltaResult>
+  prepareTextSaveAs(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileTextSaveAsPlan>
+  saveTextAs(sessionId: SessionId, path: string, text: string, expectedRevision: UserFileRevision | undefined, signal: AbortSignal): Promise<UserFileSaveAsResult>
   readBytes(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileBytesDocument>
   patchText(sessionId: SessionId, path: string, ranges: readonly UserFileTextPatch[], signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFilePatchResult>
   saveBytes(
@@ -191,6 +194,27 @@ export class FilesystemResourceSource implements ResourceSource {
       throw error
     }
     return result
+  }
+
+  /** Resolve a destination through the independent authenticated filesystem provider. */
+  async prepareTextSaveAs(ref: ResourceRef, path: string, signal: AbortSignal): Promise<ResourceTextSaveAsTarget> {
+    const plan = await this.#gateway.prepareTextSaveAs(ref.sessionId, path, signal)
+    return { descriptor: { ...descriptor(plan.path), name: plan.name, ref: { ...ref, resourceId: plan.path } },
+      exists: plan.exists, ...(plan.revision === undefined ? {} : { version: plan.revision }) }
+  }
+
+  /** Publish captured Local only while the prepared destination still has its observed revision or absence. */
+  async saveTextAs(ref: ResourceRef, target: ResourceTextSaveAsTarget, text: string, signal: AbortSignal): Promise<UserFileSaveAsResult> {
+    if (target.exists && (typeof target.version !== 'string' || target.version === '')) throw new Error('file-viewer: overwrite requires a destination revision')
+    try {
+      return await this.#gateway.saveTextAs(ref.sessionId, target.descriptor.ref.resourceId, text,
+        target.version as UserFileRevision | undefined, signal)
+    } catch (error: unknown) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'user-files/stale-version') {
+        throw new ResourceSaveConflictError(error instanceof Error ? error.message : 'filesystem destination changed', { cause: error })
+      }
+      throw error
+    }
   }
 
   /** Publish exact bytes with the opaque revision supplied by the byte editor. */

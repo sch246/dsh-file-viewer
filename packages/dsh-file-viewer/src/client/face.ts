@@ -66,6 +66,7 @@ export function createResourceWorkbenchClientService(
     editText: (viewId: string, text: string) => { runtime.editText(viewId, text) },
     editTextChanges: (viewId: string, changes: readonly FileViewerTextChange[]) => { runtime.editTextChanges(viewId, changes) },
     saveText: (viewId: string) => runtime.saveText(viewId),
+    saveTextAs: (viewId: string, path: string) => runtime.saveTextAs(viewId, path),
     refreshText: (viewId: string) => runtime.refreshText(viewId),
     cancelTextLoad: (viewId: string) => runtime.cancelTextLoad(viewId),
     confirmTextLoad: (viewId: string) => runtime.confirmTextLoad(viewId),

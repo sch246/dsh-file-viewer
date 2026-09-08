@@ -102,6 +102,13 @@ export interface ResourceLoadedBytes {
 /** Result of publishing text to a source. */
 export interface ResourceSavedText { readonly version?: unknown; readonly sizeBytes?: number }
 
+/** Prepared destination identity and the source-owned revision required for publication. */
+export interface ResourceTextSaveAsTarget {
+  readonly descriptor: ResourceDescriptor
+  readonly exists: boolean
+  readonly version?: unknown
+}
+
 /** Actual canonical source hash after a guarded delta publication. */
 export type ResourceSavedDelta = FileViewerSavedDelta
 
@@ -137,6 +144,10 @@ export interface ResourceSource {
   saveText?(ref: ResourceRef, text: string, version: unknown, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceSavedText>
   /** @param ref Exact identity. @param baseText Canonical original Base held locally. @param text Captured Local. @param signal Cancellation. @param access Read approval. @returns Actual published hash; differing source content outside guarded changes may remain. */
   saveTextDelta?(ref: ResourceRef, baseText: string, text: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceSavedDelta>
+  /** @param ref Current resource. @param path User-selected destination. @param signal Cancellation. @returns Canonical destination and observed existence/revision; does not publish text. */
+  prepareTextSaveAs?(ref: ResourceRef, path: string, signal: AbortSignal): Promise<ResourceTextSaveAsTarget>
+  /** @param ref Current resource. @param target Prepared destination; publication must reject changed existence or revision. @param text Exact captured Local. @param signal Cancellation. @returns Published revision and exact canonical hash, without changing canonical text. */
+  saveTextAs?(ref: ResourceRef, target: ResourceTextSaveAsTarget, text: string, signal: AbortSignal): Promise<ResourceSavedDelta>
   /** Provider declaration that `saveText` rejects its recognized revision mismatch before publishing. */
   readonly supportsConditionalTextSave?: boolean
   /** @param ref Exact resource identity. @param listener Text notification receiver; confirmation-required pauses the subscription until explicit approval. @param access Permission retained by this document subscription. @returns Source watch disposer. */
@@ -169,6 +180,7 @@ export type ResourceBytesWatchEvent =
 /** Handler-visible source capabilities without exposing the source registry. */
 export interface ResourceCapabilities {
   readonly text: boolean
+  readonly textSaveAs: boolean
   readonly bytes: boolean
   readonly byteWrite: boolean
   readonly conditionalByteWrite: boolean
@@ -294,6 +306,8 @@ export interface ResourceWorkbenchClientService {
   editTextChanges(viewId: string, changes: readonly FileViewerTextChange[]): void
   /** @param viewId Text resource view. @returns Nothing after guarded saving. */
   saveText(viewId: string): Promise<void>
+  /** @param viewId Text resource view. @param path Source-owned destination path. @returns Nothing after guarded publication and moving this view to the destination; errors retain its original identity and Local. */
+  saveTextAs(viewId: string, path: string): Promise<void>
   /** @param viewId Text resource view. @returns Nothing after source observation. */
   refreshText(viewId: string): Promise<void>
   /** @param viewId Text view showing a large-file prompt. @returns Nothing after the explicitly approved load. */
