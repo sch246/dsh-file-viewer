@@ -102,6 +102,8 @@ export interface ResourceLoadedBytes {
 
 /** Source-owned browser URLs; no content is buffered while preparing them. */
 export interface ResourceStream {
+  /** @param signal Cancellation. @param onProgress Local write progress. @returns Local commit or browser handoff; call directly from a user click. */
+  download?(signal: AbortSignal, onProgress: (progress: { readonly completedBytes: number; readonly totalBytes: number }) => void): Promise<void>
   /** Browser-embeddable URL authenticated without caller-supplied headers; never persisted. */
   readonly url: string
   /** Attachment URL for a browser-owned download. */

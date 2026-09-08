@@ -23,6 +23,9 @@ export function createStreamResourceView(kind: StreamKind, t: (key: StreamLocale
     const [stream, setStream] = useState<ResourceStream>()
     const [failure, setFailure] = useState<string>()
     const [generation, setGeneration] = useState(0)
+    const [progress, setProgress] = useState<number>()
+    const downloadController = useRef<AbortController>()
+    useEffect(() => () => { downloadController.current?.abort() }, [])
     const mediaRef = useRef<HTMLMediaElement | null>(null)
     const [playback] = useState(() => {
       const previous = service.getViewState(viewId, handlerId)
@@ -62,8 +65,22 @@ export function createStreamResourceView(kind: StreamKind, t: (key: StreamLocale
         ? Math.min(playback.position, media.duration) : playback.position
     }
     return <section className="dsh-resource-stream" aria-label={t(kind)}>
+      {progress !== undefined && <div role="progressbar" aria-label={t('download')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}
+        style={{ height: 4, flexShrink: 0, background: `linear-gradient(to right, #000 ${progress}%, transparent ${progress}%)` }} />}
       <div className="dsh-resource-stream-actions">
-        {stream !== undefined && <a href={stream.downloadUrl} download={descriptor.name}>{t('download')}</a>}
+        {stream?.download !== undefined && <a href={stream.downloadUrl} download={descriptor.name}>{t('ordinaryDownload')}</a>}
+        {stream !== undefined && (stream.download === undefined
+          ? <a href={stream.downloadUrl} download={descriptor.name}>{t('download')}</a>
+          : <button type="button" onClick={() => {
+            if (downloadController.current !== undefined) { downloadController.current.abort(); return }
+            const controller = new AbortController()
+            downloadController.current = controller
+            setProgress(0)
+            setFailure(undefined)
+            void stream.download!(controller.signal, value => { if (!controller.signal.aborted) setProgress(value.totalBytes === 0 ? 100 : Math.floor(100 * value.completedBytes / value.totalBytes)) })
+              .catch(error => { if (!controller.signal.aborted) setFailure(`${t('failed')} ${error instanceof Error ? error.message : String(error)}`) })
+              .finally(() => { if (downloadController.current === controller) { downloadController.current = undefined; setProgress(undefined) } })
+          }}>{progress === undefined ? t('parallelDownload') : `${t('cancelDownload')} ${progress}%`}</button>)}
         <button type="button" onClick={() => { setGeneration(value => value + 1) }}>{t('reload')}</button>
       </div>
       {failure !== undefined && <div className="dsh-resource-stream-error" role="alert">{failure}</div>}
