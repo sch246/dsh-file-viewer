@@ -1,9 +1,10 @@
 /** Editable local text and a readonly source pane share baseline rows and measured wrap heights. */
-import { Compartment, EditorSelection, EditorState, StateEffect, StateField, Text, Transaction, type Range } from '@codemirror/state'
+import { Compartment, EditorSelection, EditorState, StateEffect, StateField, Text, Transaction, type Range, type Extension } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, keymap, lineNumbers, type DecorationSet } from '@codemirror/view'
 import { closeSearchPanel, openSearchPanel, search, searchKeymap, searchPanelOpen } from '@codemirror/search'
 import { defaultHighlightStyle, HighlightStyle, StreamLanguage, syntaxHighlighting, type StreamParser } from '@codemirror/language'
+import { createTextMateRegistry, themeAppearance, textMateExtensions, type TextMateLanguage } from './textmate.ts'
 import { buildComparison, type ComparisonCell, type ComparisonSide } from './alignment.ts'
 
 /** Exact comparison inputs and caller-localized pane labels. */
@@ -26,6 +27,8 @@ export interface FileViewerEditorOptions {
   readonly readOnly: boolean
   readonly onChange: (changes: readonly FileViewerTextChange[]) => void
   readonly appearance?: FileViewerEditorAppearance
+  readonly theme?: unknown
+  readonly onFontSizeChange?: (delta: number) => void
   readonly phrases?: Readonly<Record<string, string>>
   readonly lineNumbers?: boolean
   readonly comparison?: FileViewerComparison
@@ -49,8 +52,10 @@ export interface FileViewerEditorHandle {
   setAppearance(appearance: FileViewerEditorAppearance): void
   /** Replace CodeMirror UI translations. */
   setPhrases(phrases: Readonly<Record<string, string>>): void
-  /** Accept a plugin's plain StreamParser object; undefined selects plain text. */
-  setLanguage(parser: unknown): void
+  /** Apply a parsed TextMate/VS Code theme without replacing selection or history. */
+  setTheme(theme: unknown | undefined): Promise<void>
+  /** Load TextMate grammar data or a plain StreamParser; undefined selects plain text. */
+  setLanguage(parser: unknown): Promise<void>
   /** Toggle ordinary line numbers or both baseline/current columns in every comparison pane. */
   setLineNumbers(enabled: boolean): void
   /** Toggle or update comparison without replacing the local view, selection or undo history. */
@@ -70,7 +75,7 @@ class ViewState {
 }
 
 /** External transactions suppress the local-edit callback. */
-interface Binding { options: Pick<FileViewerEditorOptions, 'onChange' | 'onViewStateChange'>; applying: boolean }
+interface Binding { options: Pick<FileViewerEditorOptions, 'onChange' | 'onViewStateChange' | 'onFontSizeChange'>; applying: boolean }
 
 const bindings = new WeakMap<EditorView, Binding>()
 
@@ -276,11 +281,27 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   const typography = new Compartment()
   const localization = new Compartment()
   const language = new Compartment()
+  const coloring = new Compartment()
   let appearance = options.appearance ?? { fontFamily: 'monospace', fontSize: 14 }
   let phrases = options.phrases ?? {}
-  let languageExtension: ReturnType<typeof StreamLanguage.define> | undefined
+  let languageExtension: Extension = []
+  let selectedLanguage: unknown
+  let selectedTheme = options.theme
+  let registry: Awaited<ReturnType<typeof createTextMateRegistry>> | undefined
+  let pendingRegistry: ReturnType<typeof createTextMateRegistry> | undefined
+  let highlightRevision = 0
   const font = () => EditorView.theme({ '.cm-scroller': { fontFamily: appearance.fontFamily, fontSize: `${appearance.fontSize}px` } })
+  const changeFont = (delta: number) => (target: EditorView) => {
+    const callback = bindings.get(target)?.options.onFontSizeChange
+    if (!callback) return false
+    callback(delta)
+    return true
+  }
   const commands = keymap.of([
+    { key: 'Ctrl-=', run: changeFont(1) },
+    { key: 'Ctrl-+', run: changeFont(1) },
+    { key: 'Ctrl-Shift-=', run: changeFont(1) },
+    { key: 'Ctrl--', run: changeFont(-1) },
     { key: 'Mod-h', run: target => {
       openSearchPanel(target)
       if (!target.state.readOnly) target.dom.querySelector<HTMLInputElement>('input[name="replace"]')?.focus()
@@ -289,7 +310,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
     ...searchKeymap, ...defaultKeymap, ...historyKeymap,
   ])
   const presentationExtensions = () => [typography.of(font()), localization.of(EditorState.phrases.of(phrases)),
-    language.of(languageExtension ?? []), syntaxHighlighting(highlightStyle), search(), commands]
+    language.of(languageExtension), coloring.of(themeAppearance(selectedTheme)), syntaxHighlighting(highlightStyle), search(), commands]
   let numbersEnabled = options.lineNumbers ?? true
   let comparison = options.comparison
   let sourcePane: ReturnType<typeof pane> | undefined
@@ -317,6 +338,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
     },
   })
   const binding: Binding = { options: { onChange: options.onChange,
+    ...(options.onFontSizeChange === undefined ? {} : { onFontSizeChange: options.onFontSizeChange }),
     ...(options.onViewStateChange === undefined ? {} : { onViewStateChange: options.onViewStateChange }) }, applying: false }
   bindings.set(view, binding)
   if (prior) { view.scrollDOM.scrollTop = prior.scrollTop; view.scrollDOM.scrollLeft = prior.scrollLeft }
@@ -338,6 +360,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
     if (sourceView) {
       observer.unobserve(sourceView.contentDOM)
       sourceView.scrollDOM.removeEventListener('scroll', sourceScroll)
+      bindings.delete(sourceView)
       sourceView.destroy()
       sourceView = undefined
       sourcePane!.element.remove()
@@ -432,6 +455,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
           extensions: [theme, EditorView.lineWrapping, EditorState.readOnly.of(true), presentation, ...presentationExtensions(),
             numbering.of(numbersEnabled ? comparisonGutter : [])],
         }) })
+        bindings.set(sourceView, binding)
         sourceView.scrollDOM.addEventListener('scroll', sourceScroll)
         observer.observe(sourceView.contentDOM)
       } else if (sourceView.state.doc.toString() !== comparison.sourceText) {
@@ -443,6 +467,37 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
       : buildComparison(comparison.baseText, localText, sourceView ? comparison.sourceText : undefined)
     renderComparison(false)
   }
+  async function configureLanguage(): Promise<void> {
+    const revision = ++highlightRevision
+    const parser = selectedLanguage
+    let extension: Extension = []
+    if (parser !== undefined) {
+      if (typeof parser !== 'object' || parser === null) throw new Error('file-viewer: invalid language module')
+      if ('kind' in parser && parser.kind === 'textmate') {
+        if (!('language' in parser) || typeof parser.language !== 'string' || !('grammars' in parser) || !Array.isArray(parser.grammars)) {
+          throw new Error('file-viewer: TextMate language requires a language id and grammars')
+        }
+        if (!registry) {
+          pendingRegistry ??= createTextMateRegistry().then(value => {
+            if (destroyed) value.dispose()
+            else registry = value
+            return value
+          })
+          await pendingRegistry
+        }
+        if (destroyed || revision !== highlightRevision) return
+        extension = textMateExtensions(registry!, parser as unknown as TextMateLanguage, selectedTheme)
+      } else {
+        if (!('token' in parser) || typeof parser.token !== 'function') throw new Error('file-viewer: language module does not export a StreamParser')
+        extension = StreamLanguage.define(parser as StreamParser<unknown>)
+      }
+    }
+    if (destroyed || revision !== highlightRevision) return
+    languageExtension = extension
+    view.dispatch({ effects: language.reconfigure(extension) })
+    sourceView?.dispatch({ effects: language.reconfigure(extension) })
+  }
+
   const widths = new WeakMap<Element, number>()
   const observer = new ResizeObserver(entries => {
     if (entries.some(entry => {
@@ -502,13 +557,17 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
         if (wasOpen) openSearchPanel(target)
       }
     },
-    setLanguage: parser => {
-      if (parser !== undefined && (typeof parser !== 'object' || parser === null || !('token' in parser) || typeof parser.token !== 'function')) {
-        throw new Error('file-viewer: language module does not export a StreamParser')
-      }
-      languageExtension = parser === undefined ? undefined : StreamLanguage.define(parser as StreamParser<unknown>)
-      view.dispatch({ effects: language.reconfigure(languageExtension ?? []) })
-      sourceView?.dispatch({ effects: language.reconfigure(languageExtension ?? []) })
+    setTheme: async value => {
+      const extension = themeAppearance(value)
+      selectedTheme = value
+      view.dispatch({ effects: coloring.reconfigure(extension) })
+      sourceView?.dispatch({ effects: coloring.reconfigure(extension) })
+      await configureLanguage()
+      scheduleGeometry()
+    },
+    setLanguage: async parser => {
+      selectedLanguage = parser
+      await configureLanguage()
     },
     setLineNumbers: enabled => {
       numbersEnabled = enabled
@@ -521,6 +580,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
     destroy: () => {
       if (destroyed) return
       destroyed = true
+      highlightRevision++
       try { reportViewState(view) } finally {
         if (frame !== undefined) cancelAnimationFrame(frame)
         observer.disconnect()
@@ -528,6 +588,8 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
         view.scrollDOM.removeEventListener('scroll', localScroll)
         bindings.delete(view)
         view.destroy()
+        registry?.dispose()
+        registry = undefined
         root.remove()
       }
     },

@@ -1,10 +1,17 @@
-/** A plugin contributes a plain tokenizer, never a bundled CodeMirror Extension instance. */
+/** Raw TextMate grammar registrations; the editor owns the tokenizer and all CodeMirror objects. */
+export interface EditorTextMateLanguage {
+  readonly kind: 'textmate'
+  readonly language: string
+  readonly grammars: readonly unknown[]
+}
+
+/** A plugin contributes grammar data or a plain tokenizer, never a CodeMirror Extension instance. */
 export interface EditorLanguage {
   readonly id: string
   readonly label: string
   readonly extensions?: readonly string[]
   readonly filenames?: readonly string[]
-  /** Resolve the language's StreamParser object only when selected by an editor. */
+  /** Resolve TextMate grammar data or a plain StreamParser only when selected. */
   readonly load: () => Promise<unknown>
 }
 

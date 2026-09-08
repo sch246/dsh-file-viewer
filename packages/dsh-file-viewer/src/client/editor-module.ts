@@ -21,6 +21,8 @@ export interface FileViewerEditorModule {
     readonly readOnly: boolean
     readonly onChange: (changes: readonly FileViewerTextChange[]) => void
     readonly appearance?: FileViewerEditorAppearance
+    readonly theme?: unknown
+    readonly onFontSizeChange?: (delta: number) => void
     readonly phrases?: Readonly<Record<string, string>>
     readonly lineNumbers?: boolean
     readonly comparison?: FileViewerComparison
@@ -33,7 +35,8 @@ export interface FileViewerEditorModule {
     setReadOnly(readOnly: boolean): void
     setAppearance(appearance: FileViewerEditorAppearance): void
     setPhrases(phrases: Readonly<Record<string, string>>): void
-    setLanguage(parser: unknown): void
+    setTheme(theme: unknown | undefined): Promise<void>
+    setLanguage(parser: unknown): Promise<void>
     setLineNumbers(enabled: boolean): void
     setComparison(comparison: FileViewerComparison | undefined): void
     captureViewState(): unknown
