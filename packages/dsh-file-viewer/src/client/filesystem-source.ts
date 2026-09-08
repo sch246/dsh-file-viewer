@@ -1,3 +1,4 @@
+import { userFileTransferUrl } from '@dsh-external/dsh-user-files/transfer'
 import { parseFileLocation } from '@dsh-external/dsh-user-files/file-location'
 import { SegmentedTextRead, type SegmentedTextGateway } from './segmented-text-read.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -12,6 +13,7 @@ import {
   type ResourceTextSaveAsTarget,
   type ResourceBytesWatchEvent,
   type ResourceLoadedBytes,
+  type ResourceStream,
   type ResourceLoadedText,
   type ResourceRef,
   type ResourceSource,
@@ -195,6 +197,20 @@ export class FilesystemResourceSource implements ResourceSource {
         }
       } finally { await iterator.return?.() }
     } }
+  }
+
+  /** Check authenticated access without buffering the file or entering text synchronization. */
+  async getStream(ref: ResourceRef, signal: AbortSignal): Promise<ResourceStream> {
+    const request = { sessionId: ref.sessionId, path: ref.resourceId }
+    const url = userFileTransferUrl({ ...request, disposition: 'inline' })
+    const response = await fetch(url, { method: 'HEAD', credentials: 'same-origin', signal })
+    if (response.status === 404) throw new ResourceMissingError('File not found.')
+    if (!response.ok) throw new Error(`File stream: HTTP ${response.status} ${response.statusText}`)
+    signal.throwIfAborted()
+    return { url, downloadUrl: userFileTransferUrl(request),
+      mediaType: response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? 'application/octet-stream',
+      inline: /^inline(?:;|$)/i.test(response.headers.get('content-disposition') ?? ''),
+    }
   }
 
   /** Load exact bounded bytes without decoding or text rejection. */

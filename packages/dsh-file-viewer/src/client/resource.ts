@@ -100,6 +100,18 @@ export interface ResourceLoadedBytes {
   readonly descriptor?: Partial<Omit<ResourceDescriptor, 'ref'>>
 }
 
+/** Source-owned browser URLs; no content is buffered while preparing them. */
+export interface ResourceStream {
+  /** Browser-embeddable URL authenticated without caller-supplied headers; never persisted. */
+  readonly url: string
+  /** Attachment URL for a browser-owned download. */
+  readonly downloadUrl: string
+  /** Media type confirmed by the source. */
+  readonly mediaType: string
+  /** Whether the source permits inline presentation of this media type. */
+  readonly inline: boolean
+}
+
 /** Result of publishing text to a source. */
 export interface ResourceSavedText { readonly version?: unknown; readonly sizeBytes?: number }
 
@@ -141,6 +153,8 @@ export interface ResourceSource {
   readText?(ref: ResourceRef, signal: AbortSignal, access?: ResourceTextAccess): Promise<ResourceLoadedText>
   /** @param ref Exact resource identity. @param baseHash Verified Source hash. @param signal Cancellation. @param access Read approval. @returns Delta-first explicit observation. */
   readTextDelta?(ref: ResourceRef, baseHash: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<FileViewerDeltaResult>
+  /** @param ref Resource identity. @param signal Preparation cancellation. @returns Fresh URLs for browser-owned streaming; renderers release their media elements on unmount. */
+  getStream?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceStream>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Opaque source bytes and revision. */
   readBytes?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes>
   /** @param ref Exact resource identity. @param text Canonical text to publish. @param version Caller-observed revision. @param signal Cancellation signal. @param access Explicit document permission, also covering large saves. @returns Published revision. */
@@ -184,6 +198,7 @@ export type ResourceBytesWatchEvent =
 export interface ResourceCapabilities {
   readonly text: boolean
   readonly textSaveAs: boolean
+  readonly stream: boolean
   readonly bytes: boolean
   readonly byteWrite: boolean
   readonly conditionalByteWrite: boolean
@@ -315,6 +330,8 @@ export interface ResourceWorkbenchClientService {
   subscribe(viewId: string, listener: () => void): () => void
   /** @param viewId Resource view. @returns Validated selected handler module. */
   loadHandler(viewId: string): Promise<ResourceHandlerModule>
+  /** @param viewId Resource view. @param signal Preparation cancellation. @returns Source-owned URLs for native browser rendering and download. */
+  getStream(viewId: string, signal: AbortSignal): Promise<ResourceStream>
   /** @param viewId Resource view. @param signal Cancellation signal. @returns Opaque source bytes and revision. */
   readBytes(viewId: string, signal: AbortSignal): Promise<ResourceLoadedBytes>
   /** @param viewId Resource view. @param bytes Bytes to publish. @param version Caller-observed revision. @param signal Cancellation signal. @returns Published revision from a provider-declared guarded write. */

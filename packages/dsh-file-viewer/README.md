@@ -94,3 +94,9 @@ None. This Bundle changes human browser presentation and adds no model-visible i
 ## Dev Note
 
 None.
+
+## PDF, audio and video
+
+The built-in `pdf`, `audio` and `video` handlers use the browser's PDF reader and native media controls. They require the source's optional `stream` capability and load lazily through the same open-with menu and default associations as the text/image handlers. Audio/video use metadata preload without autoplay, retain playback position and volume settings in view memory, and stop/release their media element on unmount. PDF toolbar features and reading-position retention depend on the browser. Unsupported browsers/codecs expose a download alternative; preparation and playback errors appear in red with reload available.
+
+The public `ResourceSource.getStream(ref, signal)` and `service.getStream(viewId, signal)` return `ResourceStream { url, downloadUrl, mediaType, inline }`. URLs must support browser-element authentication without custom headers and must not be persisted. Preparation participates in source/view cancellation; the renderer owns the resulting media element's lifetime. This capability is independent of text and buffered byte reads. The filesystem source performs authenticated HEAD preparation through user-files ^0.1.11, then hands off native GET/range requests. No text document, byte-RPC size limit, full-file Blob, or content polling is involved. See [STATE](../../.intent/state/STATE.md#pdf-and-media-readers) for installation and proxy requirements.

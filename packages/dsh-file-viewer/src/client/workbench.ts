@@ -24,6 +24,7 @@ import {
   type ResourceHandlerChoice,
   type ResourceHandlerModule,
   type ResourceLoadedBytes,
+  type ResourceStream,
   type ResourceBytesWatchEvent,
   type ResourceNavigationTarget,
   type ResourceOpenOptions,
@@ -875,6 +876,24 @@ export class ResourceWorkbenchRuntime {
     }
   }
 
+  /** Prepare browser streaming under the same source/view lifetime as byte operations. */
+  async getStream(viewId: string, signal: AbortSignal): Promise<ResourceStream> {
+    const view = this.#view(viewId)
+    const source = this.#sources.get(view.descriptor.ref.sourceId)
+    if (source?.getStream === undefined) throw new Error('resource-workbench: streaming is unavailable')
+    return this.#runBytes(viewId, view, source, signal, async combined => {
+      try {
+        const result = await source.getStream!(view.descriptor.ref, combined)
+        combined.throwIfAborted()
+        this.#syncResourceMissing(viewId, view, false)
+        return result
+      } catch (error: unknown) {
+        if (!combined.aborted && isMissingResourceError(error)) this.#syncResourceMissing(viewId, view, true)
+        throw error
+      }
+    })
+  }
+
   /** Read bytes only from a source that explicitly supplies them. */
   async readBytes(viewId: string, signal: AbortSignal): Promise<ResourceLoadedBytes> {
     const view = this.#view(viewId)
@@ -1384,6 +1403,7 @@ export class ResourceWorkbenchRuntime {
     return {
       text: source?.readText !== undefined,
       textSaveAs: source?.prepareTextSaveAs !== undefined && source.saveTextAs !== undefined,
+      stream: source?.getStream !== undefined,
       bytes: source?.readBytes !== undefined,
       byteWrite: source?.saveBytes !== undefined,
       conditionalByteWrite: source?.saveBytes !== undefined && source.supportsConditionalByteSave === true,

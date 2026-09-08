@@ -1,3 +1,4 @@
+import { registerStreamHandlers } from './stream-handlers.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
@@ -50,6 +51,7 @@ export type {
   ResourceHandlerModule,
   ResourceHandlerProps,
   ResourceLoadedBytes,
+  ResourceStream,
   ResourceLoadedText,
   ResourceLocation,
   ResourceOpenOptions,
@@ -184,6 +186,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   }
   const offTextHandler = runtime.registerHandler(textHandler)
   const offImageHandler = runtime.registerHandler(imageHandler)
+  const offStreamHandlers = registerStreamHandlers(ctx, service)
   const resolveFile = async (sessionId: SessionId, path: string, signal: AbortSignal): Promise<ResourceDescriptor> => {
     const resolved = valueOf(await ctx.remote.userFiles.resolve({ sessionId, path }, signal))
     return {
@@ -275,6 +278,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     offRestorer()
     offView()
     offPresentation()
+    offStreamHandlers()
     offImageHandler()
     offTextHandler()
     offSource()

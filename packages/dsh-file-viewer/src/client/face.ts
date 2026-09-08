@@ -61,6 +61,7 @@ export function createResourceWorkbenchClientService(
     snapshot: (viewId: string) => runtime.snapshot(viewId),
     subscribe: (viewId: string, listener: () => void) => runtime.subscribe(viewId, listener),
     loadHandler: (viewId: string) => runtime.loadHandler(viewId),
+    getStream: (viewId: string, signal: AbortSignal) => runtime.getStream(viewId, signal),
     readBytes: (viewId: string, signal: AbortSignal) => runtime.readBytes(viewId, signal),
     writeBytes: (viewId: string, bytes: Uint8Array, version: unknown, signal: AbortSignal) =>
       runtime.writeBytes(viewId, bytes, version, signal),
