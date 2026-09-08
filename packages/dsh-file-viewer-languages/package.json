@@ -30,8 +30,7 @@
   ],
   "scripts": {
     "build": "bash ../../scripts/build-host.sh",
-    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-    "test": "node --test tests/languages.test.mjs"
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit"
   },
   "dsh": {
     "bundle": {

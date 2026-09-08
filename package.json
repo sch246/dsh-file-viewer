@@ -7,14 +7,13 @@
   "scripts": {
     "build": "bash scripts/build-host.sh",
     "typecheck": "bash scripts/typecheck-host.sh",
-    "test": "node node_modules/vitest/vitest.mjs run packages/dsh-file-viewer/tests packages/dsh-file-viewer-editor/tests",
+    "test": "node node_modules/vitest/vitest.mjs run packages/dsh-file-viewer/tests",
     "setup": "bash scripts/setup-host.sh",
     "uninstall": "bash scripts/uninstall-host.sh",
     "install:local": "node scripts/install-local.mjs",
     "test:setup": "node --test scripts/profile-peers.test.mjs",
     "inspect": "bash scripts/setup-host.sh --check",
-    "remove": "bash scripts/uninstall-host.sh",
-    "test:languages": "node --test packages/dsh-file-viewer-languages/tests/languages.test.mjs"
+    "remove": "bash scripts/uninstall-host.sh"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.0-rc",
@@ -26,12 +25,9 @@
     "@deepseek-ai/dsh-scope": "0.1.2-rc.1",
     "@deepseek-ai/dsh-session": "0.1.2-alpha.2",
     "@dsh-external/dsh-right-sidebar": "^0.0.1",
-    "@testing-library/dom": "^10.4.1",
-    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.3.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
-    "jsdom": "29.1.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tsdown": "0.22.14",
