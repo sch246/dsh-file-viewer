@@ -1,5 +1,5 @@
 import { formatFileSize } from './file-size.ts'
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
 import type {
   ResourceHandlerId,
@@ -65,6 +65,15 @@ function HandlerHost({
   readonly loadingLabel: string
   readonly failureLabel: string
 }) {
+  const resourceKey = JSON.stringify(service.snapshot(viewId).descriptor.ref)
+  const scopedService = useMemo<ResourceWorkbenchClientService>(() => ({
+    ...service,
+    setViewState: (id, handler, value) => {
+      try {
+        if (JSON.stringify(service.snapshot(id).descriptor.ref) === resourceKey) service.setViewState(id, handler, value)
+      } catch { /* A closed resource view no longer accepts renderer cleanup. */ }
+    },
+  }), [service, resourceKey])
   const [module, setModule] = useState<ResourceHandlerModule>()
   const [failed, setFailed] = useState(false)
   useEffect(() => {
@@ -82,7 +91,7 @@ function HandlerHost({
   if (module === undefined) return <div className="dsh-file-viewer-state" role="status">{loadingLabel}</div>
   const handlerId = service.snapshot(viewId).handlerId
   if (handlerId === undefined) return null
-  return <module.View viewId={viewId} handlerId={handlerId} service={service} />
+  return <module.View viewId={viewId} handlerId={handlerId} service={scopedService} />
 }
 
 /** @param props Resource view identity, public service and locale lookup. @returns Generic controls and selected lazy handler. */
@@ -168,7 +177,7 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
         {state.handlerStatus === 'failed' && <div className="dsh-file-viewer-state" role="alert">{state.failure ?? t('handlerFailed')}</div>}
         {(state.handlerStatus === 'loading' || state.handlerStatus === 'ready') && state.handlerId !== undefined && (
           <HandlerHost
-            key={state.handlerId}
+            key={JSON.stringify([state.handlerId, state.descriptor.ref])}
             viewId={instanceId}
             service={service}
             loadingLabel={t('handlerLoading')}

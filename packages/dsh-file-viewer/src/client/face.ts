@@ -21,6 +21,7 @@ export function createResourceViewHost(rightSidebar: RightSidebarService): Resou
   return {
     open: (sessionId, input, options) => rightSidebar.openInstance(sessionId, input, options),
     activate: (sessionId, viewId) => { rightSidebar.activateInstance(sessionId, viewId) },
+    recordNavigation: (sessionId, viewId) => { rightSidebar.recordNavigation(sessionId, viewId) },
     update: (sessionId, viewId, update) => {
       rightSidebar.updateInstance(sessionId, viewId, update)
     },
@@ -46,6 +47,7 @@ export function createResourceWorkbenchClientService(
     registerSource: (source: ResourceSource) => runtime.registerSource(source),
     registerHandler: (handler: ResourceHandler) => runtime.registerHandler(handler),
     open: (descriptor: ResourceDescriptor, options?: ResourceOpenOptions) => runtime.open(descriptor, options),
+    navigateLink: (viewId: string, href: string) => runtime.navigateLink(viewId, href),
     listOpenWith: (descriptor: ResourceDescriptor) => runtime.listOpenWith(descriptor),
     switchHandler: (viewId: string, handlerId: ResourceHandlerId) => runtime.switchHandler(viewId, handlerId),
     setAssociation: (descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined) => {

@@ -40,6 +40,8 @@ export interface FileViewerEditorOptions {
 
 /** Disposal releases both panes, observers and queued geometry work. */
 export interface FileViewerEditorHandle {
+  /** Reveal a one-based document position, clamping line and UTF-16 column. */
+  revealPosition(line: number, column?: number): void
   /** Replace source text without recording an undo step or invoking onChange. */
   setText(text: string): void
   /** Apply validated source ranges, mapping selection and undo positions without recording an undo step. */
@@ -510,6 +512,13 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   observer.observe(view.contentDOM)
   refresh()
   return {
+    revealPosition: (line, column = 1) => {
+      const targetLine = Math.max(1, Math.min(view.state.doc.lines, Math.trunc(line)))
+      const lineInfo = view.state.doc.line(targetLine)
+      const offset = lineInfo.from + Math.max(0, Math.min(lineInfo.length, Math.trunc(column) - 1))
+      view.dispatch({ selection: EditorSelection.cursor(offset), effects: EditorView.scrollIntoView(offset, { y: 'center' }) })
+      view.focus()
+    },
     setText: text => {
       if (view.state.doc.eq(Text.of(text.split('\n')))) return
       binding.applying = true

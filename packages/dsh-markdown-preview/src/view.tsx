@@ -23,6 +23,7 @@ export function createMarkdownResourceView(t: (key: MarkdownLocaleKey) => string
       return value
     })
     const [html, setHtml] = useState(presentation.html)
+    const onOpenFile = useCallback((href: string) => { void service.navigateLink(viewId, href) }, [service, viewId])
     const newHtml = useSyncExternalStore(subscribeHtmlDefault, defaultHtml, defaultHtml)
     const viewport = useRef<HTMLDivElement>(null)
     const body = useRef<HTMLDivElement>(null)
@@ -63,8 +64,9 @@ export function createMarkdownResourceView(t: (key: MarkdownLocaleKey) => string
           onChange={event => { setDefaultHtml(event.currentTarget.checked) }} />{t('defaultHtml')}</label>
         {state.activities.updating
           ? <><span role="status">{t('loading')}</span><button type="button" onClick={() => { service.cancelTextLoad(viewId) }}>{t('stop')}</button></>
-          : <button type="button" disabled={busy || state.loadConfirmation !== undefined}
-            onClick={() => { void service.refreshText(viewId) }}>{t(state.status === 'ready' ? 'update' : 'retry')}</button>}
+          : (state.status !== 'ready' || state.failure !== undefined || state.resourceMissing) &&
+            <button type="button" disabled={busy || state.loadConfirmation !== undefined}
+              onClick={() => { void service.refreshText(viewId) }}>{t('retry')}</button>}
       </div>
       {state.loadConfirmation !== undefined && <div role="status">
         {t('approval')} {size} <button type="button" disabled={busy} onClick={() => { void service.confirmTextLoad(viewId) }}>
@@ -81,7 +83,8 @@ export function createMarkdownResourceView(t: (key: MarkdownLocaleKey) => string
         presentation.scrollLeft = element.scrollLeft
       }}>
         <div ref={body}><MarkdownContent text={text} streaming={state.status === 'partial'} allowHtml={html}
-          copyLabel={t('copy')} copiedLabel={t('copied')} footnotes={t('footnotes')} /></div>
+          copyLabel={t('copy')} copiedLabel={t('copied')} footnotes={t('footnotes')} metadataLabel={t('metadata')}
+          onOpenFile={onOpenFile} /></div>
       </div>}
     </section>
   }

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-markdown-preview",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Live Markdown preview with optional sanitized HTML",
   "license": "MIT",
   "type": "module",
@@ -43,7 +43,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.0-rc <5",
-    "@dsh-external/dsh-file-viewer": "^0.1.4",
+    "@dsh-external/dsh-file-viewer": "^0.1.5",
     "@deepseek-ai/dsh-client-locale": "0.1.2-alpha.2",
     "@deepseek-ai/dsh-client-ui-slots": "0.1.2-alpha.2",
     "react": "^18.2.0",

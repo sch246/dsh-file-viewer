@@ -29,6 +29,7 @@ class TextPresentation {
   differences = false
   largeDefaultsApplied = false
   constructor(public editorState?: unknown) {}
+  textSelectionRequestId?: number
 }
 
 /** Callbacks injected for one right-sidebar editor instance. */
@@ -65,6 +66,7 @@ export interface FileViewerPanelInjected {
 
 /** Composed editor view props. */
 export type FileViewerPanelProps = FileViewerPanelInjected & RightbarViewOwnerProps & {
+  readonly textSelection?: { readonly line: number; readonly column?: number; readonly requestId: number }
   readonly t: (key: import('./locales.ts').FileViewerLocaleKey) => string
 }
 
@@ -107,6 +109,9 @@ function FailureDetail({ failure, t }: {
 }
 
 interface EditorHostProps {
+  readonly textSelection?: { readonly line: number; readonly column?: number; readonly requestId: number }
+  readonly revealedTextSelectionRequestId?: number
+  readonly onTextSelectionRevealed?: (requestId: number) => void
   readonly snapshot: () => FileViewerInstanceSnapshot
   readonly subscribe: (listener: () => void) => () => void
   readonly comparison?: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]['comparison']
@@ -128,7 +133,7 @@ interface EditorHostProps {
 
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
-  snapshot, subscribe, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
+  snapshot, subscribe, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, textSelection, revealedTextSelectionRequestId, onTextSelectionRevealed, loadingLabel, failureLabel,
   appearance, phrases, language, languageFailureLabel, theme, themeFailureLabel, onFontSizeChange,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
@@ -149,6 +154,8 @@ export function EditorHost({
   const viewStateRef = useRef(viewState)
   const onChangeRef = useRef(onChange)
   const onViewStateChangeRef = useRef(onViewStateChange)
+  const textSelectionRef = useRef(textSelection)
+  const revealedRequestRef = useRef(revealedTextSelectionRequestId)
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading')
   snapshotRef.current = snapshot
   comparisonRef.current = comparison
@@ -160,6 +167,9 @@ export function EditorHost({
   viewStateRef.current = viewState
   onChangeRef.current = onChange
   onViewStateChangeRef.current = onViewStateChange
+  textSelectionRef.current = textSelection
+  const onTextSelectionRevealedRef = useRef(onTextSelectionRevealed)
+  onTextSelectionRevealedRef.current = onTextSelectionRevealed
 
   useEffect(() => {
     let live = true
@@ -224,8 +234,9 @@ export function EditorHost({
     }
     const previous = appliedRef.current
     if (document !== undefined) {
-      if (document === previous.document) return
-      if (textUpdate !== undefined && textUpdate.previousDocument === previous.document && previous.document !== undefined) {
+      if (document === previous.document) {
+        // The document is current; a pending position request may still need applying.
+      } else if (textUpdate !== undefined && textUpdate.previousDocument === previous.document && previous.document !== undefined) {
         handle.applyChanges(textUpdate.changes)
       } else if (previous.document !== undefined) {
         for (const changes of document.updatesSince(previous.document)) handle.applyChanges(changes)
@@ -241,6 +252,12 @@ export function EditorHost({
       } else handle.setText(text)
     }
     appliedRef.current = latest.status === 'ready' ? { document: latest.document } : { text: latest.text, appendKey: latest.streamId }
+    const selection = textSelectionRef.current
+    if (latest.status === 'ready' && selection !== undefined && revealedRequestRef.current !== selection.requestId) {
+      handle.revealPosition(selection.line, selection.column)
+      revealedRequestRef.current = selection.requestId
+      onTextSelectionRevealedRef.current?.(selection.requestId)
+    }
   }
   // A peer must receive new coordinates before its next input, independently of React rendering.
   useEffect(() => {
@@ -248,6 +265,7 @@ export function EditorHost({
     synchronizeRef.current()
     return dispose
   }, [subscribe])
+  useEffect(() => { synchronizeRef.current() }, [textSelection])
   useEffect(() => {
     handleRef.current?.setComparison(comparison)
   }, [comparison])
@@ -339,7 +357,7 @@ function LoadConfirmation({ state, onLoad, t }: {
 }
 
 function ReadyPanel({
-  state, snapshot, subscribe, edit, save, refresh, confirmLoad, cancelLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
+  state, snapshot, subscribe, edit, save, refresh, confirmLoad, cancelLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave, textSelection,
   automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
   presentation, retainPresentation, onViewStateChange, languageRegistry, filename, editorPreferences, saveAsDefaultPath, saveAsSupported, saveAs, prompt, openEditorConfiguration, t,
 }: {
@@ -372,6 +390,7 @@ function ReadyPanel({
   readonly presentation: TextPresentation
   readonly retainPresentation: () => void
   readonly onViewStateChange?: (state: unknown) => void
+  readonly textSelection?: { readonly line: number; readonly column?: number; readonly requestId: number }
   readonly t: FileViewerPanelProps['t']
 }) {
   const ready = state.status === 'ready' ? state : undefined
@@ -556,6 +575,9 @@ function ReadyPanel({
           subscribe={subscribe}
           loadEditor={loadEditor}
           onChange={edit}
+          {...(textSelection === undefined ? {} : { textSelection })}
+          {...(presentation.textSelectionRequestId === undefined ? {} : { revealedTextSelectionRequestId: presentation.textSelectionRequestId })}
+          onTextSelectionRevealed={requestId => { presentation.textSelectionRequestId = requestId; retainPresentation() }}
           lineNumbers={presentation.lineNumbers}
           comparison={comparison}
           {...(appearance === undefined ? {} : { appearance })}
@@ -609,6 +631,7 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
     <ReadyPanel
       key={props.instanceId}
       state={state}
+      {...(props.textSelection === undefined ? {} : { textSelection: props.textSelection })}
       snapshot={snapshotDocument}
       subscribe={subscribeDocument}
       edit={changes => {

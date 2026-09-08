@@ -128,6 +128,8 @@ export type TextDocumentSnapshot = FileViewerInstanceSnapshot
 export interface ResourceSource {
   readonly id: ResourceSourceId
   readonly defaults?: Partial<ResourceAutomationPreferences>
+  /** @param ref Current document identity. @param href Document-relative or absolute source link. @param signal Cancellation. @returns Resolved file and optional text position. */
+  resolveLink?(ref: ResourceRef, href: string, signal: AbortSignal): Promise<ResourceLinkTarget>
   /** @param ref Exact resource identity. @param selection Persisted source-owned hint. @returns Nothing after opening the location. */
   selectLocation?(ref: ResourceRef, selection?: unknown): Promise<void>
   /** @param ref Exact resource identity. @returns In-page resumable read retained by the shared document, released on completion, last close or source disposal. */
@@ -235,8 +237,21 @@ export type ResourceOpenTarget =
     readonly direction: 'center' | 'left' | 'right' | 'up' | 'down'
   }
 
+/** One-based line and UTF-16 column in source text; an omitted column means the line start. */
+export interface ResourceTextPosition {
+  readonly line: number
+  readonly column?: number
+}
+
+/** Source-resolved hyperlink destination. */
+export interface ResourceLinkTarget {
+  readonly descriptor: ResourceDescriptor
+  readonly textSelection?: ResourceTextPosition
+}
+
 /** Placement and presentation intent for one open request. */
 export interface ResourceOpenOptions {
+  readonly textSelection?: ResourceTextPosition
   readonly handlerId?: ResourceHandlerId
   readonly target?: ResourceOpenTarget
   readonly preview?: boolean
@@ -246,6 +261,7 @@ export interface ResourceOpenOptions {
 
 /** Generic view state owned by the resource workbench. */
 export interface ResourceViewSnapshot {
+  readonly textSelection?: ResourceTextPosition & { readonly requestId: number }
   readonly viewId: string
   readonly descriptor: ResourceDescriptor
   readonly handlerId?: ResourceHandlerId
@@ -266,6 +282,8 @@ export interface ResourceWorkbenchClientService {
   registerHandler(handler: ResourceHandler): () => void
   /** @param descriptor Resource identity and selection metadata. @param options Target and handler intent. @returns Opened or activated view id. */
   open(descriptor: ResourceDescriptor, options?: ResourceOpenOptions): Promise<string>
+  /** @param viewId Current tab. @param href Source-owned hyperlink. @returns Nothing after navigation or a reported failure; unsaved close guards can veto. */
+  navigateLink(viewId: string, href: string): Promise<void>
   /** @param descriptor Resource to match. @returns Deterministically ordered handler choices. */
   listOpenWith(descriptor: ResourceDescriptor): readonly ResourceHandlerChoice[]
   /** @param viewId Existing resource view. @param handlerId Selected matching handler. @returns Nothing after the switch or veto. */

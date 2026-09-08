@@ -29,6 +29,7 @@ export interface FileViewerEditorModule {
     readonly viewState?: unknown
     readonly onViewStateChange?: (state: unknown) => void
   }): {
+    revealPosition(line: number, column?: number): void
     setText(text: string): void
     applyChanges(changes: readonly FileViewerTextChange[]): void
     appendText(text: string): void

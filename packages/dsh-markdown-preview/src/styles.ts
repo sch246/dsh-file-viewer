@@ -22,6 +22,8 @@ export const MARKDOWN_CSS = `
 .dsh-resource-markdown-content a { color: var(--link-color, #368ad8); text-decoration: underline; }
 .dsh-resource-markdown-content :not(pre) > code { background: color-mix(in srgb, currentColor 8%, transparent); padding: .1em .3em; border-radius: 3px; }
 .dsh-resource-markdown-content pre { overflow: auto; }
+.dsh-markdown-front-matter { margin: 0 0 1em; }
+.dsh-markdown-front-matter pre { margin: .5em 0; padding: 8px; background: color-mix(in srgb, currentColor 6%, transparent); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dsh-resource-markdown-content .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .dsh-markdown-error { color: #d32f2f; padding: 8px 12px; }
 .dsh-markdown-default { opacity: .75; }

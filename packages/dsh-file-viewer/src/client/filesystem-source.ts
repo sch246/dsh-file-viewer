@@ -1,3 +1,4 @@
+import { parseFileLocation } from '@dsh-external/dsh-user-files/file-location'
 import { SegmentedTextRead, type SegmentedTextGateway } from './segmented-text-read.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
@@ -6,6 +7,8 @@ import {
   ResourceSaveConflictError,
   ResourceConfirmationRequiredError,
   type ResourceTextAccess,
+  type ResourceDescriptor,
+  type ResourceLinkTarget,
   type ResourceTextSaveAsTarget,
   type ResourceBytesWatchEvent,
   type ResourceLoadedBytes,
@@ -24,6 +27,7 @@ import type {
 
 /** Filesystem-source operations implemented by the generated Remote adapter. */
 export interface FilesystemSourceGateway extends SegmentedTextGateway {
+  resolveLink?(sessionId: SessionId, path: string, signal: AbortSignal): Promise<ResourceDescriptor>
   deltaText(sessionId: SessionId, path: string, baseHash: string, background: boolean, maxPatchBytes: number, signal: AbortSignal, access?: ResourceTextAccess): Promise<UserFileDeltaResult>
   prepareTextSaveAs(sessionId: SessionId, path: string, signal: AbortSignal): Promise<UserFileTextSaveAsPlan>
   saveTextAs(sessionId: SessionId, path: string, text: string, expectedRevision: UserFileRevision | undefined, signal: AbortSignal): Promise<UserFileSaveAsResult>
@@ -126,6 +130,29 @@ export class FilesystemResourceSource implements ResourceSource {
         await gateway.openExternal?.(ref.sessionId, ref.resourceId, signal)
       }
     }
+  }
+
+  /** Resolve a file hyperlink relative to the containing document, never the Session working directory. */
+  async resolveLink(ref: ResourceRef, href: string, signal: AbortSignal): Promise<ResourceLinkTarget> {
+    if (this.#gateway.resolveLink === undefined) throw new Error('file-viewer: file link resolution unavailable')
+    let value = href
+    if (/^file:/i.test(value)) {
+      const url = new URL(value)
+      if (url.hostname !== '' && url.hostname !== 'localhost') throw new Error('file-viewer: remote file URLs are unsupported')
+      value = url.pathname + url.hash
+      if (/^\/[a-z]:\//i.test(value)) value = value.slice(1)
+    } else if (/^[a-z][a-z\d+.-]*:/i.test(value) && !/^[a-z]:[\\/]/i.test(value)) {
+      throw new Error('file-viewer: unsupported file link protocol')
+    }
+    // Strip an authored fragment before decoding so %23 remains part of a filename.
+    if (parseFileLocation(value).textSelection === undefined) value = value.split('#', 1)[0]!
+    const parsed = parseFileLocation(decodeURIComponent(value))
+    const path = parsed.path
+    if (path === '' || /[\u0000-\u001f\u007f]/.test(path)) throw new Error('file-viewer: invalid file link')
+    const absolute = /^(?:[a-z]:[\\/]|[\\/])/i.test(path)
+    const base = ref.resourceId.slice(0, Math.max(ref.resourceId.lastIndexOf('/'), ref.resourceId.lastIndexOf('\\')) + 1)
+    const descriptor = await this.#gateway.resolveLink(ref.sessionId, absolute ? path : base + path, signal)
+    return { descriptor, ...(parsed.textSelection === undefined ? {} : { textSelection: parsed.textSelection }) }
   }
 
   /** Open a breadcrumb through the common Host opening policy. */

@@ -26,6 +26,7 @@ export function createTextResourceView(dependencies: TextResourceHandlerDependen
     return (
       <FileViewerPanel
         instanceId={viewId}
+        {...(resource.textSelection === undefined ? {} : { textSelection: resource.textSelection })}
         filename={resource.descriptor.name}
         editorPreferences={dependencies.editorPreferences}
         saveAsDefaultPath={resource.descriptor.ref.resourceId}
