@@ -1,19 +1,35 @@
 {
   "name": "@dsh-external/dsh-file-viewer-editor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CodeMirror editor graph row materialized by the resource workbench on first ready text view",
   "license": "MIT",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
-    "./client": { "types": "./lib/types/client.d.ts", "default": "./lib/client.js" },
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client.d.ts",
+      "default": "./lib/client.js"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["lib", "README.md", "LICENSE"],
-  "scripts": { "build": "bash ../../scripts/build-host.sh" },
-  "dsh": { "client": { "platform": "web" } },
+  "files": [
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bash ../../scripts/build-host.sh"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
   "dependencies": {
     "@codemirror/search": "^6.5.11",
     "@codemirror/language": "^6.12.4",
@@ -22,5 +38,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.1"
   },
-  "peerDependencies": { "@deepseek-ai/cordis": ">=4.0.0-rc <5" }
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0-rc <5"
+  }
 }
