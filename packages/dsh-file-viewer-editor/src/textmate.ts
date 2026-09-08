@@ -67,9 +67,12 @@ export function themeAppearance(value: unknown) {
     '&': { color: foreground, backgroundColor: background },
     '.cm-content': { caretColor: cursor },
     '.cm-cursor, .cm-dropCursor': { borderLeftColor: cursor },
-    '.cm-gutters': { backgroundColor: colors['editorGutter.background'] ?? background,
-      color: colors['editorLineNumber.foreground'] ?? foreground,
-      borderRightColor: colors['editorGutter.border'] ?? colors['editorWidget.border'] ?? background },
+    '.cm-gutters': { backgroundColor: colors['editorGutter.background'] ?? globals.gutterBackground
+      ?? `color-mix(in srgb, ${foreground} 6%, ${background})`,
+      color: colors['editorLineNumber.foreground'] ?? globals.gutterForeground
+        ?? `color-mix(in srgb, ${foreground} 60%, ${background})`,
+      borderRightColor: colors['editorGutter.border'] ?? colors['editorWidget.border']
+        ?? `color-mix(in srgb, ${foreground} 18%, ${background})` },
     '.cm-activeLineGutter': { color: colors['editorLineNumber.activeForeground'] ?? foreground },
     ...(selection ? { '&.cm-focused .cm-selectionBackground, &.cm-focused .cm-content ::selection': { backgroundColor: selection } } : {}),
     ...(inactive ? { '.cm-selectionBackground, .cm-content ::selection': { backgroundColor: inactive } } : {}),
