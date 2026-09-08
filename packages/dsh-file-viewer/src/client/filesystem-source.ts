@@ -152,7 +152,7 @@ export class FilesystemResourceSource implements ResourceSource {
     const absolute = /^(?:[a-z]:[\\/]|[\\/])/i.test(path)
     const base = ref.resourceId.slice(0, Math.max(ref.resourceId.lastIndexOf('/'), ref.resourceId.lastIndexOf('\\')) + 1)
     const descriptor = await this.#gateway.resolveLink(ref.sessionId, absolute ? path : base + path, signal)
-    return { descriptor, ...(parsed.textSelection === undefined ? {} : { textSelection: parsed.textSelection }) }
+    return { descriptor, workspacePath: descriptor.ref.resourceId, ...(parsed.textSelection === undefined ? {} : { textSelection: parsed.textSelection }) }
   }
 
   /** Open a breadcrumb through shared file dispatch, which routes directories to a directory handler. */

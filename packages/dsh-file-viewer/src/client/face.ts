@@ -2,7 +2,7 @@ import type { EditorLanguage } from './editor-languages.ts'
 import type { FileViewerTextChange } from './editor-module.ts'
 import { openWorkspaceFile } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type { Context } from '@deepseek-ai/cordis'
-import type { RightSidebarService } from '@dsh-external/dsh-right-sidebar/client'
+import type { RightSidebarService, RightSidebarNavigation } from '@dsh-external/dsh-right-sidebar/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ResourceBytesWatchEvent, ResourceAutomationPreferences } from './resource.ts'
 import type {
@@ -24,9 +24,7 @@ export function createResourceViewHost(ctx: Context, rightSidebar: RightSidebarS
   return {
     openWorkspaceFile: request => openWorkspaceFile(ctx, request),
     open: (sessionId, input, options) => rightSidebar.openInstance(sessionId, input, options),
-    activate: (sessionId, viewId) => { rightSidebar.activateInstance(sessionId, viewId) },
-    recordNavigation: (sessionId, viewId) => { rightSidebar.recordNavigation(sessionId, viewId) },
-    commit: (sessionId, viewId, commit) => { rightSidebar.commitNavigation(sessionId, viewId, commit) },
+    beginNavigation: (sessionId, options) => rightSidebar.beginNavigation(sessionId, options),
     update: (sessionId, viewId, update) => {
       rightSidebar.updateInstance(sessionId, viewId, update)
     },
@@ -53,9 +51,8 @@ export function createResourceWorkbenchClientService(
     registerHandler: (handler: ResourceHandler) => runtime.registerHandler(handler),
     open: (descriptor: ResourceDescriptor, options?: ResourceOpenOptions) => runtime.open(descriptor, options),
     navigateLink: (viewId: string, href: string) => runtime.navigateLink(viewId, href),
-    navigateTo: (viewId: string, target: ResourceNavigationTarget) => runtime.navigateTo(viewId, target),
+    navigateTo: (viewId: string, target: ResourceNavigationTarget, navigation?: RightSidebarNavigation) => runtime.navigateTo(viewId, target, navigation),
     openWorkspaceLink: (viewId: string, href: string) => runtime.openWorkspaceLink(viewId, href),
-    linkBasePath: (viewId: string) => runtime.linkBasePath(viewId),
     listOpenWith: (descriptor: ResourceDescriptor) => runtime.listOpenWith(descriptor),
     switchHandler: (viewId: string, handlerId: ResourceHandlerId) => runtime.switchHandler(viewId, handlerId),
     setAssociation: (descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined) => {

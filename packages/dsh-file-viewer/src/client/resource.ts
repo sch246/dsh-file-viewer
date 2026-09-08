@@ -1,3 +1,4 @@
+import type { RightSidebarNavigation } from '@dsh-external/dsh-right-sidebar/client'
 import type { EditorLanguage } from './editor-languages.ts'
 import type { FileViewerTextChange } from './editor-module.ts'
 import type { ComponentType } from 'react'
@@ -245,6 +246,8 @@ export interface ResourceTextPosition {
 
 /** Source-resolved hyperlink destination. */
 export interface ResourceLinkTarget {
+  /** Canonical filesystem path when this source supports the shared workspace-file router. */
+  readonly workspacePath?: string
   readonly descriptor: ResourceDescriptor
   readonly textSelection?: ResourceTextPosition
 }
@@ -256,6 +259,7 @@ export type ResourceNavigationTarget =
 
 /** Placement and presentation intent for one open request. */
 export interface ResourceOpenOptions {
+  readonly navigation?: RightSidebarNavigation
   readonly textSelection?: ResourceTextPosition
   readonly handlerId?: ResourceHandlerId
   readonly target?: ResourceOpenTarget
@@ -289,8 +293,8 @@ export interface ResourceWorkbenchClientService {
   open(descriptor: ResourceDescriptor, options?: ResourceOpenOptions): Promise<string>
   /** @param viewId Current tab. @param href Source-owned hyperlink. @returns Nothing after navigation or a reported failure; unsaved close guards can veto. */
   navigateLink(viewId: string, href: string): Promise<void>
-  /** @param viewId Current tab. @param target Link or resolved destination. @returns Whether the tab committed the destination; guards, cancellation or a missing tab leave it unchanged. */
-  navigateTo(viewId: string, target: ResourceNavigationTarget): Promise<boolean>
+  /** @param viewId Current tab. @param target Link or resolved destination. @param navigation Shared cancellable opening request. @returns Committed, cancelled (including veto), or unhandled when this runtime does not own the tab. */
+  navigateTo(viewId: string, target: ResourceNavigationTarget, navigation?: RightSidebarNavigation): Promise<'committed' | 'cancelled' | 'unhandled'>
   /**
    * Open a document link through the shared workspace-file dispatch, so a handler that owns the
    * tab moves it in place and a directory reaches a directory handler.
@@ -299,8 +303,6 @@ export interface ResourceWorkbenchClientService {
    * @returns Completion; unresolved links reject with the dispatch failure.
    */
   openWorkspaceLink(viewId: string, href: string): Promise<void>
-  /** @param viewId Current tab. @returns Directory of its own resource, used to resolve relative links outside the source. */
-  linkBasePath(viewId: string): string
   /** @param descriptor Resource to match. @returns Deterministically ordered handler choices. */
   listOpenWith(descriptor: ResourceDescriptor): readonly ResourceHandlerChoice[]
   /** @param viewId Existing resource view. @param handlerId Selected matching handler. @returns Nothing after the switch or veto. */

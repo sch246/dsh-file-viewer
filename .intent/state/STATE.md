@@ -139,3 +139,5 @@ Markdown front matter is shown separately as readable source metadata without an
 - Document scripts in the Harness origin, archive editing, collaborative editing or random-access file windows.
 - Persisting browser editor buffers in the Session log or sending them to the model.
 - Restarting, publishing or asserting acceptance of a live deployment from repository setup.
+
+Filesystem links share one cancellable opening request from source resolution through sidebar commit. Cancellation or an unsaved-change veto ends that request without opening another tab; only an unowned tab delegates. History restoration commits through the sidebar-provided request without appending another destination. Generic sources retain their own resource identifiers and opt into filesystem dispatch only by returning `workspacePath`. Build against sidebar >=0.0.5 <0.1.0 and user-files ^0.1.9; independent package versions need not match.

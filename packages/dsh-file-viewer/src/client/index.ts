@@ -221,21 +221,26 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const offSource = runtime.registerSource(source)
   const offRestorer = runtime.registerRestorer()
   const offOpen = ctx.on('chat/open-workspace-file', async (request, next) => {
-    const signal = request.signal ?? new AbortController().signal
-    const resolved = valueOf(await ctx.remote.userFiles.resolve({ sessionId: request.sessionId, path: request.path }, signal))
-    // Directories belong to an available directory handler, not to a failed text load.
-    if (resolved.kind !== 'file') return next()
-    const descriptor = await resolveFile(request.sessionId, resolved.path, signal)
-    if (runtime.listOpenWith(descriptor).length === 0) return next()
+    const navigation = ctx.rightSidebar.beginNavigation(request.sessionId, {
+      request,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+      ...(request.target === undefined ? {} : { target: request.target }),
+      ...((request.sourceInstanceId ?? request.viewId) === undefined ? {} : { sourceInstanceId: request.sourceInstanceId ?? request.viewId }),
+    })
+    if (!navigation.current()) return
+    const descriptor = await resolveFile(request.sessionId, request.path, navigation.signal)
+    if (!navigation.current()) return
+    if (descriptor.kind !== 'file' || runtime.listOpenWith(descriptor).length === 0) return next()
     const selection = request.textSelection
     if (request.replace === 'current' && request.viewId !== undefined) {
-      const replaced = await runtime.navigateTo(request.viewId, {
+      const outcome = await runtime.navigateTo(request.viewId, {
         descriptor,
         ...(selection === undefined ? {} : { textSelection: selection }),
-      })
-      if (replaced) return
+      }, navigation)
+      if (outcome !== 'unhandled') return
     }
     await runtime.open(descriptor, {
+      navigation,
       ...(selection === undefined ? {} : { textSelection: selection }),
       ...(request.preview === undefined ? {} : { preview: request.preview }),
       ...(request.target === undefined ? {} : { target: request.target }),

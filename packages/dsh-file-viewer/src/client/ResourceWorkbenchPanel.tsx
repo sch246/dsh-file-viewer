@@ -102,8 +102,6 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
     () => service.snapshot(instanceId),
   )
   const rootRef = useRef<HTMLElement>(null)
-  // The owning sidebar group owns focus handoff across navigation; the shell only retains identity.
-  const handlerService = service
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -182,7 +180,7 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
           <HandlerHost
             key={JSON.stringify([state.handlerId, state.descriptor.ref])}
             viewId={instanceId}
-            service={handlerService}
+            service={service}
             loadingLabel={t('handlerLoading')}
             failureLabel={t('handlerFailed')}
           />

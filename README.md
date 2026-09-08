@@ -240,3 +240,5 @@ DSH_CHECKOUT=/path/to/deepseek-harness DSH_HOME=/path/to/dsh-home DSH_PROFILE=we
 ## Dev Note
 
 The Host owns the common opening helper; external-project Typert support remains owned by its existing capability provider. Viewer distributes no Host patch and setup/uninstall never reverse historical adaptations. Inspect existing receipts when adapting an older Host; preserve skill-manager support and unrelated Host changes. Current build and installation evidence belongs in the [local log](.intent/logs/2026-09-06-independent-feature-dependencies.md).
+
+Filesystem links share one cancellable opening request from source resolution through sidebar commit. Cancellation or an unsaved-change veto ends that request without opening another tab; only an unowned tab delegates. History restoration commits through the sidebar-provided request without appending another destination. Generic sources retain their own resource identifiers and opt into filesystem dispatch only by returning `workspacePath`. Build against sidebar >=0.0.5 <0.1.0 and user-files ^0.1.9; independent package versions need not match.
