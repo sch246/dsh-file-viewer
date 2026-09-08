@@ -1,3 +1,4 @@
+import type { EditorLanguage } from './editor-languages.ts'
 import type { FileViewerTextChange } from './editor-module.ts'
 import type { RightSidebarService } from '@dsh-external/dsh-right-sidebar/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -41,6 +42,7 @@ export function createResourceWorkbenchClientService(
   runtime: ResourceWorkbenchRuntime,
 ): ResourceWorkbenchClientService {
   return Object.freeze({
+    registerEditorLanguage: (language: EditorLanguage) => runtime.editorLanguages.register(language),
     registerSource: (source: ResourceSource) => runtime.registerSource(source),
     registerHandler: (handler: ResourceHandler) => runtime.registerHandler(handler),
     open: (descriptor: ResourceDescriptor, options?: ResourceOpenOptions) => runtime.open(descriptor, options),

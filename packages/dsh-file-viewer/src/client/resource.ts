@@ -1,3 +1,4 @@
+import type { EditorLanguage } from './editor-languages.ts'
 import type { FileViewerTextChange } from './editor-module.ts'
 import type { ComponentType } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -197,6 +198,8 @@ export interface ResourceHandlerModule {
 export interface ResourceHandler {
   readonly id: ResourceHandlerId
   readonly label: string | (() => string)
+  /** Attach the shared Base/Local/Source document; switching between text participants retains automation. */
+  readonly document?: 'text'
   /** @param descriptor Resource metadata. @param capabilities Available source operations. @returns Match role or false when unsupported. */
   match(descriptor: ResourceDescriptor, capabilities: ResourceCapabilities): ResourceHandlerMatch | false
   /** @returns Lazily imported renderer module. */
@@ -243,6 +246,8 @@ export interface ResourceViewSnapshot {
 
 /** Frozen generic resource-opening service exposed as `ctx.resourceWorkbench`. */
 export interface ResourceWorkbenchClientService {
+  /** @param language Lazy syntax parser contribution. @returns Idempotent registration disposer. */
+  registerEditorLanguage(language: EditorLanguage): () => void
   /** @param source Source contribution. @returns Idempotent registration disposer. */
   registerSource(source: ResourceSource): () => void
   /** @param handler Lazy handler contribution. @returns Idempotent registration disposer. */

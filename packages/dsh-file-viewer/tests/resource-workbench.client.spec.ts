@@ -1,3 +1,6 @@
+import { createMarkdownResourceHandler } from '../src/client/markdown-handler.ts'
+import { en } from '../src/client/locales.ts'
+import { markdownEn } from '../src/client/markdown-locales.ts'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -90,6 +93,47 @@ function descriptor(sourceId: ReturnType<typeof ResourceSourceId>, mediaType = '
 }
 
 describe('ResourceWorkbenchRuntime', () => {
+  it('previews shared unsaved Markdown without rereading, discarding editor state or pausing automation', async () => {
+    const host = hostFixture()
+    const confirmHandlerSwitch = vi.fn(() => false)
+    const runtime = new ResourceWorkbenchRuntime({ host, hashText: async text => text, confirmHandlerSwitch })
+    runtime.registerHandler(handler(TEXT_RESOURCE_HANDLER_ID, 'default'))
+    const markdown = createMarkdownResourceHandler(key => en[key], key => markdownEn[key])
+    runtime.registerHandler(markdown)
+    const sourceId = ResourceSourceId('markdown')
+    const readText = vi.fn(async () => ({ text: '# Source' }))
+    runtime.registerSource({ id: sourceId, readText })
+    const resource = { ...descriptor(sourceId, 'text/markdown'), name: 'README.md' }
+    const viewId = await runtime.open(resource)
+    expect(runtime.snapshot(viewId).handlerId).toBe(TEXT_RESOURCE_HANDLER_ID)
+    expect(runtime.listOpenWith(resource)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: markdown.id, role: 'available' }),
+    ]))
+    expect(runtime.listOpenWith(descriptor(sourceId)).some(choice => choice.id === markdown.id)).toBe(false)
+    const documentId = runtime.textDocumentId(viewId)
+    const editorState = { undo: ['# Source'], selection: 4 }
+    runtime.setViewState(viewId, TEXT_RESOURCE_HANDLER_ID, editorState)
+    runtime.editText(viewId, '# Unsaved Local')
+    await Promise.resolve()
+    const automation = runtime.textSnapshot(viewId).automation
+
+    await runtime.switchHandler(viewId, markdown.id)
+
+    expect(runtime.textDocumentId(viewId)).toBe(documentId)
+    expect(runtime.textSnapshot(viewId)).toMatchObject({ text: '# Unsaved Local', automation, automationPaused: false })
+    await runtime.switchHandler(viewId, TEXT_RESOURCE_HANDLER_ID)
+    expect(runtime.getViewState(viewId, TEXT_RESOURCE_HANDLER_ID)).toBe(editorState)
+    const second = await runtime.open(resource, { handlerId: markdown.id, sideBySide: true })
+    expect(runtime.textDocumentId(second)).toBe(documentId)
+    await runtime.close(viewId)
+    expect(runtime.textSnapshot(second)).toMatchObject({ automationPaused: false })
+    await runtime.switchHandler(second, TEXT_RESOURCE_HANDLER_ID)
+    expect(runtime.textSnapshot(second)).toMatchObject({ text: '# Unsaved Local', automationPaused: false })
+    expect(readText).toHaveBeenCalledOnce()
+    expect(confirmHandlerSwitch).not.toHaveBeenCalled()
+    runtime.dispose()
+  })
+
   it('shares exact text documents across independent views and pins first edit-back', async () => {
     const host = hostFixture()
     const runtime = new ResourceWorkbenchRuntime({ host, hashText: async text => text })

@@ -1,9 +1,11 @@
+import type { EditorLanguageRegistry } from './editor-languages.ts'
 import type { ResourceHandlerProps } from './resource.ts'
 import { FileViewerPanel } from './FileViewerPanel.tsx'
 import type { FileViewerEditorModule } from './editor-module.ts'
 
 /** Dependencies captured by the lazy text handler module. */
 export interface TextResourceHandlerDependencies {
+  readonly editorLanguages: EditorLanguageRegistry
   readonly loadEditor: () => Promise<FileViewerEditorModule>
   readonly confirm: (message: string) => boolean
   readonly t: (key: import('./locales.ts').FileViewerLocaleKey) => string
@@ -16,6 +18,8 @@ export function createTextResourceView(dependencies: TextResourceHandlerDependen
     return (
       <FileViewerPanel
         instanceId={viewId}
+        filename={service.snapshot(viewId).descriptor.name}
+        languageRegistry={dependencies.editorLanguages}
         snapshot={() => service.textSnapshot(viewId)}
         subscribe={(_id, listener) => service.subscribeText(viewId, listener)}
         editChanges={(_id, changes) => { service.editTextChanges(viewId, changes) }}

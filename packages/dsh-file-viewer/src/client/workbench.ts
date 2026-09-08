@@ -1,3 +1,4 @@
+import { EditorLanguageRegistry } from './editor-languages.ts'
 import type { TextBlockPolicy } from './text-document.ts'
 import type { FileViewerTextChange } from './editor-module.ts'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -35,6 +36,8 @@ export const RESOURCE_WORKBENCH_VIEW_ID = 'resource-workbench'
 export const TEXT_RESOURCE_HANDLER_ID = ResourceHandlerId('text')
 /** Built-in byte-preserving image handler. */
 export const IMAGE_RESOURCE_HANDLER_ID = ResourceHandlerId('image')
+/** Built-in preview of the shared Local Markdown text. */
+export const MARKDOWN_RESOURCE_HANDLER_ID = ResourceHandlerId('markdown')
 
 /** Sidebar methods needed by the resource-opening runtime. */
 export interface ResourceViewHost {
@@ -266,6 +269,8 @@ function parsePersistedLocation(value: unknown): ResourceDescriptor['location'] 
 /** One owner for resource sources, handler selection, views and shared text documents. */
 export class ResourceWorkbenchRuntime {
   readonly documents: FileViewerService
+  /** Language contributions shared by every editor view. */
+  readonly editorLanguages = new EditorLanguageRegistry()
   readonly #host: ResourceViewHost
   readonly #storage: FileViewerBrowserStorage | undefined
   readonly #sources = new Map<ResourceSourceId, ResourceSource>()
@@ -382,7 +387,7 @@ export class ResourceWorkbenchRuntime {
     const recoveringDocuments = new Set<string>()
     for (const [viewId, view] of this.#views) {
       if (view.descriptor.ref.sourceId !== source.id) continue
-      if (view.handlerId === TEXT_RESOURCE_HANDLER_ID && view.documentId === undefined) {
+      if (this.#usesText(view.handlerId) && view.documentId === undefined) {
         void this.#attachText(viewId, view)
       } else if (view.documentId !== undefined && !recoveringDocuments.has(view.documentId)) {
         recoveringDocuments.add(view.documentId)
@@ -506,7 +511,7 @@ export class ResourceWorkbenchRuntime {
         ...(options.target === undefined ? {} : { target: options.target }),
         ...(options.preview === undefined ? {} : { preview: options.preview }),
       })
-      if (handlerId === TEXT_RESOURCE_HANDLER_ID && source !== undefined) await this.#attachText(viewId, view)
+      if (this.#usesText(handlerId) && source !== undefined) await this.#attachText(viewId, view)
       return viewId
     } catch (error: unknown) {
       this.#views.delete(viewId)
@@ -542,7 +547,7 @@ export class ResourceWorkbenchRuntime {
       return
     }
     if (!this.#transitionCurrent(viewId, view, generation)) return
-    if (view.handlerId === TEXT_RESOURCE_HANDLER_ID && view.documentId !== undefined
+    if (this.#usesText(view.handlerId) && !this.#usesText(handlerId) && view.documentId !== undefined
       && !this.#hasOtherTextView(viewId, view.documentId)) {
       const snapshot = this.documents.snapshot(view.documentId)
       if (isFileViewerDirty(snapshot)) {
@@ -570,7 +575,7 @@ export class ResourceWorkbenchRuntime {
       return
     }
     if (!this.#transitionCurrent(viewId, view, generation)) return
-    if (view.handlerId === TEXT_RESOURCE_HANDLER_ID && view.documentId !== undefined
+    if (this.#usesText(view.handlerId) && !this.#usesText(handlerId) && view.documentId !== undefined
       && !this.#hasOtherTextView(viewId, view.documentId)) this.documents.setPresented(view.documentId, false)
     this.#stopBytes(view, new Error('resource handler switched'))
     view.closeGuards.clear()
@@ -580,7 +585,7 @@ export class ResourceWorkbenchRuntime {
     view.failure = undefined
     view.handlerStatus = this.#sources.has(view.descriptor.ref.sourceId) ? 'loading' : 'source-unavailable'
     this.#notify(view)
-    if (handlerId === TEXT_RESOURCE_HANDLER_ID && view.handlerStatus !== 'source-unavailable') {
+    if (this.#usesText(handlerId) && view.handlerStatus !== 'source-unavailable') {
       await this.#attachText(viewId, view)
     }
   }
@@ -638,7 +643,7 @@ export class ResourceWorkbenchRuntime {
     const view = this.#view(viewId)
     if (view.handlerId === undefined) throw new Error('resource-workbench: choose a handler first')
     const handlerId = view.handlerId
-    if (handlerId === TEXT_RESOURCE_HANDLER_ID && view.documentId === undefined) {
+    if (this.#usesText(handlerId) && view.documentId === undefined) {
       await this.#attachText(viewId, view)
       if (this.#views.get(viewId) !== view || view.handlerId !== handlerId) {
         throw new Error('resource-workbench: stale text handler load')
@@ -933,7 +938,7 @@ export class ResourceWorkbenchRuntime {
       const shared = [...this.#views.values()].filter(other => other.documentId === view.documentId)
       if (shared.length === 0) {
         this.documents.discard(view.documentId)
-      } else if (!shared.some(other => other.handlerId === TEXT_RESOURCE_HANDLER_ID)) {
+      } else if (!shared.some(other => this.#usesText(other.handlerId))) {
         this.documents.setPresented(view.documentId, false)
       }
     }
@@ -980,7 +985,7 @@ export class ResourceWorkbenchRuntime {
         checkpointSuppressed: true,
       }
       this.#views.set(context.instanceId, view)
-      if (persisted.handlerId === TEXT_RESOURCE_HANDLER_ID && this.#sources.has(descriptor.ref.sourceId)) {
+      if (this.#usesText(persisted.handlerId) && this.#sources.has(descriptor.ref.sourceId)) {
         await this.#attachText(context.instanceId, view)
       }
       return {
@@ -1012,6 +1017,7 @@ export class ResourceWorkbenchRuntime {
     }
     this.#views.clear()
     this.documents.dispose()
+    this.editorLanguages.dispose()
   }
 
   async #attachText(viewId: string, view: ViewRecord): Promise<void> {
@@ -1044,8 +1050,8 @@ export class ResourceWorkbenchRuntime {
         this.#syncTextDescriptor(viewId, view)
       })
       this.#syncTextDescriptor(viewId, view)
-      if (view.handlerId !== TEXT_RESOURCE_HANDLER_ID) {
-        this.documents.setPresented(documentId, false)
+      if (!this.#usesText(view.handlerId)) {
+        if (!this.#hasOtherTextView(viewId, documentId)) this.documents.setPresented(documentId, false)
         return
       }
       this.documents.setPresented(documentId, true)
@@ -1061,11 +1067,11 @@ export class ResourceWorkbenchRuntime {
         })
       }
       this.#syncTextDescriptor(viewId, view)
-      if (view.handlerId === TEXT_RESOURCE_HANDLER_ID) {
+      if (this.#usesText(view.handlerId)) {
         view.handlerStatus = 'failed'
         view.failure = failureMessage(error)
       } else if (documentId !== undefined) {
-        this.documents.setPresented(documentId, false)
+        if (!this.#hasOtherTextView(viewId, documentId)) this.documents.setPresented(documentId, false)
       }
       this.#notify(view)
     }
@@ -1203,9 +1209,14 @@ export class ResourceWorkbenchRuntime {
     return undefined
   }
 
+  #usesText(handlerId: ResourceHandlerId | undefined): boolean {
+    return handlerId !== undefined
+      && (handlerId === TEXT_RESOURCE_HANDLER_ID || this.#handlers.get(handlerId)?.document === 'text')
+  }
+
   #hasOtherTextView(viewId: string, documentId: string): boolean {
     return [...this.#views].some(([id, view]) =>
-      id !== viewId && view.documentId === documentId && view.handlerId === TEXT_RESOURCE_HANDLER_ID)
+      id !== viewId && view.documentId === documentId && this.#usesText(view.handlerId))
   }
 
   #view(viewId: string): ViewRecord {
