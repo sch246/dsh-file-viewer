@@ -1,4 +1,5 @@
 import type { UserConfig } from 'tsdown'
+import { browserBuild } from '../../scripts/browser-build.ts'
 
 const CLIENT_EXTERNALS = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
@@ -6,6 +7,7 @@ const CLIENT_EXTERNALS = [
 ]
 
 const client: UserConfig = {
+  ...browserBuild(CLIENT_EXTERNALS),
   entry: { client: 'lib/types/client/index.js' }, outDir: 'lib', format: 'cjs', platform: 'browser',
   dts: false, sourcemap: true, clean: false,
   deps: { neverBundle: CLIENT_EXTERNALS, alwaysBundle: (id: string) => !CLIENT_EXTERNALS.includes(id), onlyBundle: false },

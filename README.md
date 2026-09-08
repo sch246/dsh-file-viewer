@@ -185,6 +185,8 @@ Filesystem locations set `selectable: true`; their source `selectLocation` callb
 <a id="build-and-install"></a>
 ## Build and install
 
+Browser entries use the shared [browser build options](scripts/browser-build.ts): CommonJS output must explicitly retain browser dependency resolution, and emitted imports must belong to the declared Host module list or the generated bundle. The build rejects undeclared imports before installation.
+
 Select an explicit compatible `DSH_CHECKOUT` providing authenticated Remotes, `openWorkspaceFile`, and external-project Typert generation. Build its declarations and generator first, then build the independently distributed shared provider and sidebar. Viewer requires the shared Harness settings provider and user-files ^0.1.7 for resumable unary reads, bounded delta updates, guarded saves and prepared Save As publication; the installation planner rejects older providers before changing a profile. This checkout selects Host APIs, not build tools: this repository pins pnpm 10.17.1, TypeScript 5.9.3, tsdown 0.22.14 and Vitest 4.1.8. Setup defaults to inspection and never patches or restarts the Host.
 
 ```sh

@@ -1,13 +1,16 @@
 import type { UserConfig } from 'tsdown'
+import { browserBuild } from '../../scripts/browser-build.ts'
 
 const node: UserConfig = {
   entry: { index: 'lib/types/index.js' }, outDir: 'lib', format: 'esm', platform: 'node',
   dts: false, sourcemap: true, clean: false, fixedExtension: false,
 }
 const client: UserConfig = {
+  ...browserBuild(),
   entry: { client: 'lib/types/client.js' }, outDir: 'lib', format: 'cjs', platform: 'browser',
   dts: false, sourcemap: true, clean: false, fixedExtension: false, deps: { alwaysBundle: () => true, onlyBundle: false },
   outputOptions: {
+    codeSplitting: false,
     entryFileNames: 'client.js',
     banner: 'window.__ModuleLoader__.load({ id: "@dsh-external/dsh-file-viewer-editor", factory: (require) => {',
     footer: 'return module.exports; } });',

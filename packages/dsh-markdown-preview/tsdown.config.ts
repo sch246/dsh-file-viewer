@@ -1,13 +1,17 @@
 import type { UserConfig } from 'tsdown'
+import { browserBuild } from '../../scripts/browser-build.ts'
+
+const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime', '@deepseek-ai/cordis', '@dsh-external/dsh-file-viewer/client', '@deepseek-ai/dsh-client-ui-primitives']
 
 const node: UserConfig = {
   entry: { index: 'lib/types/index.js' }, outDir: 'lib', format: 'esm', platform: 'node',
   dts: false, sourcemap: true, clean: false, fixedExtension: false,
 }
 const client: UserConfig = {
+  ...browserBuild(CLIENT_EXTERNALS),
   entry: { client: 'lib/types/client.js' }, outDir: 'lib', format: 'cjs', platform: 'browser',
   dts: false, sourcemap: true, clean: false, fixedExtension: false,
-  deps: { neverBundle: ['react', 'react/jsx-runtime', '@deepseek-ai/cordis', '@dsh-external/dsh-file-viewer/client', '@deepseek-ai/dsh-client-ui-primitives'], alwaysBundle: (id: string) => !['react', 'react/jsx-runtime', '@deepseek-ai/cordis', '@dsh-external/dsh-file-viewer/client', '@deepseek-ai/dsh-client-ui-primitives'].includes(id), onlyBundle: false },
+  deps: { neverBundle: CLIENT_EXTERNALS, alwaysBundle: (id: string) => !CLIENT_EXTERNALS.includes(id), onlyBundle: false },
   outputOptions: {
     codeSplitting: false,
     entryFileNames: 'client.js',

@@ -44,6 +44,8 @@ All file clicks, including Chat links and manager rows, use the Host's common op
 
 ### Combination checks
 
+When adapting browser builds, set browser dependency resolution at the bundler input level even when the Host loader requires CommonJS output. Use the shared browser build options to reject emitted imports outside the declared Host modules and generated chunks. Do not add Node built-ins to the browser module table to compensate for a dependency resolved with Node conditions.
+
 With sidebar and the shared provider, viewer alone must read and edit supported remote files reached through original session-file links; manager alone must browse and mutate directories and send unhandled file clicks to the native opener. With both features, files reach viewer and directories reach manager independent of installation order. Links works without either feature or sidebar; disabling it stops automatic path decoration and discovery queries while retaining filesystem access and original session links. Handler failures remain visible without fallback, and removal of one consumer leaves the others usable.
 
 ## User intent and provenance

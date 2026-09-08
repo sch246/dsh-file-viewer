@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-markdown-preview",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Live Markdown preview with optional sanitized HTML",
   "license": "MIT",
   "type": "module",
