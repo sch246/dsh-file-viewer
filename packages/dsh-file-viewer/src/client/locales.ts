@@ -3,8 +3,10 @@ export const NS = 'file-viewer'
 
 /** Complete product-copy key set for generic controls and the text editor. */
 export type FileViewerLocaleKey =
+  | 'confirmSaveAsOverwrite'
+  | 'saveAs' | 'saveAsPath' | 'saveAsFailed' | 'sourceSaveUnavailable' | 'chooseLocalFonts' | 'localFontsUnavailable' | 'localFonts' | 'chooseFont' | 'editorTheme' | 'themeAuto' | 'themeCustom' | 'themePath' | 'applyTheme' | 'openEditorConfiguration' | 'editorSettingsSaving' | 'editorSettingsFailed' | 'themeFailed'
   | 'searchReplacedLine' | 'searchReplacedMatches'
-  | 'editorSettings' | 'font' | 'fontSize' | 'fontMonospace' | 'fontSystem' | 'fontSerif' | 'language' | 'languageAuto' | 'languagePlain' | 'languageFailed' | 'searchFind' | 'searchReplace' | 'searchNext' | 'searchPrevious' | 'searchAll' | 'searchMatchCase' | 'searchRegexp' | 'searchWord' | 'searchReplaceOne' | 'searchReplaceAll' | 'searchClose' | 'searchCurrentMatch' | 'searchOnLine' | 'searchGoToLine' | 'searchGo'
+  | 'editorSettings' | 'font' | 'fontSize' | 'language' | 'languageAuto' | 'languagePlain' | 'languageFailed' | 'searchFind' | 'searchReplace' | 'searchNext' | 'searchPrevious' | 'searchAll' | 'searchMatchCase' | 'searchRegexp' | 'searchWord' | 'searchReplaceOne' | 'searchReplaceAll' | 'searchClose' | 'searchCurrentMatch' | 'searchOnLine' | 'searchGoToLine' | 'searchGo'
   | 'manualUpdateRequired' | 'deltaConflict'
   | 'loading' | 'editorLoading' | 'editorFailed'
   | 'save' | 'saving' | 'saveUnsupported' | 'update' | 'updating'
@@ -35,14 +37,29 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const en: Record<FileViewerLocaleKey, string> = {
+  confirmSaveAsOverwrite: 'Overwrite the existing destination file?',
+  saveAs: 'Save as…',
+  saveAsPath: 'Save as: enter the destination file path',
+  saveAsFailed: 'Could not save to the selected path.',
+  sourceSaveUnavailable: 'Cannot save to source',
+  chooseLocalFonts: 'Choose fonts from this device',
+  localFontsUnavailable: 'This browser cannot list local fonts. Enter a font family name above.',
+  localFonts: 'Device fonts',
+  chooseFont: 'Choose a font',
+  editorTheme: 'Theme',
+  themeAuto: 'Follow application',
+  themeCustom: 'Custom theme file',
+  themePath: 'Theme file path',
+  applyTheme: 'Apply theme file',
+  openEditorConfiguration: 'Open configuration',
+  editorSettingsSaving: 'Updating settings…',
+  editorSettingsFailed: 'Could not update editor settings.',
+  themeFailed: 'Could not apply the selected theme.',
   searchReplacedLine: 'replaced match on line $',
   searchReplacedMatches: 'replaced $ matches',
   editorSettings: 'Editor settings',
   font: 'Font',
   fontSize: 'Font size',
-  fontMonospace: 'Monospace',
-  fontSystem: 'System font',
-  fontSerif: 'Serif',
   language: 'Language',
   languageAuto: 'Automatic',
   languagePlain: 'Plain text',
@@ -88,7 +105,7 @@ export const en: Record<FileViewerLocaleKey, string> = {
   editorFailed: 'The editor could not be loaded.',
   save: 'Save',
   saving: 'Saving',
-  saveUnsupported: 'This source is read-only.',
+  saveUnsupported: 'This source does not support saving changes.',
   update: 'Update',
   updating: 'Updating',
   lineNumbers: 'Line numbers',
@@ -147,14 +164,29 @@ export const en: Record<FileViewerLocaleKey, string> = {
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
+  confirmSaveAsOverwrite: '覆盖已存在的目标文件吗？',
+  saveAs: '另存为…',
+  saveAsPath: '另存为：请输入目标文件路径',
+  saveAsFailed: '无法保存到所选路径。',
+  sourceSaveUnavailable: '无法保存到来源',
+  chooseLocalFonts: '选择此设备上的字体',
+  localFontsUnavailable: '此浏览器无法列出本机字体，请在上方手动填写字体名称。',
+  localFonts: '设备字体',
+  chooseFont: '选择字体',
+  editorTheme: '主题',
+  themeAuto: '跟随应用',
+  themeCustom: '自定义主题文件',
+  themePath: '主题文件路径',
+  applyTheme: '应用主题文件',
+  openEditorConfiguration: '打开配置',
+  editorSettingsSaving: '正在更新设置…',
+  editorSettingsFailed: '无法更新编辑设置。',
+  themeFailed: '无法应用所选主题。',
   searchReplacedLine: '已替换第 $ 行的匹配',
   searchReplacedMatches: '已替换 $ 处匹配',
   editorSettings: '编辑设置',
   font: '字体',
   fontSize: '字号',
-  fontMonospace: '等宽字体',
-  fontSystem: '系统字体',
-  fontSerif: '衬线字体',
   language: '语言',
   languageAuto: '自动识别',
   languagePlain: '纯文本',
@@ -200,7 +232,7 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   editorFailed: '无法加载编辑器。',
   save: '保存',
   saving: '保存中',
-  saveUnsupported: '该来源为只读。',
+  saveUnsupported: '该来源不支持保存修改。',
   update: '更新',
   updating: '更新中',
   lineNumbers: '行号',

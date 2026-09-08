@@ -1,3 +1,5 @@
+import { useCallback, useSyncExternalStore } from 'react'
+import type { EditorPreferencesModel } from './editor-preferences.ts'
 import type { EditorLanguageRegistry } from './editor-languages.ts'
 import type { ResourceHandlerProps } from './resource.ts'
 import { FileViewerPanel } from './FileViewerPanel.tsx'
@@ -5,6 +7,9 @@ import type { FileViewerEditorModule } from './editor-module.ts'
 
 /** Dependencies captured by the lazy text handler module. */
 export interface TextResourceHandlerDependencies {
+  readonly editorPreferences: EditorPreferencesModel
+  readonly openEditorConfiguration: (viewId: string) => Promise<void>
+  readonly prompt?: (message: string, defaultValue: string) => string | null
   readonly editorLanguages: EditorLanguageRegistry
   readonly loadEditor: () => Promise<FileViewerEditorModule>
   readonly confirm: (message: string) => boolean
@@ -15,10 +20,18 @@ export interface TextResourceHandlerDependencies {
 export function createTextResourceView(dependencies: TextResourceHandlerDependencies) {
   /** Render one view over its shared text document. */
   return function TextResourceView({ viewId, handlerId, service }: ResourceHandlerProps) {
+    const snapshot = useCallback(() => service.snapshot(viewId), [service, viewId])
+    const subscribe = useCallback((listener: () => void) => service.subscribe(viewId, listener), [service, viewId])
+    const resource = useSyncExternalStore(subscribe, snapshot, snapshot)
     return (
       <FileViewerPanel
         instanceId={viewId}
-        filename={service.snapshot(viewId).descriptor.name}
+        filename={resource.descriptor.name}
+        editorPreferences={dependencies.editorPreferences}
+        saveAsSupported={resource.capabilities.textSaveAs}
+        saveAs={path => service.saveTextAs(viewId, path)}
+        prompt={dependencies.prompt ?? ((message, defaultValue) => window.prompt(message, defaultValue))}
+        openEditorConfiguration={() => dependencies.openEditorConfiguration(viewId)}
         languageRegistry={dependencies.editorLanguages}
         snapshot={() => service.textSnapshot(viewId)}
         subscribe={(_id, listener) => service.subscribeText(viewId, listener)}
