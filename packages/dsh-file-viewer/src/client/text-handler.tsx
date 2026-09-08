@@ -28,6 +28,7 @@ export function createTextResourceView(dependencies: TextResourceHandlerDependen
         instanceId={viewId}
         filename={resource.descriptor.name}
         editorPreferences={dependencies.editorPreferences}
+        saveAsDefaultPath={resource.descriptor.ref.resourceId}
         saveAsSupported={resource.capabilities.textSaveAs}
         saveAs={path => service.saveTextAs(viewId, path)}
         prompt={dependencies.prompt ?? ((message, defaultValue) => window.prompt(message, defaultValue))}

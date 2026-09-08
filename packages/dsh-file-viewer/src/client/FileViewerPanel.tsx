@@ -36,6 +36,7 @@ export interface FileViewerPanelInjected {
   readonly languageRegistry?: EditorLanguageRegistry
   readonly filename?: string
   readonly editorPreferences: EditorPreferencesModel
+  readonly saveAsDefaultPath: string
   readonly saveAsSupported: boolean
   saveAs(path: string): Promise<void>
   openEditorConfiguration(): Promise<void>
@@ -340,7 +341,7 @@ function LoadConfirmation({ state, onLoad, t }: {
 function ReadyPanel({
   state, snapshot, subscribe, edit, save, refresh, confirmLoad, cancelLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
   automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
-  presentation, retainPresentation, onViewStateChange, languageRegistry, filename, editorPreferences, saveAsSupported, saveAs, prompt, openEditorConfiguration, t,
+  presentation, retainPresentation, onViewStateChange, languageRegistry, filename, editorPreferences, saveAsDefaultPath, saveAsSupported, saveAs, prompt, openEditorConfiguration, t,
 }: {
   readonly state: EditorSnapshot
   readonly snapshot: () => FileViewerInstanceSnapshot
@@ -363,6 +364,7 @@ function ReadyPanel({
   readonly languageRegistry?: EditorLanguageRegistry
   readonly filename?: string
   readonly editorPreferences: EditorPreferencesModel
+  readonly saveAsDefaultPath: string
   readonly saveAsSupported: boolean
   readonly saveAs: (path: string) => Promise<void>
   readonly prompt: (message: string, defaultValue: string) => string | null
@@ -385,7 +387,7 @@ function ReadyPanel({
   const [savingAs, setSavingAs] = useState(false)
   const [saveAsError, setSaveAsError] = useState<string>()
   const requestSaveAs = async () => {
-    const path = prompt(t('saveAsPath'), filename ?? '')
+    const path = prompt(t('saveAsPath'), saveAsDefaultPath)
     if (!path?.trim()) return
     setSavingAs(true); setSaveAsError(undefined)
     try { await saveAs(path.trim()) } catch (error) { setSaveAsError(error instanceof Error ? error.message : String(error)) }
@@ -616,6 +618,7 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
       }}
       save={() => { props.save(props.instanceId) }}
       editorPreferences={props.editorPreferences}
+      saveAsDefaultPath={props.saveAsDefaultPath}
       saveAsSupported={props.saveAsSupported}
       saveAs={props.saveAs}
       prompt={props.prompt}
