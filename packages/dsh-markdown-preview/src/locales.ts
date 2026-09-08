@@ -5,7 +5,7 @@ export const markdownEn = {
   html: 'Render HTML', defaultHtml: 'Render HTML in new previews', load: 'Load file',
   hugeLoad: 'Continue loading', stop: 'Stop loading', retry: 'Retry loading', loading: 'Loading…',
   approval: 'Confirm loading this file:', missing: 'The source file is missing.', incomplete: 'The file is not fully loaded.',
-  htmlDisabled: 'HTML tags are displayed as text.', metadata: 'Front matter',
+  htmlDisabled: 'HTML tags are displayed as text.',
 }
 export type MarkdownLocaleKey = keyof typeof markdownEn
 export const markdownZh: Record<MarkdownLocaleKey, string> = {
@@ -13,7 +13,7 @@ export const markdownZh: Record<MarkdownLocaleKey, string> = {
   html: '渲染 HTML', defaultHtml: '新预览默认渲染 HTML', load: '加载文件',
   hugeLoad: '继续加载', stop: '停止加载', retry: '重新加载', loading: '正在加载…',
   approval: '确认加载此文件：', missing: '来源文件已删除。', incomplete: '文件尚未加载完整。',
-  htmlDisabled: 'HTML 标签以原文显示。', metadata: '文档元数据',
+  htmlDisabled: 'HTML 标签以原文显示。',
 }
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap { 'file-viewer-markdown': MarkdownLocaleKey }

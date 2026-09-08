@@ -1,5 +1,6 @@
 /** Text editor styles, installed for the plugin fiber lifetime. */
 export const FILE_VIEWER_CSS = `
+.dsh-resource-workbench-root:focus{outline:none}
 .dsh-resource-workbench-root{display:flex;flex-direction:column;height:100%;min-height:0;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
 .dsh-resource-workbench-bar{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:12px}
 .dsh-resource-workbench-bar button,.dsh-resource-handler-choice button{border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:inherit;padding:4px 7px;cursor:pointer}

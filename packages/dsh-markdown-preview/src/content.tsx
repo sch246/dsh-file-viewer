@@ -67,14 +67,13 @@ function splitFrontMatter(text: string): { metadata?: string; body: string } {
 }
 
 /** Render Markdown and sanitized HTML while keeping shared code highlighting and copy controls. */
-export function MarkdownContent({ text, streaming, allowHtml, copyLabel, copiedLabel, footnotes, metadataLabel, onOpenFile }: {
+export function MarkdownContent({ text, streaming, allowHtml, copyLabel, copiedLabel, footnotes, onOpenFile }: {
   readonly text: string
   readonly streaming: boolean
   readonly allowHtml: boolean
   readonly copyLabel: string
   readonly copiedLabel: string
   readonly footnotes: string
-  readonly metadataLabel: string
   readonly onOpenFile: (href: string) => void
 }) {
   const source = useMemo(() => splitFrontMatter(text), [text])
@@ -101,7 +100,7 @@ export function MarkdownContent({ text, streaming, allowHtml, copyLabel, copiedL
     },
   }), [streaming, copyLabel, copiedLabel, onOpenFile])
   return <>
-    {source.metadata !== undefined && <section className="dsh-markdown-front-matter"><strong>{metadataLabel}</strong><pre>{source.metadata}</pre></section>}
+    {source.metadata !== undefined && <section className="dsh-markdown-front-matter"><pre>{source.metadata}</pre></section>}
     <Markdown remarkPlugins={remarkPlugins} rehypePlugins={allowHtml ? htmlPlugins : literalPlugins}
       remarkRehypeOptions={{ footnoteLabel: footnotes }} components={components} urlTransform={previewUrl}>{source.body}</Markdown>
   </>

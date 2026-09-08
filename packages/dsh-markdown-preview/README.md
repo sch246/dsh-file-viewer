@@ -8,7 +8,7 @@ Render HTML controls sanitized inline/block HTML. Turning it off displays the or
 
 Use Edit side by side to open the text editor to the left of this preview. Both consume the same document. The preview follows local typing directly; a retry action appears only for incomplete or failed loading.
 
-Document front matter is shown as labelled, source-preserving YAML metadata. Local Markdown links open through the viewer while same-document anchors and external links retain their native behavior.
+Document front matter is shown as source-preserving YAML metadata without an extra heading. Local Markdown links open through the viewer while same-document anchors and external links retain their native behavior.
 
 ## Install and remove
 

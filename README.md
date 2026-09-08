@@ -92,7 +92,7 @@ await ctx.resourceWorkbench.open(descriptor, {
 <a id="choose-a-handler"></a>
 ## Choose a handler
 
-Preview file links can navigate within the current tab through the public source resolver. Relative filesystem links start at the containing document's directory. The sidebar group owns Back/Forward buttons, Alt+Left/Right and mouse side buttons. It records tab changes and explicit file destinations; the viewer restores opaque resource checkpoints. History holds metadata only; leaving the last edited view retains its unsaved-change guard. Source positions use one-based lines and UTF-16 columns; an omitted column places the cursor at the line start after loading.
+Preview file links can navigate within the current tab through the public source resolver. Relative filesystem links start at the containing document's directory. The sidebar group owns Back/Forward history through Alt+Left/Right and mouse side buttons. It records tab changes and explicit file destinations; the viewer restores opaque resource checkpoints. History holds metadata only; leaving the last edited view retains its unsaved-change guard. Source positions use one-based lines and UTF-16 columns; an omitted column places the cursor at the line start after loading.
 
 Selection order is an explicit handler, a saved MIME or extension association, a unique highest-priority default, then a safe source-provided text fallback. Equal defaults show the open-with choice instead of using registration order. Switching handlers retains the tab and group. Handler-owned close guards also apply to switching, and the first edit permanently pins a preview.
 

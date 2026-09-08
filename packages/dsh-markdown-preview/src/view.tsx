@@ -83,7 +83,7 @@ export function createMarkdownResourceView(t: (key: MarkdownLocaleKey) => string
         presentation.scrollLeft = element.scrollLeft
       }}>
         <div ref={body}><MarkdownContent text={text} streaming={state.status === 'partial'} allowHtml={html}
-          copyLabel={t('copy')} copiedLabel={t('copied')} footnotes={t('footnotes')} metadataLabel={t('metadata')}
+          copyLabel={t('copy')} copiedLabel={t('copied')} footnotes={t('footnotes')}
           onOpenFile={onOpenFile} /></div>
       </div>}
     </section>

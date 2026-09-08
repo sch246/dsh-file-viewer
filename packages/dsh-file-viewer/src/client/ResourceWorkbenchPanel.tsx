@@ -101,6 +101,16 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
     () => service.snapshot(instanceId),
     () => service.snapshot(instanceId),
   )
+  const rootRef = useRef<HTMLElement>(null)
+  const handlerService = useMemo<ResourceWorkbenchClientService>(() => ({
+    ...service,
+    navigateLink: (viewId, href) => {
+      // Keep keyboard navigation in the stable shell while its linked renderer is replaced.
+      const root = rootRef.current
+      if (root?.contains(document.activeElement)) root.focus({ preventScroll: true })
+      return service.navigateLink(viewId, href)
+    },
+  }), [service])
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -118,7 +128,7 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
     triggerRef.current?.focus()
   }
   return (
-    <section className="dsh-resource-workbench-root">
+    <section ref={rootRef} tabIndex={-1} className="dsh-resource-workbench-root">
       <header className="dsh-resource-workbench-bar">
         <ResourceLocation viewId={instanceId} service={service} label={t('location')} />
         {state.descriptor.size !== undefined && <span className="dsh-resource-file-size" title={t('fileSize')}>
@@ -179,7 +189,7 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
           <HandlerHost
             key={JSON.stringify([state.handlerId, state.descriptor.ref])}
             viewId={instanceId}
-            service={service}
+            service={handlerService}
             loadingLabel={t('handlerLoading')}
             failureLabel={t('handlerFailed')}
           />
