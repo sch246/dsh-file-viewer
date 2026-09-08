@@ -29,6 +29,8 @@
   "include": [
     "src/index.ts",
     "src/remote.ts",
-    "src/types.ts"
+    "src/types.ts",
+    "src/editor-settings.ts",
+    "src/editor-themes.ts"
   ]
 }

@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-client-modules/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@dsh-external/dsh-right-sidebar/client'
 import { asFileViewerEditorModule } from './editor-module.ts'
+import { EditorPreferencesModel } from './editor-preferences.ts'
 import {
   createResourceViewHost,
   createResourceWorkbenchClientService,
@@ -34,7 +35,7 @@ import {
 } from './workbench.ts'
 import { FILE_VIEWER_CSS } from './styles.ts'
 
-export type { EditorLanguage } from './editor-languages.ts'
+export type { EditorLanguage, EditorTextMateLanguage } from './editor-languages.ts'
 
 export type {
   ResourceAutomationPreferences,
@@ -56,6 +57,7 @@ export type {
   ResourceSavedDelta,
   ResourceSavedBytes,
   ResourceSource,
+  ResourceTextSaveAsTarget,
   ResourceTextWatchEvent,
   ResourceTextAccess,
   ResourceTextStreamEvent,
@@ -128,10 +130,26 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     progressiveFlushIntervalMs: metadata.progressiveFlushIntervalMs,
     hugeFileBytes: metadata.hugeFileBytes,
     confirmDiscard: () => window.confirm(t('confirmClose')),
+    confirmSaveAsOverwrite: path => window.confirm(`${t('confirmSaveAsOverwrite')}\n${path}`),
     confirmHandlerSwitch: () => window.confirm(t('confirmHandlerSwitch')),
   })
   const service: ResourceWorkbenchClientService = createResourceWorkbenchClientService(runtime)
   ctx.provide('resourceWorkbench', service)
+  const editorPreferences = new EditorPreferencesModel({
+    editorSettings: async () => valueOf(await ctx.remote.fileViewer.editorSettings()),
+    setEditorSettings: async update => valueOf(await ctx.remote.fileViewer.setEditorSettings(update)),
+  })
+  const openEditorConfiguration = async (viewId: string): Promise<void> => {
+    const path = valueOf(await ctx.remote.fileViewer.editorSettingsDocument())
+    const { sessionId } = runtime.snapshot(viewId).descriptor.ref
+    const resolved = valueOf(await ctx.remote.userFiles.resolve({ sessionId, path }))
+    await runtime.open({
+      ref: { sessionId, sourceId: source.id, resourceId: resolved.path },
+      name: resolved.name, kind: resolved.kind,
+      ...(resolved.mediaType === undefined ? {} : { mediaType: resolved.mediaType }),
+      ...(resolved.size === undefined ? {} : { size: resolved.size }),
+    }, { handlerId: TEXT_RESOURCE_HANDLER_ID, preview: false })
+  }
 
   let editorModule: ReturnType<typeof asFileViewerEditorModule> | undefined
   let editorRequest: Promise<ReturnType<typeof asFileViewerEditorModule>> | undefined
@@ -151,7 +169,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     match: textMatch,
     load: async () => {
       const module = await import('./text-handler.tsx')
-      return { View: module.createTextResourceView({ editorLanguages: runtime.editorLanguages, loadEditor, confirm: message => window.confirm(message), t }) }
+      return { View: module.createTextResourceView({ editorLanguages: runtime.editorLanguages, editorPreferences, openEditorConfiguration, loadEditor, confirm: message => window.confirm(message), t }) }
     },
   }
   const imageHandler: ResourceHandler = {
@@ -167,6 +185,11 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const offTextHandler = runtime.registerHandler(textHandler)
   const offImageHandler = runtime.registerHandler(imageHandler)
   const source = new FilesystemResourceSource({
+    prepareTextSaveAs: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.prepareTextSaveAs({ sessionId, path, allowLargeFile: true }, signal)),
+    saveTextAs: async (sessionId, path, text, expectedRevision, signal) => valueOf(await ctx.remote.userFiles.saveTextAs({
+      sessionId, path, text, allowLargeFile: true,
+      ...(expectedRevision === undefined ? {} : { expectedRevision }),
+    }, signal)),
     prepareTextRead: async (request, signal) => valueOf(await ctx.remote.userFiles.prepareTextRead(request, signal)),
     readTextChunk: async (request, signal) => valueOf(await ctx.remote.userFiles.readTextChunk(request, signal)),
     finishTextRead: async (request, signal) => valueOf(await ctx.remote.userFiles.finishTextRead(request, signal)),
@@ -232,6 +255,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     offImageHandler()
     offTextHandler()
     offSource()
+    editorPreferences.dispose()
     runtime.dispose()
   }
 }
