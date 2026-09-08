@@ -130,8 +130,8 @@ export interface ResourceSource {
   readonly defaults?: Partial<ResourceAutomationPreferences>
   /** @param ref Current document identity. @param href Document-relative or absolute source link. @param signal Cancellation. @returns Resolved file and optional text position. */
   resolveLink?(ref: ResourceRef, href: string, signal: AbortSignal): Promise<ResourceLinkTarget>
-  /** @param ref Exact resource identity. @param selection Persisted source-owned hint. @returns Nothing after opening the location. */
-  selectLocation?(ref: ResourceRef, selection?: unknown): Promise<void>
+  /** @param ref Exact resource identity. @param selection Persisted source-owned hint. @param viewId Tab showing this resource, used by sources that route through shared file dispatch. @returns Nothing after opening the location. */
+  selectLocation?(ref: ResourceRef, selection?: unknown, viewId?: string): Promise<void>
   /** @param ref Exact resource identity. @returns In-page resumable read retained by the shared document, released on completion, last close or source disposal. */
   createTextRead?(ref: ResourceRef): ResourceTextRead
   /** @param ref Exact resource identity. @param signal Cancellation signal. @param access Explicit document permission. @returns Ordered provisional chunks and a completion revision, used for approved initial loads. */
@@ -249,6 +249,11 @@ export interface ResourceLinkTarget {
   readonly textSelection?: ResourceTextPosition
 }
 
+/** One in-place navigation destination: a source hyperlink or an already resolved resource. */
+export type ResourceNavigationTarget =
+  | { readonly href: string }
+  | { readonly descriptor: ResourceDescriptor; readonly textSelection?: ResourceTextPosition }
+
 /** Placement and presentation intent for one open request. */
 export interface ResourceOpenOptions {
   readonly textSelection?: ResourceTextPosition
@@ -284,6 +289,18 @@ export interface ResourceWorkbenchClientService {
   open(descriptor: ResourceDescriptor, options?: ResourceOpenOptions): Promise<string>
   /** @param viewId Current tab. @param href Source-owned hyperlink. @returns Nothing after navigation or a reported failure; unsaved close guards can veto. */
   navigateLink(viewId: string, href: string): Promise<void>
+  /** @param viewId Current tab. @param target Link or resolved destination. @returns Whether the tab committed the destination; guards, cancellation or a missing tab leave it unchanged. */
+  navigateTo(viewId: string, target: ResourceNavigationTarget): Promise<boolean>
+  /**
+   * Open a document link through the shared workspace-file dispatch, so a handler that owns the
+   * tab moves it in place and a directory reaches a directory handler.
+   * @param viewId - Tab containing the link.
+   * @param href - Source-authored link, resolved relative to the containing document.
+   * @returns Completion; unresolved links reject with the dispatch failure.
+   */
+  openWorkspaceLink(viewId: string, href: string): Promise<void>
+  /** @param viewId Current tab. @returns Directory of its own resource, used to resolve relative links outside the source. */
+  linkBasePath(viewId: string): string
   /** @param descriptor Resource to match. @returns Deterministically ordered handler choices. */
   listOpenWith(descriptor: ResourceDescriptor): readonly ResourceHandlerChoice[]
   /** @param viewId Existing resource view. @param handlerId Selected matching handler. @returns Nothing after the switch or veto. */

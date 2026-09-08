@@ -28,7 +28,7 @@ describe('source-owned resource locations', () => {
     await restore({ sessionId, instanceId: 'restored', descriptor })
     expect(runtime.snapshot('restored').descriptor.location).toEqual(descriptor.location)
     await runtime.selectLocation('restored', descriptor.location.segments[0]!.selectionHint)
-    expect(selectLocation).toHaveBeenCalledWith(ref, { path: '/directory' })
+    expect(selectLocation).toHaveBeenCalledWith(ref, { path: '/directory' }, 'restored')
     expect(host.launch).not.toHaveBeenCalled()
     await expect(restore({ sessionId, instanceId: 'invalid', descriptor: {
       ...descriptor, location: { ...descriptor.location, selectable: 'yes' },

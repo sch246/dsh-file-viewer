@@ -102,15 +102,8 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
     () => service.snapshot(instanceId),
   )
   const rootRef = useRef<HTMLElement>(null)
-  const handlerService = useMemo<ResourceWorkbenchClientService>(() => ({
-    ...service,
-    navigateLink: (viewId, href) => {
-      // Keep keyboard navigation in the stable shell while its linked renderer is replaced.
-      const root = rootRef.current
-      if (root?.contains(document.activeElement)) root.focus({ preventScroll: true })
-      return service.navigateLink(viewId, href)
-    },
-  }), [service])
+  // The owning sidebar group owns focus handoff across navigation; the shell only retains identity.
+  const handlerService = service
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)

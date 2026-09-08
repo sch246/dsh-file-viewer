@@ -98,7 +98,7 @@ describe('resource workbench with the right-sidebar runtime', () => {
     const confirmDiscard = vi.fn(() => allowClose)
     const first = await createSidebar(sessionId)
     const firstRuntime = new ResourceWorkbenchRuntime({
-      host: createResourceViewHost(first.ctx.rightSidebar),
+      host: createResourceViewHost(first.ctx, first.ctx.rightSidebar),
       confirmDiscard,
       hashText: async text => text,
     })
@@ -149,7 +149,7 @@ describe('resource workbench with the right-sidebar runtime', () => {
 
     const second = await createSidebar(sessionId)
     const secondRuntime = new ResourceWorkbenchRuntime({
-      host: createResourceViewHost(second.ctx.rightSidebar),
+      host: createResourceViewHost(second.ctx, second.ctx.rightSidebar),
       hashText: async text => text,
     })
     runtimes.add(secondRuntime)

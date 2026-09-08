@@ -1,7 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@dsh-external/dsh-user-files/remote'
 import { openWorkspaceFile } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type {} from '@dsh-external/dsh-user-files/file-location'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import fileViewerRemote from '@dsh-external/dsh-file-viewer/remote'
 import { FilesystemResourceSource } from './filesystem-source.ts'
@@ -33,6 +35,7 @@ import {
 import { FILE_VIEWER_CSS } from './styles.ts'
 
 export type { EditorLanguage, EditorTextMateLanguage } from './editor-languages.ts'
+export type { WorkspaceFileOpenIntent } from '@dsh-external/dsh-user-files/file-location'
 
 export type {
   ResourceTextPosition,
@@ -119,7 +122,7 @@ function valueOf<T>(result: RemoteResult<T>): T {
 async function registerRuntime(ctx: Context): Promise<() => void> {
   const metadata = valueOf(await ctx.remote.fileViewer.metadata())
   const t = ctx.locale.bind(NS)
-  const host = createResourceViewHost(ctx.rightSidebar)
+  const host = createResourceViewHost(ctx, ctx.rightSidebar)
   const runtime = new ResourceWorkbenchRuntime({
     host,
     textBlockPolicy: { minBytes: metadata.textBlockMinBytes, targetBytes: metadata.textBlockTargetBytes, maxBytes: metadata.textBlockMaxBytes },
@@ -181,17 +184,17 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   }
   const offTextHandler = runtime.registerHandler(textHandler)
   const offImageHandler = runtime.registerHandler(imageHandler)
+  const resolveFile = async (sessionId: SessionId, path: string, signal: AbortSignal): Promise<ResourceDescriptor> => {
+    const resolved = valueOf(await ctx.remote.userFiles.resolve({ sessionId, path }, signal))
+    return {
+      ref: { sessionId, sourceId: source.id, resourceId: resolved.path },
+      name: resolved.name, kind: resolved.kind,
+      ...(resolved.mediaType === undefined ? {} : { mediaType: resolved.mediaType }),
+      ...(resolved.size === undefined ? {} : { size: resolved.size }),
+    }
+  }
   const source: FilesystemResourceSource = new FilesystemResourceSource({
-    resolveLink: async (sessionId, path, signal) => {
-      const resolved = valueOf(await ctx.remote.userFiles.resolve({ sessionId, path }, signal))
-      if (resolved.kind !== 'file') throw new Error(t('unsupportedResource'))
-      return {
-        ref: { sessionId, sourceId: source.id, resourceId: resolved.path },
-        name: resolved.name, kind: resolved.kind,
-        ...(resolved.mediaType === undefined ? {} : { mediaType: resolved.mediaType }),
-        ...(resolved.size === undefined ? {} : { size: resolved.size }),
-      }
-    },
+    resolveLink: async (sessionId, path, signal) => resolveFile(sessionId, path, signal),
     prepareTextSaveAs: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.prepareTextSaveAs({ sessionId, path, allowLargeFile: true }, signal)),
     saveTextAs: async (sessionId, path, text, expectedRevision, signal) => valueOf(await ctx.remote.userFiles.saveTextAs({
       sessionId, path, text, allowLargeFile: true,
@@ -204,7 +207,12 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     readBytes: async (sessionId, path, signal) => valueOf(await ctx.remote.userFiles.readBytes({ sessionId, path }, signal)),
     patchText: async (sessionId, path, ranges, signal, access) => valueOf(await ctx.remote.userFiles.patchText({ sessionId, path, ranges, ...access }, signal)),
     saveBytes: async (sessionId, path, dataBase64, version, signal) => valueOf(await ctx.remote.userFiles.saveBytes({ sessionId, path, dataBase64, version }, signal)),
-    openLocation: async (sessionId, path) => { await openWorkspaceFile(ctx, { sessionId, path }) },
+    openLocation: async (sessionId, path, viewId) => {
+      await openWorkspaceFile(ctx, {
+        sessionId, path, replace: 'current',
+        ...(viewId === undefined ? {} : { viewId, sourceInstanceId: viewId }),
+      })
+    },
     openExternal: async (sessionId, path, signal) => {
       signal.throwIfAborted()
       await openWorkspaceFile(ctx, { sessionId, path, mode: 'system', signal })
@@ -213,19 +221,22 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const offSource = runtime.registerSource(source)
   const offRestorer = runtime.registerRestorer()
   const offOpen = ctx.on('chat/open-workspace-file', async (request, next) => {
-    const resolved = valueOf(await ctx.remote.userFiles.resolve({ sessionId: request.sessionId, path: request.path }, request.signal))
-    const textSelection = request.textSelection
+    const signal = request.signal ?? new AbortController().signal
+    const resolved = valueOf(await ctx.remote.userFiles.resolve({ sessionId: request.sessionId, path: request.path }, signal))
+    // Directories belong to an available directory handler, not to a failed text load.
     if (resolved.kind !== 'file') return next()
-    const descriptor: ResourceDescriptor = {
-      ref: { sessionId: request.sessionId, sourceId: source.id, resourceId: resolved.path },
-      name: resolved.name,
-      kind: resolved.kind,
-      ...(resolved.mediaType === undefined ? {} : { mediaType: resolved.mediaType }),
-      ...(resolved.size === undefined ? {} : { size: resolved.size }),
-    }
+    const descriptor = await resolveFile(request.sessionId, resolved.path, signal)
     if (runtime.listOpenWith(descriptor).length === 0) return next()
+    const selection = request.textSelection
+    if (request.replace === 'current' && request.viewId !== undefined) {
+      const replaced = await runtime.navigateTo(request.viewId, {
+        descriptor,
+        ...(selection === undefined ? {} : { textSelection: selection }),
+      })
+      if (replaced) return
+    }
     await runtime.open(descriptor, {
-      ...(textSelection === undefined ? {} : { textSelection }),
+      ...(selection === undefined ? {} : { textSelection: selection }),
       ...(request.preview === undefined ? {} : { preview: request.preview }),
       ...(request.target === undefined ? {} : { target: request.target }),
     })

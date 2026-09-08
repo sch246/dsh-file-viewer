@@ -40,7 +40,7 @@ export interface FilesystemSourceGateway extends SegmentedTextGateway {
     version: UserFileRevision,
     signal: AbortSignal,
   ): Promise<UserFileSaveResult>
-  openLocation?(sessionId: SessionId, path: string): Promise<void>
+  openLocation?(sessionId: SessionId, path: string, viewId?: string): Promise<void>
   openExternal?(sessionId: SessionId, path: string, signal: AbortSignal): Promise<void>
 }
 
@@ -155,12 +155,12 @@ export class FilesystemResourceSource implements ResourceSource {
     return { descriptor, ...(parsed.textSelection === undefined ? {} : { textSelection: parsed.textSelection }) }
   }
 
-  /** Open a breadcrumb through the common Host opening policy. */
-  async selectLocation(ref: ResourceRef, selection?: unknown): Promise<void> {
+  /** Open a breadcrumb through shared file dispatch, which routes directories to a directory handler. */
+  async selectLocation(ref: ResourceRef, selection?: unknown, viewId?: string): Promise<void> {
     if (typeof selection !== 'object' || selection === null || !('path' in selection)
       || typeof selection.path !== 'string') throw new Error('file-viewer: invalid filesystem location')
     if (this.#gateway.openLocation === undefined) throw new Error('file-viewer: filesystem location opening unavailable')
-    await this.#gateway.openLocation(ref.sessionId, selection.path)
+    await this.#gateway.openLocation(ref.sessionId, selection.path, viewId)
   }
 
   /** Load canonical LF text with exact source size, location and revision. */

@@ -72,16 +72,22 @@ describe('file viewer browser plugin', () => {
     const sessionId = 'standalone-viewer' as SessionId
     await ctx.waterfall('chat/open-workspace-file', { sessionId, path: 'file.txt', preview: true, target: { fromInstanceId: 'tree', direction: 'right' } }, async () => {})
     expect(prepareTextRead).toHaveBeenCalledWith({ sessionId, path: '/workspace/file.txt', allowLargeFile: false, maxConfirmedBytes: 80 }, expect.any(AbortSignal))
-    expect(rightSidebar.openInstance).toHaveBeenLastCalledWith(sessionId, expect.objectContaining({
+    const [, openedInput, openOptions] = vi.mocked(rightSidebar.openInstance).mock.calls.at(-1)!
+    expect(openedInput).toMatchObject({
       viewId: RESOURCE_WORKBENCH_VIEW_ID,
-      restoreDescriptor: expect.objectContaining({ ref: { sessionId, sourceId: 'filesystem', resourceId: '/workspace/file.txt' } }),
-    }), { preview: true, target: { fromInstanceId: 'tree', direction: 'right' } })
+      restoreDescriptor: { ref: { sessionId, sourceId: 'filesystem', resourceId: '/workspace/file.txt' } },
+    })
+    expect(openOptions).toMatchObject({ preview: true, target: { fromInstanceId: 'tree', direction: 'right' } })
+    // An already-open instance commits its destination instead of only activating.
+    expect(typeof openOptions?.commit).toBe('function')
     expect(importModule).not.toHaveBeenCalled()
     const filesystemView = vi.mocked(rightSidebar.openInstance).mock.calls[0]![1].id
     expect(ctx.resourceWorkbench.textSnapshot(filesystemView)).toMatchObject({ sizeTier: 'large' })
     resolve.mockResolvedValueOnce({ ok: true, value: { path: '/workspace', name: 'workspace', kind: 'directory', mediaType: 'inode/directory' } })
     await ctx.resourceWorkbench.selectLocation(filesystemView, { path: '/workspace' })
-    expect(openWorkspaceFile).toHaveBeenLastCalledWith(expect.anything(), { sessionId, path: '/workspace' })
+    expect(openWorkspaceFile).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({
+      sessionId, path: '/workspace', replace: 'current', viewId: filesystemView,
+    }))
     expect(session.openWorkspacePath).toHaveBeenLastCalledWith({ path: '/workspace' }, undefined)
     await ctx.resourceWorkbench.openExternal(filesystemView)
     expect(openWorkspaceFile).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ sessionId, path: '/workspace/file.txt', mode: 'system', signal: expect.any(AbortSignal) }))

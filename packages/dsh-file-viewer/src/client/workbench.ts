@@ -24,6 +24,7 @@ import {
   type ResourceHandlerModule,
   type ResourceLoadedBytes,
   type ResourceBytesWatchEvent,
+  type ResourceNavigationTarget,
   type ResourceOpenOptions,
   type ResourceOpenTarget,
   type ResourceRef,
@@ -53,10 +54,30 @@ export interface ResourceViewHost {
       readonly onClosed?: () => void
       readonly onNavigate?: (descriptor: unknown) => boolean | Promise<boolean>
     },
-    options?: { readonly target?: ResourceOpenTarget; readonly preview?: boolean },
+    options?: {
+      readonly target?: ResourceOpenTarget
+      readonly preview?: boolean
+      /** Commit an already-open instance instead of only activating it. */
+      readonly commit?: () => { readonly descriptor: unknown; readonly title?: string }
+    },
   ): Promise<string>
   activate(sessionId: SessionId, viewId: string): void
   recordNavigation(sessionId: SessionId, viewId: string): void
+  /** Open a document link through the shared Client workspace-file dispatch. */
+  openWorkspaceFile(request: {
+    readonly sessionId: SessionId
+    readonly path: string
+    readonly viewId: string
+    readonly replace: 'current'
+    readonly textSelection?: ResourceTextPosition
+  }): Promise<void>
+  /** Commit presentation, checkpoint, group history and cursor for one reached destination. */
+  commit(sessionId: SessionId, viewId: string, commit: {
+    readonly descriptor: unknown
+    readonly title?: string
+    readonly resourceMissing?: boolean
+    readonly pin?: boolean
+  }): void
   update(
     sessionId: SessionId,
     viewId: string,
@@ -542,6 +563,10 @@ export class ResourceWorkbenchRuntime {
       }, {
         ...(options.target === undefined ? {} : { target: options.target }),
         ...(options.preview === undefined ? {} : { preview: options.preview }),
+        commit: () => ({
+          descriptor: persistedDescriptor(descriptor, handlerId, options.textSelection),
+          title: descriptor.name,
+        }),
       })
       if (this.#usesText(handlerId) && source !== undefined) await this.#attachText(viewId, view)
       return viewId
@@ -553,25 +578,72 @@ export class ResourceWorkbenchRuntime {
 
   /** Resolve a hyperlink through the current source and replace only this sidebar tab. */
   async navigateLink(viewId: string, href: string): Promise<void> {
+    await this.#navigate(viewId, { href })
+  }
+
+  /** Move one tab to a link or an already resolved destination. @param viewId - Current tab. @param target - Link or descriptor. @returns Whether this tab committed the destination. */
+  async navigateTo(viewId: string, target: ResourceNavigationTarget): Promise<boolean> {
+    if (this.#views.get(viewId) === undefined) return false
+    return this.#navigate(viewId, target)
+  }
+
+  /** Open a document link through shared file dispatch instead of a plugin-private file route. */
+  async openWorkspaceLink(viewId: string, href: string): Promise<void> {
     const view = this.#view(viewId)
     const source = this.#sources.get(view.descriptor.ref.sourceId)
     if (source?.resolveLink === undefined) {
       this.#publishActionFailure(view, 'This source does not support file links.')
       return
     }
-    await this.#navigate(viewId, signal => source.resolveLink!(view.descriptor.ref, href, signal))
+    try {
+      const target = await source.resolveLink(view.descriptor.ref, href, new AbortController().signal)
+      await this.#host.openWorkspaceFile({
+        sessionId: target.descriptor.ref.sessionId,
+        path: target.descriptor.ref.resourceId,
+        viewId,
+        replace: 'current',
+        ...(target.textSelection === undefined ? {} : { textSelection: target.textSelection }),
+      })
+    } catch (error: unknown) {
+      if (this.#views.get(viewId) === view) this.#publishActionFailure(view, failureMessage(error))
+    }
+  }
+
+  /** Directory of one view's own resource, used to resolve relative links outside the source. */
+  linkBasePath(viewId: string): string {
+    const { resourceId } = this.#view(viewId).descriptor.ref
+    return resourceId.slice(0, Math.max(resourceId.lastIndexOf('/'), resourceId.lastIndexOf('\\')) + 1)
+  }
+
+  /** Commit one reached destination to its group, or only checkpoint it while replaying history. */
+  #commit(viewId: string, view: ViewRecord, descriptor: PersistedResourceView): void {
+    this.#host.commit(view.descriptor.ref.sessionId, viewId, {
+      descriptor,
+      title: view.descriptor.name,
+      resourceMissing: false,
+    })
   }
 
   async #restoreNavigation(viewId: string, value: unknown): Promise<boolean> {
     const persisted = parsePersisted(value)
     if (persisted === undefined) return false
     const { format: _format, handlerId, textSelection, ...descriptor } = persisted
-    return this.#navigate(viewId, async () => ({ descriptor, ...(textSelection === undefined ? {} : { textSelection }) }), { handlerId })
+    return this.#navigate(viewId, { descriptor, ...(textSelection === undefined ? {} : { textSelection }) }, { handlerId })
+  }
+
+  async #resolveNavigation(viewId: string, target: ResourceNavigationTarget, signal: AbortSignal): Promise<ResourceLinkTarget> {
+    if ('href' in target) {
+      const view = this.#view(viewId)
+      const source = this.#sources.get(view.descriptor.ref.sourceId)
+      if (source?.resolveLink === undefined) throw new Error('This source does not support file links.')
+      return source.resolveLink(view.descriptor.ref, target.href, signal)
+    }
+    return { descriptor: target.descriptor, ...(target.textSelection === undefined ? {} : { textSelection: target.textSelection }) }
   }
 
   async #navigate(
     viewId: string,
-    resolve: (signal: AbortSignal) => Promise<ResourceLinkTarget>,
+    navigation: ResourceNavigationTarget,
     restoration?: { handlerId: ResourceHandlerId | undefined },
   ): Promise<boolean> {
     const view = this.#view(viewId)
@@ -584,7 +656,7 @@ export class ResourceWorkbenchRuntime {
     let committed = false
     const current = () => !controller.signal.aborted && this.#transitionCurrent(viewId, view, generation)
     try {
-      const target = await resolve(controller.signal)
+      const target = await this.#resolveNavigation(viewId, navigation, controller.signal)
       if (!current()) return false
       if (target.descriptor.ref.sessionId !== view.descriptor.ref.sessionId) throw new Error('resource-workbench: cross-Session navigation is unavailable')
       const matching = this.#matching(target.descriptor)
@@ -594,11 +666,10 @@ export class ResourceWorkbenchRuntime {
       if (refKey(view.descriptor.ref) === refKey(target.descriptor.ref) && view.handlerId === handlerId) {
         if (target.textSelection !== undefined) {
           view.textSelection = { ...target.textSelection, requestId: ++this.#selectionRequest }
-          this.#host.update(view.descriptor.ref.sessionId, viewId, {
-            restoreDescriptor: persistedDescriptor(view.descriptor, handlerId, target.textSelection),
-          })
+          const descriptor = persistedDescriptor(view.descriptor, handlerId, target.textSelection)
           this.#notify(view)
-          if (restoration === undefined) this.#host.recordNavigation(view.descriptor.ref.sessionId, viewId)
+          if (restoration === undefined) this.#commit(viewId, view, descriptor)
+          else this.#host.update(view.descriptor.ref.sessionId, viewId, { restoreDescriptor: descriptor })
         }
         return true
       }
@@ -611,10 +682,6 @@ export class ResourceWorkbenchRuntime {
         && ![...this.#views.entries()].some(([id, other]) => id !== viewId && other.documentId === originalDocumentId)
         && !await this.documents.canClose(originalDocumentId)) return false
       if (!current()) return false
-      this.#host.update(target.descriptor.ref.sessionId, viewId, {
-        title: target.descriptor.name, resourceMissing: false,
-        restoreDescriptor: persistedDescriptor(target.descriptor, handlerId, target.textSelection),
-      })
       this.#stopBytes(view, new Error('resource navigation'))
       view.textSubscription?.()
       view.textSubscription = undefined
@@ -638,7 +705,7 @@ export class ResourceWorkbenchRuntime {
         this.#syncTextDescriptor(viewId, view)
       }
       this.#notify(view)
-      if (restoration === undefined) this.#host.recordNavigation(target.descriptor.ref.sessionId, viewId)
+      this.#commit(viewId, view, persistedDescriptor(target.descriptor, handlerId, target.textSelection))
       if (originalDocumentId !== undefined && originalDocumentId !== destinationId
         && ![...this.#views.values()].some(other => other.documentId === originalDocumentId)) this.documents.discard(originalDocumentId)
       return true
@@ -1056,7 +1123,7 @@ export class ResourceWorkbenchRuntime {
     try {
       const source = this.#sources.get(view.descriptor.ref.sourceId)
       if (source?.selectLocation !== undefined) {
-        await source.selectLocation(view.descriptor.ref, selection)
+        await source.selectLocation(view.descriptor.ref, selection, viewId)
         return
       }
       const location = view.descriptor.location

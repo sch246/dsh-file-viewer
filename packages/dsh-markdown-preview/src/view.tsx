@@ -23,7 +23,10 @@ export function createMarkdownResourceView(t: (key: MarkdownLocaleKey) => string
       return value
     })
     const [html, setHtml] = useState(presentation.html)
-    const onOpenFile = useCallback((href: string) => { void service.navigateLink(viewId, href) }, [service, viewId])
+    // Links follow the shared file dispatch so directories reach a directory handler.
+    const onOpenFile = useCallback((href: string) => {
+      void service.openWorkspaceLink(viewId, href)
+    }, [service, viewId])
     const newHtml = useSyncExternalStore(subscribeHtmlDefault, defaultHtml, defaultHtml)
     const viewport = useRef<HTMLDivElement>(null)
     const body = useRef<HTMLDivElement>(null)
