@@ -88,7 +88,7 @@ describe('resource workbench presentation', () => {
     const service = createResourceWorkbenchClientService(runtime)
     const TextView = createTextResourceView({
       loadEditor: async () => ({ createFileViewerEditor: () => ({
-        appendText: () => {}, setReadOnly: () => {}, setText: () => {}, setComparison: () => {}, setLineNumbers: () => {}, captureViewState: () => undefined, destroy: () => {},
+        appendText: () => {}, setReadOnly: () => {}, setText: () => {}, setComparison: () => {}, setAppearance: vi.fn(), setPhrases: vi.fn(), setLanguage: vi.fn(), setLineNumbers: () => {}, captureViewState: () => undefined, destroy: () => {},
       }) }),
       confirm: () => true, t: key => en[key],
     })
@@ -216,7 +216,7 @@ describe('resource workbench presentation', () => {
       const createEditor = vi.fn((options: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]) => ({
         appendText: () => {}, setReadOnly: () => {}, setText: () => {},
         setComparison: () => {},
-        setLineNumbers: () => {},
+        setAppearance: vi.fn(), setPhrases: vi.fn(), setLanguage: vi.fn(), setLineNumbers: () => {},
         captureViewState: () => ({ selection: 1 }),
         destroy: () => {
           destroy()

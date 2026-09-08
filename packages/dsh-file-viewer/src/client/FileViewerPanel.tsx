@@ -1,3 +1,6 @@
+import { EditorLanguageRegistry, type EditorLanguage } from './editor-languages.ts'
+import { editorAppearance, editorPreferences, setEditorPreferences, subscribeEditorPreferences } from './editor-preferences.ts'
+import { editorSearchPhrases } from './locales.ts'
 import { formatFileSize } from './file-size.ts'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent } from 'react'
@@ -19,6 +22,7 @@ type EditorSnapshot = Extract<FileViewerInstanceSnapshot, { status: 'ready' | 'p
 
 /** Presentation retained by the resource view, independently of shared document synchronization. */
 class TextPresentation {
+  language = 'auto'
   lineNumbers = defaultLineNumbers()
   expanded = false
   differences = false
@@ -28,6 +32,8 @@ class TextPresentation {
 
 /** Callbacks injected for one right-sidebar editor instance. */
 export interface FileViewerPanelInjected {
+  readonly languageRegistry?: EditorLanguageRegistry
+  readonly filename?: string
   snapshot(instanceId: string): FileViewerInstanceSnapshot
   subscribe(instanceId: string, listener: () => void): () => void
   editChanges(instanceId: string, changes: readonly FileViewerTextChange[]): void
@@ -102,6 +108,10 @@ interface EditorHostProps {
   readonly onChange: (changes: readonly FileViewerTextChange[]) => EditorDocument | undefined
   readonly viewState?: unknown
   readonly onViewStateChange?: (state: unknown) => void
+  readonly appearance?: Parameters<FileViewerEditorModule['createFileViewerEditor']>[0]['appearance']
+  readonly phrases?: Readonly<Record<string, string>>
+  readonly language?: EditorLanguage
+  readonly languageFailureLabel?: string
   readonly loadingLabel: string
   readonly failureLabel: string
 }
@@ -109,6 +119,7 @@ interface EditorHostProps {
 /** Own one direct CodeMirror view for exactly one editor-instance mount. */
 export function EditorHost({
   snapshot, subscribe, comparison, lineNumbers, loadEditor, onChange, viewState, onViewStateChange, loadingLabel, failureLabel,
+  appearance, phrases, language, languageFailureLabel,
 }: EditorHostProps) {
   const parentRef = useRef<HTMLDivElement>(null)
   const handleRef = useRef<ReturnType<FileViewerEditorModule['createFileViewerEditor']>>()
@@ -119,6 +130,9 @@ export function EditorHost({
   const appliedRef = useRef<{ text?: string; document?: EditorDocument; appendKey?: number }>({})
   const comparisonRef = useRef(comparison)
   const lineNumbersRef = useRef(lineNumbers)
+  const appearanceRef = useRef(appearance)
+  const phrasesRef = useRef(phrases)
+  const [languageFailed, setLanguageFailed] = useState(false)
   const viewStateRef = useRef(viewState)
   const onChangeRef = useRef(onChange)
   const onViewStateChangeRef = useRef(onViewStateChange)
@@ -126,12 +140,15 @@ export function EditorHost({
   snapshotRef.current = snapshot
   comparisonRef.current = comparison
   lineNumbersRef.current = lineNumbers
+  appearanceRef.current = appearance
+  phrasesRef.current = phrases
   viewStateRef.current = viewState
   onChangeRef.current = onChange
   onViewStateChangeRef.current = onViewStateChange
 
   useEffect(() => {
     let live = true
+    setState('loading')
     void loadEditor().then((editor) => {
       if (!live || parentRef.current === null) return
       const initial = snapshotRef.current()
@@ -144,6 +161,8 @@ export function EditorHost({
         readOnly: readOnlyRef.current,
         ...(comparisonRef.current === undefined ? {} : { comparison: comparisonRef.current }),
         lineNumbers: lineNumbersRef.current,
+        ...(appearanceRef.current === undefined ? {} : { appearance: appearanceRef.current }),
+        ...(phrasesRef.current === undefined ? {} : { phrases: phrasesRef.current }),
         onChange: changes => {
           submittingRef.current = true
           try {
@@ -216,9 +235,25 @@ export function EditorHost({
     handleRef.current?.setComparison(comparison)
   }, [comparison])
   useEffect(() => { handleRef.current?.setLineNumbers(lineNumbers) }, [lineNumbers])
+  useEffect(() => { if (appearance) handleRef.current?.setAppearance(appearance) }, [appearance])
+  useEffect(() => { if (phrases) handleRef.current?.setPhrases(phrases) }, [phrases])
+  useEffect(() => {
+    const handle = handleRef.current
+    if (state !== 'ready' || !handle) return
+    let live = true
+    setLanguageFailed(false)
+    handle.setLanguage(undefined)
+    if (language) {
+      void Promise.resolve().then(() => language.load()).then(parser => {
+        if (live) handle.setLanguage(parser)
+      }).catch(() => { if (live) setLanguageFailed(true) })
+    }
+    return () => { live = false }
+  }, [language, state])
 
   return (
     <div className="dsh-file-viewer-editor-shell">
+      {languageFailed && <div className="dsh-file-viewer-failure" role="alert">{languageFailureLabel}</div>}
       {state === 'loading' && <div className="dsh-file-viewer-state" role="status">{loadingLabel}</div>}
       {state === 'failed' && <div className="dsh-file-viewer-state" role="alert">{failureLabel}</div>}
       <div ref={parentRef} className="dsh-file-viewer-editor" hidden={state !== 'ready'} />
@@ -279,7 +314,7 @@ function LoadConfirmation({ state, onLoad, t }: {
 function ReadyPanel({
   state, snapshot, subscribe, edit, save, refresh, confirmLoad, cancelLoad, setDraftPersistence, overwriteSource, discardLocal, setAutoUpdate, setAutoSave,
   automationDefaults, setGlobalAutoUpdate, setGlobalAutoSave, confirm, loadEditor,
-  presentation, retainPresentation, onViewStateChange, t,
+  presentation, retainPresentation, onViewStateChange, languageRegistry, filename, t,
 }: {
   readonly state: EditorSnapshot
   readonly snapshot: () => FileViewerInstanceSnapshot
@@ -299,12 +334,22 @@ function ReadyPanel({
   readonly setGlobalAutoSave: (enabled: boolean) => void
   readonly confirm: (message: string) => boolean
   readonly loadEditor: () => Promise<FileViewerEditorModule>
+  readonly languageRegistry?: EditorLanguageRegistry
+  readonly filename?: string
   readonly presentation: TextPresentation
   readonly retainPresentation: () => void
   readonly onViewStateChange?: (state: unknown) => void
   readonly t: FileViewerPanelProps['t']
 }) {
   const ready = state.status === 'ready' ? state : undefined
+  const fallbackRegistry = useMemo(() => new EditorLanguageRegistry(), [])
+  const registry = languageRegistry ?? fallbackRegistry
+  const languages = useSyncExternalStore(registry.subscribe, registry.snapshot, registry.snapshot)
+  const selectedLanguage = presentation.language === 'auto' ? registry.detect(filename ?? '')
+    : languages.find(language => language.id === presentation.language)
+  const preferences = useSyncExternalStore(subscribeEditorPreferences, editorPreferences, editorPreferences)
+  const appearance = useMemo(() => editorAppearance(preferences), [preferences])
+  const phrases = useMemo(() => editorSearchPhrases(t), [t])
   const [, redraw] = useState(0)
   const changePresentation = (change: Partial<TextPresentation>) => {
     Object.assign(presentation, change)
@@ -425,6 +470,20 @@ function ReadyPanel({
               onChange={event => { setDraftPersistence(event.currentTarget.checked) }} />
             {t('draftPersistence')}
           </label>
+          <details className="dsh-file-viewer-editor-settings" hidden={!expanded}>
+            <summary>{t('editorSettings')}</summary>
+            <label>{t('font')}<select aria-label={t('font')} value={preferences.font}
+              onChange={event => { setEditorPreferences({ ...preferences, font: event.currentTarget.value as typeof preferences.font }) }}>
+              <option value="monospace">{t('fontMonospace')}</option><option value="system">{t('fontSystem')}</option><option value="serif">{t('fontSerif')}</option>
+            </select></label>
+            <label>{t('fontSize')}<input type="number" aria-label={t('fontSize')} min={8} max={40} value={preferences.fontSize}
+              onChange={event => { const fontSize = event.currentTarget.valueAsNumber; if (Number.isInteger(fontSize) && fontSize >= 8 && fontSize <= 40) setEditorPreferences({ ...preferences, fontSize }) }} /></label>
+            <label>{t('language')}<select aria-label={t('language')} value={presentation.language === 'auto' || selectedLanguage ? presentation.language : 'plain'}
+              onChange={event => { changePresentation({ language: event.currentTarget.value }) }}>
+              <option value="auto">{t('languageAuto')}</option><option value="plain">{t('languagePlain')}</option>
+              {languages.map(language => <option key={language.id} value={language.id}>{language.label}</option>)}
+            </select></label>
+          </details>
           <button type="button" hidden={!expanded} aria-pressed={showDifferences}
             onClick={() => { changePresentation({ differences: !showDifferences }) }}>{t(showDifferences ? 'backToEditor' : 'differences')}</button>
         </div>
@@ -458,6 +517,10 @@ function ReadyPanel({
           onChange={edit}
           lineNumbers={presentation.lineNumbers}
           comparison={comparison}
+          appearance={appearance}
+          phrases={phrases}
+          {...(selectedLanguage === undefined ? {} : { language: selectedLanguage })}
+          languageFailureLabel={t('languageFailed')}
           viewState={presentation.editorState}
           {...(onViewStateChange === undefined ? {} : { onViewStateChange })}
           loadingLabel={t('editorLoading')}
@@ -523,6 +586,8 @@ export function FileViewerPanel(props: FileViewerPanelProps) {
       setGlobalAutoSave={props.setGlobalAutoSave}
       confirm={props.confirm}
       loadEditor={props.loadEditor}
+      {...(props.languageRegistry === undefined ? {} : { languageRegistry: props.languageRegistry })}
+      {...(props.filename === undefined ? {} : { filename: props.filename })}
       presentation={presentation}
       retainPresentation={retainPresentation}
       onViewStateChange={value => { presentation.editorState = value; retainPresentation() }}

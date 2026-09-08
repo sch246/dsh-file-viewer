@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SearchQuery, findNext, replaceAll, setSearchQuery } from '@codemirror/search'
+import { editorSearchPhrases, zh } from '../../dsh-file-viewer/src/client/locales.ts'
 import { redo, undo } from '@codemirror/commands'
 import { EditorView } from '@codemirror/view'
 import { createFileViewerEditor, type FileViewerEditorHandle, type FileViewerEditorOptions } from '../src/client.ts'
@@ -35,6 +37,71 @@ function mount(options: Partial<Omit<FileViewerEditorOptions, 'parent'>> = {}) {
 }
 
 describe('CodeMirror editor handle', () => {
+  it('handles full-document navigation and extension through real key events outside the rendered range', () => {
+    const text = 'first\n' + 'middle line\n'.repeat(10000) + 'last'
+    const { view } = mount({ text })
+    expect(view.contentDOM.textContent!.length).toBeLessThan(text.length)
+    const press = (key: string, shiftKey = false) => {
+      const event = new KeyboardEvent('keydown', { key, code: key, ctrlKey: true, shiftKey, bubbles: true, cancelable: true })
+      view.contentDOM.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+    }
+    view.dispatch({ selection: { anchor: 10 } })
+    press('End', true)
+    expect(view.state.selection.main).toMatchObject({ anchor: 10, head: text.length })
+    press('Home', true)
+    expect(view.state.selection.main).toMatchObject({ anchor: 10, head: 0 })
+    press('End')
+    expect(view.state.selection.main).toMatchObject({ anchor: text.length, head: text.length })
+    press('Home')
+    expect(view.state.selection.main).toMatchObject({ anchor: 0, head: 0 })
+  })
+
+  it('finds and replaces beyond the viewport, translates the panel and retains replacement undo', () => {
+    const text = 'target\n' + 'middle line\n'.repeat(10000) + 'target'
+    const { parent, view } = mount({ text, phrases: editorSearchPhrases(key => zh[key]) })
+    const press = (key: string) => view.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true }))
+    press('f')
+    expect(parent.querySelector('input[aria-label="查找"]')).not.toBeNull()
+    press('h')
+    expect(document.activeElement).toBe(parent.querySelector('input[name="replace"]'))
+    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: 'target', replace: 'changed' })), selection: { anchor: 7 } })
+    expect(findNext(view)).toBe(true)
+    expect(view.state.selection.main.to).toBe(text.length)
+    expect(replaceAll(view)).toBe(true)
+    expect(view.state.doc.sliceString(0, 7)).toBe('changed')
+    expect(view.state.doc.sliceString(view.state.doc.length - 7)).toBe('changed')
+    expect(undo(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe(text)
+    expect(redo(view)).toBe(true)
+    expect(view.state.doc.sliceString(0, 7)).toBe('changed')
+  })
+
+  it('keeps source search read-only and preserves local text and history through presentation changes', () => {
+    const { parent, view, handle } = mount({ text: 'local', comparison: {
+      baseText: 'base', sourceText: 'remote', labels: { local: 'Local', source: 'Source', noDifferences: 'Same' },
+    } })
+    view.dispatch({ changes: { from: 5, insert: ' edit' }, selection: { anchor: 2 } })
+    const document = view.state.doc
+    handle.setAppearance({ fontFamily: 'Georgia, serif', fontSize: 20 })
+    handle.setPhrases(editorSearchPhrases(key => zh[key]))
+    handle.setLanguage({ token: (stream: { skipToEnd(): void }) => { stream.skipToEnd(); return 'keyword' } })
+    expect(view.state.doc).toBe(document)
+    expect(view.state.selection.main.head).toBe(2)
+    expect(parent.querySelector('.cm-line span')).not.toBeNull()
+    const source = EditorView.findFromDOM(parent.querySelector('.dsh-file-viewer-source-pane .cm-editor')!)!
+    source.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', ctrlKey: true, bubbles: true, cancelable: true }))
+    expect(source.dom.querySelector('input[aria-label="查找"]')).not.toBeNull()
+    expect(source.dom.querySelector('input[name="replace"]')).toBeNull()
+    source.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: 'remote', replace: 'changed' })) })
+    expect(replaceAll(source)).toBe(false)
+    expect(source.state.doc.toString()).toBe('remote')
+    handle.setLanguage(undefined)
+    expect(() => handle.setLanguage({})).toThrow('StreamParser')
+    expect(undo(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe('local')
+  })
+
   it('updates source state without rebuilding the view and disposes its DOM', () => {
     const { parent, handle } = mount()
     const editor = parent.querySelector('.cm-editor')

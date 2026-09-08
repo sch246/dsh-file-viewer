@@ -26,6 +26,10 @@ export const FILE_VIEWER_CSS = `
 .dsh-file-viewer-location-segment{display:inline}
 .dsh-file-viewer-location button{display:inline;border:0;background:transparent;color:inherit;padding:0;text-decoration:underline;cursor:pointer;user-select:text}
 .dsh-file-viewer-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:4px;padding-top:4px;max-width:100%;font-size:12px;pointer-events:auto}
+.dsh-file-viewer-editor-settings{padding:4px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2)}
+.dsh-file-viewer-editor-settings summary{cursor:pointer}.dsh-file-viewer-editor-settings label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px}
+.dsh-file-viewer-editor-settings input,.dsh-file-viewer-editor-settings select{max-width:150px;background:var(--dsw-alias-bg-layer-1);color:inherit;border:1px solid var(--dsw-alias-border-l2);border-radius:4px;padding:3px}
+.dsh-file-viewer-editor-settings input{width:64px}
 .dsh-file-viewer-toolbar [hidden]{display:none}
 .dsh-file-viewer-action-group{position:relative;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2)}
 .dsh-file-viewer-toolbar .dsh-file-viewer-action-group>button{flex:1;border:0;border-left:1px solid var(--dsw-alias-border-l2);border-radius:0;text-align:left}

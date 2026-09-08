@@ -1,7 +1,9 @@
 /** Editable local text and a readonly source pane share baseline rows and measured wrap heights. */
 import { Compartment, EditorSelection, EditorState, StateEffect, StateField, Text, Transaction, type Range } from '@codemirror/state'
-import { history, historyKeymap } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { Decoration, EditorView, GutterMarker, WidgetType, gutter, keymap, lineNumbers, type DecorationSet } from '@codemirror/view'
+import { closeSearchPanel, openSearchPanel, search, searchKeymap, searchPanelOpen } from '@codemirror/search'
+import { defaultHighlightStyle, HighlightStyle, StreamLanguage, syntaxHighlighting, type StreamParser } from '@codemirror/language'
 import { buildComparison, type ComparisonCell, type ComparisonSide } from './alignment.ts'
 
 /** Exact comparison inputs and caller-localized pane labels. */
@@ -14,12 +16,17 @@ export interface FileViewerComparison {
 /** One UTF-16 replacement in the document before a transaction. */
 export interface FileViewerTextChange { readonly from: number; readonly to: number; readonly insert: string }
 
+/** Font settings applied to both panes without changing document state. */
+export interface FileViewerEditorAppearance { readonly fontFamily: string; readonly fontSize: number }
+
 /** Parameters for one retained local CodeMirror instance. */
 export interface FileViewerEditorOptions {
   readonly parent: HTMLElement
   readonly text: string
   readonly readOnly: boolean
   readonly onChange: (changes: readonly FileViewerTextChange[]) => void
+  readonly appearance?: FileViewerEditorAppearance
+  readonly phrases?: Readonly<Record<string, string>>
   readonly lineNumbers?: boolean
   readonly comparison?: FileViewerComparison
   /** Opaque, memory-only snapshot captured by this module for the same resource view. */
@@ -38,6 +45,12 @@ export interface FileViewerEditorHandle {
   appendText(text: string): void
   /** Reconfigure editing permission without replacing the view or its history. */
   setReadOnly(readOnly: boolean): void
+  /** Apply browser font preferences to both panes without replacing history. */
+  setAppearance(appearance: FileViewerEditorAppearance): void
+  /** Replace CodeMirror UI translations. */
+  setPhrases(phrases: Readonly<Record<string, string>>): void
+  /** Accept a plugin's plain StreamParser object; undefined selects plain text. */
+  setLanguage(parser: unknown): void
   /** Toggle ordinary line numbers or both baseline/current columns in every comparison pane. */
   setLineNumbers(enabled: boolean): void
   /** Toggle or update comparison without replacing the local view, selection or undo history. */
@@ -206,13 +219,19 @@ function decorate(side: ComparisonSide, rows: readonly VisualRow[]): Presentatio
   return { decorations: Decoration.set(ranges, true), lines }
 }
 
+const highlightStyle = HighlightStyle.define(defaultHighlightStyle.specs.map(spec => ({
+  ...spec, ...(spec.color ? { color: `color-mix(in srgb, ${spec.color} 70%, var(--dsw-alias-label-primary))` } : {}),
+})))
+
 const theme = EditorView.theme({
   '&': { height: '100%', color: 'var(--dsw-alias-label-primary)', backgroundColor: 'var(--dsw-alias-bg-layer-1)' },
   '.cm-scroller': { overflow: 'auto' },
-  '.cm-content': { caretColor: 'var(--dsw-alias-brand-primary)', fontFamily: 'monospace' },
+  '.cm-content': { caretColor: 'var(--dsw-alias-brand-primary)' },
+  '.cm-panels': { backgroundColor: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-primary)' },
+  '.cm-textfield, .cm-button': { color: 'inherit', background: 'var(--dsw-alias-bg-layer-1)', border: '1px solid var(--dsw-alias-border-l2)' },
   '.cm-line': { padding: '0 2px' },
   '.cm-cursor': { borderLeftColor: 'var(--dsw-alias-brand-primary)' },
-  '.cm-gutters': { backgroundColor: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)', border: 'none' },
+  '.cm-gutters': { backgroundColor: 'color-mix(in srgb, var(--dsw-alias-label-primary) 6%, var(--dsw-alias-bg-layer-1))', color: 'var(--dsw-alias-label-secondary)', borderRight: '1px solid var(--dsw-alias-border-l2, #8886)' },
   '.cm-comparison-gutter .cm-gutterElement': { padding: '0', lineHeight: 'inherit' },
   '.cm-comparison-numbers': { display: 'flex', boxSizing: 'border-box', overflow: 'hidden' },
   '.cm-comparison-numbers span': { display: 'block', minWidth: '3ch', padding: '0 4px', textAlign: 'right' },
@@ -254,6 +273,23 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   const localPane = pane('local')
   const numbering = new Compartment()
   const editing = new Compartment()
+  const typography = new Compartment()
+  const localization = new Compartment()
+  const language = new Compartment()
+  let appearance = options.appearance ?? { fontFamily: 'monospace', fontSize: 14 }
+  let phrases = options.phrases ?? {}
+  let languageExtension: ReturnType<typeof StreamLanguage.define> | undefined
+  const font = () => EditorView.theme({ '.cm-scroller': { fontFamily: appearance.fontFamily, fontSize: `${appearance.fontSize}px` } })
+  const commands = keymap.of([
+    { key: 'Mod-h', run: target => {
+      openSearchPanel(target)
+      if (!target.state.readOnly) target.dom.querySelector<HTMLInputElement>('input[name="replace"]')?.focus()
+      return true
+    }, scope: 'editor search-panel' },
+    ...searchKeymap, ...defaultKeymap, ...historyKeymap,
+  ])
+  const presentationExtensions = () => [typography.of(font()), localization.of(EditorState.phrases.of(phrases)),
+    language.of(languageExtension ?? []), syntaxHighlighting(highlightStyle), search(), commands]
   let numbersEnabled = options.lineNumbers ?? true
   let comparison = options.comparison
   let sourcePane: ReturnType<typeof pane> | undefined
@@ -263,7 +299,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
   let destroyed = false
   let frame: number | undefined
   const extensions = [theme, history(), editing.of(EditorState.readOnly.of(options.readOnly)), EditorView.lineWrapping,
-    keymap.of(historyKeymap), updateListener, presentation,
+    ...presentationExtensions(), updateListener, presentation,
     numbering.of(numbersEnabled ? lineNumbers() : [])]
   let state = prior ? prior.state.update({ effects: StateEffect.reconfigure.of(extensions) }).state
     : EditorState.create({ doc: Text.of(options.text.split('\n')), extensions })
@@ -393,7 +429,7 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
         sourcePane = pane('source')
         sourceView = new EditorView({ parent: sourcePane.host, state: EditorState.create({
           doc: Text.of(comparison.sourceText!.split('\n')),
-          extensions: [theme, EditorView.lineWrapping, EditorState.readOnly.of(true), presentation,
+          extensions: [theme, EditorView.lineWrapping, EditorState.readOnly.of(true), presentation, ...presentationExtensions(),
             numbering.of(numbersEnabled ? comparisonGutter : [])],
         }) })
         sourceView.scrollDOM.addEventListener('scroll', sourceScroll)
@@ -444,7 +480,36 @@ export function createFileViewerEditor(options: FileViewerEditorOptions): FileVi
         view.scrollDOM.scrollLeft = left
       } finally { binding.applying = false }
     },
-    setReadOnly: readOnly => { view.dispatch({ effects: editing.reconfigure(EditorState.readOnly.of(readOnly)) }) },
+    setReadOnly: readOnly => {
+      const wasOpen = searchPanelOpen(view.state)
+      if (wasOpen) closeSearchPanel(view)
+      view.dispatch({ effects: editing.reconfigure(EditorState.readOnly.of(readOnly)) })
+      if (wasOpen) openSearchPanel(view)
+    },
+    setAppearance: value => {
+      appearance = value
+      view.dispatch({ effects: typography.reconfigure(font()) })
+      sourceView?.dispatch({ effects: typography.reconfigure(font()) })
+      scheduleGeometry()
+    },
+    setPhrases: value => {
+      phrases = value
+      for (const target of [view, sourceView]) {
+        if (!target) continue
+        const wasOpen = searchPanelOpen(target.state)
+        if (wasOpen) closeSearchPanel(target)
+        target.dispatch({ effects: localization.reconfigure(EditorState.phrases.of(phrases)) })
+        if (wasOpen) openSearchPanel(target)
+      }
+    },
+    setLanguage: parser => {
+      if (parser !== undefined && (typeof parser !== 'object' || parser === null || !('token' in parser) || typeof parser.token !== 'function')) {
+        throw new Error('file-viewer: language module does not export a StreamParser')
+      }
+      languageExtension = parser === undefined ? undefined : StreamLanguage.define(parser as StreamParser<unknown>)
+      view.dispatch({ effects: language.reconfigure(languageExtension ?? []) })
+      sourceView?.dispatch({ effects: language.reconfigure(languageExtension ?? []) })
+    },
     setLineNumbers: enabled => {
       numbersEnabled = enabled
       view.dispatch({ effects: numbering.reconfigure(enabled ? comparison ? comparisonGutter : lineNumbers() : []) })

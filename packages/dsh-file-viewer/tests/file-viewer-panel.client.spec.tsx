@@ -6,6 +6,7 @@ import type { FileViewerInstanceSnapshot } from '../src/client/service.ts'
 import { TextDocumentSnapshot } from '../src/client/text-document.ts'
 import type { FileViewerEditorModule, FileViewerTextChange } from '../src/client/editor-module.ts'
 import { FileViewerSourceId } from '../src/client/service.ts'
+import { EditorLanguageRegistry } from '../src/client/editor-languages.ts'
 import { en } from '../src/client/locales.ts'
 
 const sourceId = FileViewerSourceId('memory')
@@ -70,7 +71,7 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
     loadEditor: async () => ({
       createFileViewerEditor: ({ parent }) => {
         parent.dataset.editor = 'mounted'
-        return { applyChanges: vi.fn(), appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+        return { applyChanges: vi.fn(), appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: vi.fn(), setAppearance: vi.fn(), setPhrases: vi.fn(), setLanguage: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
       },
     }),
     t: key => en[key],
@@ -80,6 +81,46 @@ function props(snapshot: FileViewerInstanceSnapshot): FileViewerPanelProps {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
 describe('FileViewerPanel', () => {
+  it('changes remembered fonts in place and ignores stale language loads after switching or unloading a provider', async () => {
+    const registry = new EditorLanguageRegistry()
+    let resolveFirst!: (parser: unknown) => void
+    const firstLoad = vi.fn(() => new Promise<unknown>(resolve => { resolveFirst = resolve }))
+    registry.register({ id: 'first', label: 'First', extensions: ['txt'], load: firstLoad })
+    const secondParser = { token: () => null }
+    const unregisterSecond = registry.register({ id: 'second', label: 'Second', load: async () => secondParser })
+    registry.register({ id: 'broken', label: 'Broken', load: async () => { throw new Error('load failed') } })
+    const handle = { applyChanges: vi.fn(), appendText: vi.fn(), setReadOnly: vi.fn(), setText: vi.fn(),
+      setComparison: vi.fn(), setLineNumbers: vi.fn(), setAppearance: vi.fn(), setPhrases: vi.fn(), setLanguage: vi.fn(),
+      captureViewState: vi.fn(), destroy: vi.fn() }
+    const createEditor = vi.fn(() => handle)
+    const input = { ...props(ready({ syncStatus: 'synced', automationPaused: false })), languageRegistry: registry,
+      filename: 'example.txt', loadEditor: async () => ({ createFileViewerEditor: createEditor }) }
+    const mounted = render(<FileViewerPanel {...input} />)
+    await waitFor(() => { expect(firstLoad).toHaveBeenCalledOnce() })
+    fireEvent.focus(screen.getByTitle(en.synchronization))
+    fireEvent.click(screen.getByText(en.editorSettings))
+    fireEvent.change(screen.getByLabelText(en.font), { target: { value: 'serif' } })
+    fireEvent.change(screen.getByLabelText(en.fontSize), { target: { value: '20' } })
+    expect(handle.setAppearance).toHaveBeenLastCalledWith({ fontFamily: 'Georgia, serif', fontSize: 20 })
+    expect(JSON.parse(localStorage.getItem('dsh:file-viewer:editor-preferences:v1')!)).toEqual({ font: 'serif', fontSize: 20 })
+    expect(createEditor).toHaveBeenCalledOnce()
+    fireEvent.change(screen.getByLabelText(en.language), { target: { value: 'second' } })
+    await waitFor(() => { expect(handle.setLanguage).toHaveBeenLastCalledWith(secondParser) })
+    await act(async () => { resolveFirst({ token: () => 'keyword' }) })
+    expect(handle.setLanguage).toHaveBeenLastCalledWith(secondParser)
+    act(unregisterSecond)
+    expect(handle.setLanguage).toHaveBeenLastCalledWith(undefined)
+    expect((screen.getByLabelText(en.language) as HTMLSelectElement).value).toBe('plain')
+    fireEvent.change(screen.getByLabelText(en.language), { target: { value: 'broken' } })
+    await waitFor(() => { expect(screen.getByText(en.languageFailed)).toBeTruthy() })
+    act(() => { registry.dispose() })
+    expect(screen.queryByText(en.languageFailed)).toBeNull()
+    expect(handle.setText).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText(en.font), { target: { value: 'monospace' } })
+    fireEvent.change(screen.getByLabelText(en.fontSize), { target: { value: '14' } })
+    mounted.unmount()
+  })
+
   it('synchronizes peers before their next input without waiting for a React render', async () => {
     let current = ready({ document: TextDocumentSnapshot.fromText('a\nb\nc\n'), syncStatus: 'local-ahead' })
     const listeners = new Set<() => void>()
@@ -98,7 +139,7 @@ describe('FileViewerPanel', () => {
         return {
           applyChanges: changes => { editor.received.push(changes); editor.text = apply(editor.text, changes) },
           setText: () => { throw new Error('full editor replacement') },
-          appendText: () => {}, setReadOnly: () => {}, setComparison: () => {}, setLineNumbers: () => {},
+          appendText: () => {}, setReadOnly: () => {}, setComparison: () => {}, setAppearance: vi.fn(), setPhrases: vi.fn(), setLanguage: vi.fn(), setLineNumbers: () => {},
           captureViewState: () => undefined, destroy: () => {},
         }
       },
@@ -192,7 +233,7 @@ describe('FileViewerPanel', () => {
         createFileViewerEditor: ({ parent, comparison }) => {
           parent.dataset.editor = 'mounted'
           comparisons.push(comparison)
-          return { applyChanges: vi.fn(), appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: value => { comparisons.push(value) }, setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+          return { applyChanges: vi.fn(), appendText: () => {}, setReadOnly: () => {}, setText: vi.fn(), setComparison: value => { comparisons.push(value) }, setAppearance: vi.fn(), setPhrases: vi.fn(), setLanguage: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
         },
       }),
     }

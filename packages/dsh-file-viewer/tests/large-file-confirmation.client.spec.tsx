@@ -95,7 +95,7 @@ function fixture(initial = 'large text', tiers: { largeFileBytes?: number; hugeF
   const descriptor = { ref: { sourceId: source.id, sessionId: 'session' as never, resourceId: '/file.txt' }, name: 'file.txt', size: initialSize }
   const createEditor = vi.fn(({ parent, text }: { parent: HTMLElement; text: string }) => {
     parent.textContent = text
-    return { appendText: vi.fn((next: string) => { parent.textContent += next }), setReadOnly: vi.fn(), setText: (next: string) => { parent.textContent = next }, setComparison: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
+    return { appendText: vi.fn((next: string) => { parent.textContent += next }), setReadOnly: vi.fn(), setText: (next: string) => { parent.textContent = next }, setComparison: vi.fn(), setAppearance: vi.fn(), setPhrases: vi.fn(), setLanguage: vi.fn(), setLineNumbers: vi.fn(), captureViewState: vi.fn(), destroy: vi.fn() }
   })
   const loadEditor = vi.fn(async () => ({ createFileViewerEditor: createEditor }))
   const View = createTextResourceView({ loadEditor, confirm: () => true, t: key => en[key] })

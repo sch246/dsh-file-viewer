@@ -3,6 +3,8 @@ export const NS = 'file-viewer'
 
 /** Complete product-copy key set for generic controls and the text editor. */
 export type FileViewerLocaleKey =
+  | 'searchReplacedLine' | 'searchReplacedMatches'
+  | 'editorSettings' | 'font' | 'fontSize' | 'fontMonospace' | 'fontSystem' | 'fontSerif' | 'language' | 'languageAuto' | 'languagePlain' | 'languageFailed' | 'searchFind' | 'searchReplace' | 'searchNext' | 'searchPrevious' | 'searchAll' | 'searchMatchCase' | 'searchRegexp' | 'searchWord' | 'searchReplaceOne' | 'searchReplaceAll' | 'searchClose' | 'searchCurrentMatch' | 'searchOnLine' | 'searchGoToLine' | 'searchGo'
   | 'manualUpdateRequired' | 'deltaConflict'
   | 'loading' | 'editorLoading' | 'editorFailed'
   | 'save' | 'saving' | 'saveUnsupported' | 'update' | 'updating'
@@ -33,6 +35,33 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 export const en: Record<FileViewerLocaleKey, string> = {
+  searchReplacedLine: 'replaced match on line $',
+  searchReplacedMatches: 'replaced $ matches',
+  editorSettings: 'Editor settings',
+  font: 'Font',
+  fontSize: 'Font size',
+  fontMonospace: 'Monospace',
+  fontSystem: 'System font',
+  fontSerif: 'Serif',
+  language: 'Language',
+  languageAuto: 'Automatic',
+  languagePlain: 'Plain text',
+  languageFailed: 'The selected language could not be loaded.',
+  searchFind: 'Find',
+  searchReplace: 'Replace',
+  searchNext: 'next',
+  searchPrevious: 'previous',
+  searchAll: 'all',
+  searchMatchCase: 'match case',
+  searchRegexp: 'regexp',
+  searchWord: 'by word',
+  searchReplaceOne: 'replace',
+  searchReplaceAll: 'replace all',
+  searchClose: 'close',
+  searchCurrentMatch: 'current match',
+  searchOnLine: 'on line',
+  searchGoToLine: 'Go to line',
+  searchGo: 'go',
   manualUpdateRequired: 'Background updates are paused. Choose Update to obtain the latest source; a complete reload may be needed. Local edits are retained.',
   deltaConflict: 'Source changes overlap local edits or shifted lines. Local text is retained; update and compare before reconciling.',
   syncedJustNow: 'Synced just now',
@@ -118,6 +147,33 @@ export const en: Record<FileViewerLocaleKey, string> = {
 }
 
 export const zh: Record<FileViewerLocaleKey, string> = {
+  searchReplacedLine: '已替换第 $ 行的匹配',
+  searchReplacedMatches: '已替换 $ 处匹配',
+  editorSettings: '编辑设置',
+  font: '字体',
+  fontSize: '字号',
+  fontMonospace: '等宽字体',
+  fontSystem: '系统字体',
+  fontSerif: '衬线字体',
+  language: '语言',
+  languageAuto: '自动识别',
+  languagePlain: '纯文本',
+  languageFailed: '无法加载所选语言。',
+  searchFind: '查找',
+  searchReplace: '替换',
+  searchNext: '下一个',
+  searchPrevious: '上一个',
+  searchAll: '全选',
+  searchMatchCase: '区分大小写',
+  searchRegexp: '正则表达式',
+  searchWord: '整词匹配',
+  searchReplaceOne: '替换',
+  searchReplaceAll: '全部替换',
+  searchClose: '关闭',
+  searchCurrentMatch: '当前匹配',
+  searchOnLine: '所在行',
+  searchGoToLine: '跳转到行',
+  searchGo: '跳转',
   manualUpdateRequired: '后台更新已暂停。点击更新获取最新来源，可能需要重新加载完整文件。本地修改会保留。',
   deltaConflict: '来源变化与本地修改重叠或行位置已改变。已保留本地文本，请更新并比较后处理。',
   syncedJustNow: '刚刚同步',
@@ -200,4 +256,15 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   confirmHandlerSwitch: '保留未保存的文本草稿并暂停自动同步，然后改用其它查看器吗？',
   largeDocument: '大文件默认关闭自动更新、自动保存、浏览器草稿和差异对比，可在控件中分别开启。两项自动同步均关闭时停止内容轮询。',
   failureDetail: '来源返回的信息',
+}
+
+/** @param t Viewer locale resolver. @returns CodeMirror's phrase dictionary in the active locale. */
+export function editorSearchPhrases(t: (key: FileViewerLocaleKey) => string): Readonly<Record<string, string>> {
+  return {
+    'replaced match on line $': t('searchReplacedLine'), 'replaced $ matches': t('searchReplacedMatches'),
+    Find: t('searchFind'), Replace: t('searchReplace'), next: t('searchNext'), previous: t('searchPrevious'),
+    all: t('searchAll'), 'match case': t('searchMatchCase'), regexp: t('searchRegexp'), 'by word': t('searchWord'),
+    replace: t('searchReplaceOne'), 'replace all': t('searchReplaceAll'), close: t('searchClose'),
+    'current match': t('searchCurrentMatch'), 'on line': t('searchOnLine'), 'Go to line': t('searchGoToLine'), go: t('searchGo'),
+  }
 }
