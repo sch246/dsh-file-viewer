@@ -1,11 +1,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { FileViewerRemote } from './remote.ts'
+import { FileViewerEditorSettings } from './editor-settings.ts'
 
 export { FileViewerRemote } from './remote.ts'
 export type { FileViewerMetadata } from './types.ts'
 
 export const name = 'file-viewer'
+export const inject = ['settings']
 
 /** Viewer deployment configuration. */
 export interface Config {
@@ -68,5 +70,5 @@ export const Config: z<Config> = z.transform(fields, (value) => {
 
 /** @param ctx Host context. @param config Validated viewer configuration. */
 export function apply(ctx: Context, config: Config): void {
-  new FileViewerRemote(ctx, config)
+  new FileViewerRemote(ctx, config, new FileViewerEditorSettings(ctx))
 }
