@@ -3,9 +3,6 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { EditorLanguage } from '@dsh-external/dsh-file-viewer/client'
 import type { StreamParser } from '@codemirror/language'
 
-/** The viewer provides the registry used by this client plugin. */
-export const inject = ['resourceWorkbench']
-
 async function loadJSON(): Promise<StreamParser<unknown>> {
   const { json } = await import('@codemirror/legacy-modes/mode/javascript')
   return {
@@ -40,9 +37,13 @@ const languages: readonly EditorLanguage[] = [
   { id: 'dockerfile', label: 'Dockerfile', extensions: ['dockerfile'], filenames: ['Dockerfile', 'Containerfile'], load: async () => (await import('@codemirror/legacy-modes/mode/dockerfile')).dockerFile },
 ]
 
-/** @param ctx Browser context with the viewer's language registry. */
-export function apply(ctx: Context): void {
-  for (const language of languages) {
-    ctx.effect(() => ctx.resourceWorkbench.registerEditorLanguage(language))
-  }
+/** @param ctx Browser plugin context. @returns Disposal of registrations, including a pending viewer runtime. */
+export function apply(ctx: Context): () => Promise<void> {
+  // Viewer metadata arrives after transport starts; the browser entry must not block transport boot.
+  const registration = ctx.inject(['resourceWorkbench'], scope => {
+    for (const language of languages) {
+      scope.effect(() => scope.resourceWorkbench.registerEditorLanguage(language))
+    }
+  })
+  return async () => { await registration.dispose() }
 }

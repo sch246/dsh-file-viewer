@@ -21,20 +21,29 @@ async function loadPlugin() {
 function register(plugin) {
   const languages = new Map()
   const disposers = []
-  plugin.apply({
-    resourceWorkbench: { registerEditorLanguage(language) {
-      assert.ok(!languages.has(language.id))
-      languages.set(language.id, language)
-      return () => { languages.delete(language.id) }
-    } },
-    effect(callback) { disposers.push(callback()) },
+  let activate
+  const dispose = plugin.apply({
+    inject(dependencies, callback) {
+      assert.deepEqual(Array.from(dependencies), ['resourceWorkbench'])
+      activate = () => callback({
+        resourceWorkbench: { registerEditorLanguage(language) {
+          assert.ok(!languages.has(language.id))
+          languages.set(language.id, language)
+          return () => { languages.delete(language.id) }
+        } },
+        effect(callback) { disposers.push(callback()) },
+      })
+      return { async dispose() { disposers.reverse().forEach(dispose => dispose()) } }
+    },
   })
-  return { languages, dispose() { disposers.reverse().forEach(dispose => dispose()) } }
+  assert.equal(languages.size, 0)
+  activate()
+  return { languages, dispose }
 }
 
 test('shipped client registers disposable plain parsers without runtime imports or extra chunks', async () => {
   const plugin = await loadPlugin()
-  assert.deepEqual(Array.from(plugin.inject), ['resourceWorkbench'])
+  assert.equal(plugin.inject, undefined)
   const { languages, dispose } = register(plugin)
   assert.equal(languages.size, 20)
   for (const language of languages.values()) {
@@ -43,7 +52,7 @@ test('shipped client registers disposable plain parsers without runtime imports 
     assert.equal(parser.extension, undefined, language.id)
     assert.doesNotThrow(() => StreamLanguage.define(parser).parser.parse(''), language.id)
   }
-  dispose()
+  await dispose()
   assert.equal(languages.size, 0)
   const artifacts = (await readdir(new URL('lib/', root))).filter(name => name.endsWith('.js')).sort()
   assert.deepEqual(artifacts, ['client.js', 'index.js'])
@@ -71,5 +80,5 @@ test('common filename modes produce syntax tokens in the editor parser', async (
   assert.ok(languages.get('shell').filenames.includes('.bashrc'))
   assert.ok(languages.get('dockerfile').filenames.includes('Dockerfile'))
   assert.equal(languages.has('markdown'), false)
-  dispose()
+  await dispose()
 })
