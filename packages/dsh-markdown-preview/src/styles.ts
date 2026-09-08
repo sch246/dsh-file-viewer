@@ -1,7 +1,7 @@
 /** Scrollable Markdown content within the workbench's retained sidebar instance. */
 export const MARKDOWN_CSS = `
 .dsh-resource-markdown { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
-.dsh-resource-markdown-content { flex: 1; min-height: 0; overflow: auto; padding: 16px; overflow-wrap: anywhere; }
+.dsh-resource-markdown-content { flex: 1; min-height: 0; overflow: auto; padding: 16px; overflow-wrap: anywhere; overflow-anchor: none; }
 .dsh-resource-markdown-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; font-size: 12px; }
 .dsh-resource-markdown-content { line-height: 1.65; }
 .dsh-resource-markdown-content :is(h1,h2,h3,h4,h5,h6) { font-weight: 600; line-height: 1.3; margin: 1em 0 .5em; }
@@ -23,4 +23,6 @@ export const MARKDOWN_CSS = `
 .dsh-resource-markdown-content :not(pre) > code { background: color-mix(in srgb, currentColor 8%, transparent); padding: .1em .3em; border-radius: 3px; }
 .dsh-resource-markdown-content pre { overflow: auto; }
 .dsh-resource-markdown-content .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+.dsh-markdown-error { color: #d32f2f; padding: 8px 12px; }
+.dsh-markdown-default { opacity: .75; }
 `

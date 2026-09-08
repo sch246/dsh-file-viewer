@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-html-preview
+      name: '@dsh-external/dsh-html-preview'
+      config: {}

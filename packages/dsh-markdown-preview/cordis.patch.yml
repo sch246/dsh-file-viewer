@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-markdown-preview
+      name: '@dsh-external/dsh-markdown-preview'
+      config: {}

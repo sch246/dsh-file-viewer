@@ -1,0 +1,6 @@
+/** HTML preview locale namespace. */
+export const HTML_PREVIEW_NS = 'file-viewer-html-preview'
+export type HtmlPreviewLocaleKey = 'editBeside' | 'handler' | 'preview' | 'enableScripts' | 'defaultScripts' | 'reload' | 'load' | 'retry' | 'missing' | 'failed' | 'incomplete' | 'sourceUnavailable' | 'size'
+declare module '@deepseek-ai/dsh-client-ui-slots' { interface LocaleNamespaceMap { 'file-viewer-html-preview': HtmlPreviewLocaleKey } }
+export const en: Record<HtmlPreviewLocaleKey, string> = { editBeside: 'Edit side by side', handler: 'HTML preview', preview: 'Preview of local HTML', enableScripts: 'Allow scripts for this view', defaultScripts: 'Allow scripts in new previews', reload: 'Reload', load: 'Load', retry: 'Retry', missing: 'Resource is missing', failed: 'Unable to load HTML', incomplete: 'HTML is incomplete', sourceUnavailable: 'Source is unavailable', size: 'Size' }
+export const zh: Record<HtmlPreviewLocaleKey, string> = { editBeside: '并排编辑', handler: 'HTML 预览', preview: '本地 HTML 预览', enableScripts: '允许此视图运行脚本', defaultScripts: '新预览默认允许运行脚本', reload: '重新加载', load: '加载', retry: '重试', missing: '资源不存在', failed: 'HTML 加载失败', incomplete: 'HTML 尚未完整加载', sourceUnavailable: '来源不可用', size: '大小' }

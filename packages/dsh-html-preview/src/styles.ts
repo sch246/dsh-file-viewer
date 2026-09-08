@@ -1,0 +1,2 @@
+/** HTML preview layout styles. */
+export const HTML_PREVIEW_CSS = `.dsh-html-preview{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}.dsh-html-preview-controls{display:flex;gap:10px;align-items:center;padding:6px 12px;font-size:12px;flex-wrap:wrap}.dsh-html-preview-frame{flex:1;min-height:0;width:100%;border:0;background:white}.dsh-html-preview-notice{padding:16px}.dsh-html-preview-error{padding:8px 12px;color:var(--error-color,#c33)}`

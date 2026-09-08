@@ -36,8 +36,6 @@ export const RESOURCE_WORKBENCH_VIEW_ID = 'resource-workbench'
 export const TEXT_RESOURCE_HANDLER_ID = ResourceHandlerId('text')
 /** Built-in byte-preserving image handler. */
 export const IMAGE_RESOURCE_HANDLER_ID = ResourceHandlerId('image')
-/** Built-in preview of the shared Local Markdown text. */
-export const MARKDOWN_RESOURCE_HANDLER_ID = ResourceHandlerId('markdown')
 
 /** Sidebar methods needed by the resource-opening runtime. */
 export interface ResourceViewHost {

@@ -34,3 +34,8 @@ done
 
 node "$ROOT/node_modules/typescript/bin/tsc" -p "$ROOT/packages/dsh-file-viewer-languages/tsconfig.json" --pretty false
 (cd "$ROOT/packages/dsh-file-viewer-languages" && node "$ROOT/node_modules/tsdown/dist/run.mjs" --config tsdown.config.ts)
+
+for preview in dsh-markdown-preview dsh-html-preview; do
+  node "$ROOT/node_modules/typescript/bin/tsc" -p "$ROOT/packages/$preview/tsconfig.json" --pretty false
+  (cd "$ROOT/packages/$preview" && node "$ROOT/node_modules/tsdown/dist/run.mjs" --config tsdown.config.ts)
+done

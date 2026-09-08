@@ -1,6 +1,3 @@
-import { createMarkdownResourceHandler } from '../src/client/markdown-handler.ts'
-import { en } from '../src/client/locales.ts'
-import { markdownEn } from '../src/client/markdown-locales.ts'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -98,7 +95,11 @@ describe('ResourceWorkbenchRuntime', () => {
     const confirmHandlerSwitch = vi.fn(() => false)
     const runtime = new ResourceWorkbenchRuntime({ host, hashText: async text => text, confirmHandlerSwitch })
     runtime.registerHandler(handler(TEXT_RESOURCE_HANDLER_ID, 'default'))
-    const markdown = createMarkdownResourceHandler(key => en[key], key => markdownEn[key])
+    const markdown: ResourceHandler = {
+      ...handler(ResourceHandlerId('markdown'), 'available'),
+      document: 'text',
+      match: resource => resource.mediaType === 'text/markdown' ? { role: 'available' } : false,
+    }
     runtime.registerHandler(markdown)
     const sourceId = ResourceSourceId('markdown')
     const readText = vi.fn(async () => ({ text: '# Source' }))

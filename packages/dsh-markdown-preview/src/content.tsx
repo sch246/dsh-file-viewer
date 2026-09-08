@@ -18,9 +18,19 @@ const schema = {
 }
 const remarkPlugins = [remarkGfm, remarkMath]
 // Only the trusted math renderer may add markup after sanitization.
-const rehypePlugins: NonNullable<Parameters<typeof Markdown>[0]['rehypePlugins']> = [
+const htmlPlugins: NonNullable<Parameters<typeof Markdown>[0]['rehypePlugins']> = [
   rehypeRaw, [rehypeSanitize, schema], [rehypeKatex, { trust: false }],
 ]
+
+interface TreeNode { type: string; value?: string; children?: TreeNode[] }
+function literalHtml() {
+  return literalHtmlNode
+}
+function literalHtmlNode(node: TreeNode): void {
+  if (node.type === 'raw') node.type = 'text'
+  for (const child of node.children ?? []) literalHtmlNode(child)
+}
+const literalPlugins: typeof htmlPlugins = [literalHtml, [rehypeSanitize, schema], [rehypeKatex, { trust: false }]]
 
 /** @param url Parsed destination. @param key URL attribute. @returns Supported external destination or document anchor. */
 function previewUrl(url: string, key: string): string | undefined {
@@ -31,9 +41,10 @@ function previewUrl(url: string, key: string): string | undefined {
 }
 
 /** Render Markdown and sanitized HTML while keeping shared code highlighting and copy controls. */
-export function MarkdownContent({ text, streaming, copyLabel, copiedLabel, footnotes }: {
+export function MarkdownContent({ text, streaming, allowHtml, copyLabel, copiedLabel, footnotes }: {
   readonly text: string
   readonly streaming: boolean
+  readonly allowHtml: boolean
   readonly copyLabel: string
   readonly copiedLabel: string
   readonly footnotes: string
@@ -56,6 +67,6 @@ export function MarkdownContent({ text, streaming, copyLabel, copiedLabel, footn
       return <img {...props} src={src} loading="lazy" />
     },
   }), [streaming, copyLabel, copiedLabel])
-  return <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}
+  return <Markdown remarkPlugins={remarkPlugins} rehypePlugins={allowHtml ? htmlPlugins : literalPlugins}
     remarkRehypeOptions={{ footnoteLabel: footnotes }} components={components} urlTransform={previewUrl}>{text}</Markdown>
 }

@@ -1,6 +1,3 @@
-import { createMarkdownResourceHandler } from './markdown-handler.ts'
-import { MARKDOWN_NS, markdownEn, markdownZh } from './markdown-locales.ts'
-import { MARKDOWN_CSS } from './markdown-styles.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@dsh-external/dsh-user-files/remote'
@@ -69,7 +66,6 @@ export { ResourceHandlerId, ResourceMissingError, ResourceSaveConflictError, Res
 export { TextBlock, TextDocumentSnapshot as BlockTextDocument, splitTextBlocks } from './text-document.ts'
 export type { TextChange, TextBlockPolicy } from './text-document.ts'
 export {
-  MARKDOWN_RESOURCE_HANDLER_ID,
   IMAGE_RESOURCE_HANDLER_ID,
   RESOURCE_WORKBENCH_VIEW_ID,
   TEXT_RESOURCE_HANDLER_ID,
@@ -181,7 +177,6 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
       return { View: module.createImageResourceView(t('imageDecodeFailed'), t('handlerLoading')) }
     },
   }
-  const offMarkdownHandler = runtime.registerHandler(createMarkdownResourceHandler(t, ctx.locale.bind(MARKDOWN_NS)))
   const offTextHandler = runtime.registerHandler(textHandler)
   const offImageHandler = runtime.registerHandler(imageHandler)
   const source = new FilesystemResourceSource({
@@ -230,12 +225,11 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
 
   const offPresentation = ctx.effect(() => {
     const offLocale = ctx.locale.register(NS, { zh, en })
-    const offMarkdownLocale = ctx.locale.register(MARKDOWN_NS, { zh: markdownZh, en: markdownEn })
     const style = document.createElement('style')
     style.dataset.pluginCss = '@dsh-external/dsh-file-viewer'
-    style.textContent = FILE_VIEWER_CSS + MARKDOWN_CSS
+    style.textContent = FILE_VIEWER_CSS
     document.head.appendChild(style)
-    return () => { offLocale(); offMarkdownLocale(); style.remove() }
+    return () => { offLocale(); style.remove() }
   }, 'resource-workbench: locale and styles')
 
   const offView = ctx.slots.inject('rightbar.view', () => ctx.slots.register({
@@ -251,7 +245,6 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     offRestorer()
     offView()
     offPresentation()
-    offMarkdownHandler()
     offImageHandler()
     offTextHandler()
     offSource()

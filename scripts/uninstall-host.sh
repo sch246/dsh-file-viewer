@@ -22,7 +22,7 @@ profile_state() {
   fi
   node - "$PROFILE_DIR/package.json" <<'NODE'
 const manifest = require(process.argv[2])
-for (const name of ['@dsh-external/dsh-file-viewer-languages', '@dsh-external/dsh-file-viewer', '@dsh-external/dsh-file-viewer-editor']) {
+for (const name of ['@dsh-external/dsh-markdown-preview', '@dsh-external/dsh-html-preview', '@dsh-external/dsh-file-viewer-languages', '@dsh-external/dsh-file-viewer', '@dsh-external/dsh-file-viewer-editor']) {
   console.log(`uninstall: ${name} dependency=${manifest.dependencies?.[name] ?? 'absent'}`)
 }
 console.log(`uninstall: viewer bundle=${(manifest.dsh?.profile?.bundles ?? []).includes('@dsh-external/dsh-file-viewer') ? 'present' : 'absent'}`)
@@ -40,17 +40,21 @@ run_plugin() {
 verify_profile_removed() {
   node - "$PROFILE_DIR/package.json" <<'NODE'
 const manifest = require(process.argv[2])
-for (const name of ['@dsh-external/dsh-file-viewer-languages', '@dsh-external/dsh-file-viewer', '@dsh-external/dsh-file-viewer-editor']) {
+for (const name of ['@dsh-external/dsh-markdown-preview', '@dsh-external/dsh-html-preview', '@dsh-external/dsh-file-viewer-languages', '@dsh-external/dsh-file-viewer', '@dsh-external/dsh-file-viewer-editor']) {
   if (manifest.dependencies?.[name] !== undefined) throw new Error(`profile dependency remains: ${name}`)
 }
-for (const name of ['@dsh-external/dsh-file-viewer', '@dsh-external/dsh-file-viewer-languages']) {
+for (const name of ['@dsh-external/dsh-file-viewer', '@dsh-external/dsh-file-viewer-languages', '@dsh-external/dsh-markdown-preview', '@dsh-external/dsh-html-preview']) {
   if ((manifest.dsh?.profile?.bundles ?? []).includes(name)) throw new Error(`bundle remains: ${name}`)
 }
 NODE
+  test ! -e "$PROFILE_DIR/node_modules/@dsh-external/dsh-markdown-preview"
+  test ! -e "$PROFILE_DIR/node_modules/@dsh-external/dsh-html-preview"
   test ! -e "$PROFILE_DIR/node_modules/$VIEWER_NAME"
   test ! -e "$PROFILE_DIR/node_modules/$EDITOR_NAME"
   test ! -e "$PROFILE_DIR/node_modules/$LANGUAGES_NAME"
   if [ -f "$PROFILE_DIR/pnpm-lock.yaml" ]; then
+    ! grep -Fq "@dsh-external/dsh-markdown-preview" "$PROFILE_DIR/pnpm-lock.yaml"
+    ! grep -Fq "@dsh-external/dsh-html-preview" "$PROFILE_DIR/pnpm-lock.yaml"
     ! grep -Fq "$VIEWER_NAME" "$PROFILE_DIR/pnpm-lock.yaml"
     ! grep -Fq "$EDITOR_NAME" "$PROFILE_DIR/pnpm-lock.yaml"
     ! grep -Fq "$LANGUAGES_NAME" "$PROFILE_DIR/pnpm-lock.yaml"
@@ -66,7 +70,7 @@ case "$MODE" in
     if [ -f "$PROFILE_DIR/package.json" ]; then
       mapfile -t installed < <(node - "$PROFILE_DIR/package.json" <<'NODE'
 const manifest = require(process.argv[2])
-for (const name of ['@dsh-external/dsh-file-viewer-languages', '@dsh-external/dsh-file-viewer', '@dsh-external/dsh-file-viewer-editor']) {
+for (const name of ['@dsh-external/dsh-markdown-preview', '@dsh-external/dsh-html-preview', '@dsh-external/dsh-file-viewer-languages', '@dsh-external/dsh-file-viewer', '@dsh-external/dsh-file-viewer-editor']) {
   if (manifest.dependencies?.[name] !== undefined) console.log(name)
 }
 NODE
@@ -75,7 +79,7 @@ NODE
         run_plugin remove "${installed[@]}"
         verify_profile_removed
       else
-        echo "uninstall: profile $PROFILE already omits the viewer, editor and language pack"
+        echo "uninstall: profile $PROFILE already omits the viewer, editor and optional plugins"
       fi
     else
       echo "uninstall: profile $PROFILE is absent; no profile was changed"

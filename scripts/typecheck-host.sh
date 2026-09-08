@@ -20,3 +20,7 @@ node "$ROOT/node_modules/typescript/bin/tsc" -p packages/dsh-file-viewer/tsconfi
 node "$ROOT/node_modules/typescript/bin/tsc" -p packages/dsh-file-viewer/tsconfig.client.json --pretty false --noEmit
 node "$ROOT/node_modules/typescript/bin/tsc" -p packages/dsh-file-viewer-editor/tsconfig.json --pretty false --noEmit
 node "$ROOT/node_modules/typescript/bin/tsc" -p packages/dsh-file-viewer-languages/tsconfig.json --pretty false --noEmit
+
+for preview in dsh-markdown-preview dsh-html-preview; do
+  node "$ROOT/node_modules/typescript/bin/tsc" -p "packages/$preview/tsconfig.json" --pretty false --noEmit
+done
