@@ -24,8 +24,8 @@ export function createStreamResourceView(kind: StreamKind, t: (key: StreamLocale
     const [failure, setFailure] = useState<string>()
     const [generation, setGeneration] = useState(0)
     const [progress, setProgress] = useState<number>()
-    const downloadController = useRef<AbortController>()
-    useEffect(() => () => { downloadController.current?.abort() }, [])
+    const loadController = useRef<AbortController>()
+    const [pdfUrl, setPdfUrl] = useState<string>()
     const mediaRef = useRef<HTMLMediaElement | null>(null)
     const [playback] = useState(() => {
       const previous = service.getViewState(viewId, handlerId)
@@ -35,14 +35,36 @@ export function createStreamResourceView(kind: StreamKind, t: (key: StreamLocale
     })
     useEffect(() => {
       const controller = new AbortController()
+      loadController.current = controller
+      let objectUrl: string | undefined
       setStream(undefined)
+      setPdfUrl(undefined)
+      setProgress(undefined)
       setFailure(undefined)
-      void service.getStream(viewId, controller.signal).then(result => {
-        if (!controller.signal.aborted) setStream(result)
-      }, error => {
+      void (async () => {
+        const result = await service.getStream(viewId, controller.signal)
+        controller.signal.throwIfAborted()
+        setStream(result)
+        if (kind !== 'pdf' || !result.inline || result.mediaType !== 'application/pdf' || navigator.pdfViewerEnabled === false) return
+        if (result.readBlob === undefined) { setPdfUrl(result.url); return }
+        setProgress(0)
+        const blob = await result.readBlob(controller.signal, value => {
+          if (!controller.signal.aborted) setProgress(value.totalBytes === 0 ? 100 : Math.floor(100 * value.completedBytes / value.totalBytes))
+        })
+        controller.signal.throwIfAborted()
+        if (blob.type.split(';')[0]?.trim().toLowerCase() !== 'application/pdf') throw new Error(t('unsupported'))
+        objectUrl = URL.createObjectURL(blob)
+        setPdfUrl(objectUrl)
+      })().catch(error => {
         if (!controller.signal.aborted) setFailure(`${t('failed')} ${error instanceof Error ? error.message : String(error)}`)
+      }).finally(() => {
+        if (!controller.signal.aborted) setProgress(undefined)
       })
-      return () => { controller.abort() }
+      return () => {
+        controller.abort()
+        if (loadController.current === controller) loadController.current = undefined
+        if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+      }
     }, [service, viewId, generation])
     useEffect(() => {
       const media = mediaRef.current
@@ -65,29 +87,21 @@ export function createStreamResourceView(kind: StreamKind, t: (key: StreamLocale
         ? Math.min(playback.position, media.duration) : playback.position
     }
     return <section className="dsh-resource-stream" aria-label={t(kind)}>
-      {progress !== undefined && <div role="progressbar" aria-label={t('download')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}
+      {progress !== undefined && <div role="progressbar" aria-label={t('loading')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}
         style={{ height: 4, flexShrink: 0, background: `linear-gradient(to right, #000 ${progress}%, transparent ${progress}%)` }} />}
       <div className="dsh-resource-stream-actions">
-        {stream?.download !== undefined && <a href={stream.downloadUrl} download={descriptor.name}>{t('ordinaryDownload')}</a>}
-        {stream !== undefined && (stream.download === undefined
-          ? <a href={stream.downloadUrl} download={descriptor.name}>{t('download')}</a>
-          : <button type="button" onClick={() => {
-            if (downloadController.current !== undefined) { downloadController.current.abort(); return }
-            const controller = new AbortController()
-            downloadController.current = controller
-            setProgress(0)
-            setFailure(undefined)
-            void stream.download!(controller.signal, value => { if (!controller.signal.aborted) setProgress(value.totalBytes === 0 ? 100 : Math.floor(100 * value.completedBytes / value.totalBytes)) })
-              .catch(error => { if (!controller.signal.aborted) setFailure(`${t('failed')} ${error instanceof Error ? error.message : String(error)}`) })
-              .finally(() => { if (downloadController.current === controller) { downloadController.current = undefined; setProgress(undefined) } })
-          }}>{progress === undefined ? t('parallelDownload') : `${t('cancelDownload')} ${progress}%`}</button>)}
+        {progress !== undefined && <button type="button" onClick={() => {
+          loadController.current?.abort()
+          setProgress(undefined)
+          setFailure(t('cancelled'))
+        }}>{t('cancelLoad')} {progress}%</button>}
         <button type="button" onClick={() => { setGeneration(value => value + 1) }}>{t('reload')}</button>
       </div>
       {failure !== undefined && <div className="dsh-resource-stream-error" role="alert">{failure}</div>}
-      {stream === undefined && failure === undefined && <div className="dsh-file-viewer-state" role="status">{t('loading')}</div>}
+      {(stream === undefined || (supported && kind === 'pdf' && pdfUrl === undefined)) && failure === undefined && <div className="dsh-file-viewer-state" role="status">{t('loading')}</div>}
       {stream !== undefined && !supported && <div className="dsh-resource-stream-error" role="alert">{t('unsupported')}</div>}
       {supported && stream !== undefined && (kind === 'pdf'
-        ? <iframe className="dsh-resource-stream-frame" src={stream.url} title={descriptor.name} referrerPolicy="no-referrer" />
+        ? pdfUrl !== undefined && <iframe className="dsh-resource-stream-frame" src={pdfUrl} title={descriptor.name} referrerPolicy="no-referrer" />
         : <div className="dsh-resource-stream-media">{kind === 'video'
           ? <video ref={node => { mediaRef.current = node }} src={stream.url} controls playsInline preload="metadata" aria-label={descriptor.name}
             onLoadedMetadata={event => { restorePlayback(event.currentTarget) }}

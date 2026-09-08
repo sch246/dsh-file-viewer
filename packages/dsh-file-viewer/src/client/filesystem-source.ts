@@ -1,4 +1,4 @@
-import { downloadBrowserFile } from '@dsh-external/dsh-user-files/download'
+import { readBrowserFile } from '@dsh-external/dsh-user-files/download'
 import { userFileTransferUrl } from '@dsh-external/dsh-user-files/transfer'
 import { parseFileLocation } from '@dsh-external/dsh-user-files/file-location'
 import { SegmentedTextRead, type SegmentedTextGateway } from './segmented-text-read.ts'
@@ -208,8 +208,8 @@ export class FilesystemResourceSource implements ResourceSource {
     if (response.status === 404) throw new ResourceMissingError('File not found.')
     if (!response.ok) throw new Error(`File stream: HTTP ${response.status} ${response.statusText}`)
     signal.throwIfAborted()
-    return { url, downloadUrl: userFileTransferUrl(request),
-      download: (signal, progress) => downloadBrowserFile(userFileTransferUrl(request), ref.resourceId.split(/[/\\]/u).at(-1)!, signal, progress),
+    return { url,
+      readBlob: (signal, progress) => readBrowserFile(url, signal, progress),
       mediaType: response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() ?? 'application/octet-stream',
       inline: /^inline(?:;|$)/i.test(response.headers.get('content-disposition') ?? ''),
     }

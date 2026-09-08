@@ -102,12 +102,10 @@ export interface ResourceLoadedBytes {
 
 /** Source-owned browser URLs; no content is buffered while preparing them. */
 export interface ResourceStream {
-  /** @param signal Cancellation. @param onProgress Local write progress. @returns Local commit or browser handoff; call directly from a user click. */
-  download?(signal: AbortSignal, onProgress: (progress: { readonly completedBytes: number; readonly totalBytes: number }) => void): Promise<void>
+  /** @param signal Loading cancellation. @param onProgress Received byte progress. @returns Memory-backed bytes for preview; never opens a save picker. */
+  readBlob?(signal: AbortSignal, onProgress: (progress: { readonly completedBytes: number; readonly totalBytes: number }) => void): Promise<Blob>
   /** Browser-embeddable URL authenticated without caller-supplied headers; never persisted. */
   readonly url: string
-  /** Attachment URL for a browser-owned download. */
-  readonly downloadUrl: string
   /** Media type confirmed by the source. */
   readonly mediaType: string
   /** Whether the source permits inline presentation of this media type. */

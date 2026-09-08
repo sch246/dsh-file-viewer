@@ -6,10 +6,10 @@ import { ResourceHandlerId, type ResourceWorkbenchClientService } from './resour
 const NS = 'file-viewer-streams'
 const en = {
   pdf: 'PDF reader', audio: 'Audio player', video: 'Video player',
-  loading: 'Loading…', download: 'Download', reload: 'Reload', cancelDownload: 'Cancel download', parallelDownload: 'Parallel download', ordinaryDownload: 'Ordinary download',
+  loading: 'Loading…', reload: 'Reload', cancelLoad: 'Cancel loading', cancelled: 'Loading cancelled.',
   failed: 'Could not load this file.',
-  unsupported: 'This browser cannot preview this format. Download the file to open it locally.',
-  mediaFailed: 'Playback failed. The connection may have been interrupted, or the browser may not support this codec. Retry or download the file.',
+  unsupported: 'This browser cannot preview this format.',
+  mediaFailed: 'Playback failed. The connection may have been interrupted, or the browser may not support this codec. Try reloading.',
 }
 /** Product copy for browser-owned document and media rendering. */
 export type StreamLocaleKey = keyof typeof en
@@ -22,16 +22,15 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 const zh: Record<StreamLocaleKey, string> = {
   pdf: 'PDF 阅读器', audio: '音频播放器', video: '视频播放器',
-  loading: '正在加载…', download: '下载', reload: '重新加载', cancelDownload: '取消下载', parallelDownload: '并行下载', ordinaryDownload: '普通下载',
+  loading: '正在加载…', reload: '重新加载', cancelLoad: '取消加载', cancelled: '已取消加载。',
   failed: '无法加载此文件。',
-  unsupported: '此浏览器无法预览该格式，可下载后在本机打开。',
-  mediaFailed: '播放失败，可能是连接中断或浏览器不支持此编码。可重新加载或下载文件。',
+  unsupported: '此浏览器无法预览该格式。',
+  mediaFailed: '播放失败，可能是连接中断或浏览器不支持此编码。可重新加载。',
 }
 
 const styles = `
 .dsh-resource-stream{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;height:100%}
 .dsh-resource-stream-actions{display:flex;justify-content:flex-end;gap:8px;padding:4px 8px;border-bottom:1px solid var(--border,#ddd)}
-.dsh-resource-stream-actions a{color:inherit}
 .dsh-resource-stream-frame{display:block;flex:1;width:100%;min-height:0;border:0;background:#525659}
 .dsh-resource-stream-media{display:flex;flex:1;align-items:center;justify-content:center;min-height:0;overflow:hidden;padding:12px}
 .dsh-resource-stream-media video{width:100%;height:100%;min-height:0;object-fit:contain;background:#000}
