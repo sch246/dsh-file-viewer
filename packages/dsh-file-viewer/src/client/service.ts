@@ -921,6 +921,15 @@ export class FileViewerService {
     this.remove(instanceId, record, new Error('document closed'))
   }
 
+  /** @param instanceId Unpresented document to release while retaining its recoverable draft. */
+  release(instanceId: string): void {
+    if (this.disposed) return
+    const record = this.instances.get(instanceId)
+    if (record === undefined) return
+    this.flushDraft(record)
+    this.remove(instanceId, record, new Error('document presentation cancelled'))
+  }
+
   /** Flush current text before browser page suspension without disposing reusable instances. */
   flushDrafts(): void {
     if (this.disposed) return

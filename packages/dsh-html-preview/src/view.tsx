@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useSyncExternalStore, type ReactElement } from 'react'
-import { TEXT_RESOURCE_HANDLER_ID, type ResourceHandlerProps } from '@dsh-external/dsh-file-viewer/client'
+import type { ResourceHandlerId, ResourceHandlerProps } from '@dsh-external/dsh-file-viewer/client'
 import { defaultScripts, setDefaultScripts, subscribeScriptDefault } from './script-default.ts'
 import type { HtmlPreviewLocaleKey } from './locales.ts'
 
@@ -37,7 +37,7 @@ export function createHtmlPreviewView(t: Translate) {
       {textState.status === 'partial' && <div className="dsh-html-preview-notice">{t('incomplete')} <button type="button" onClick={() => { void service.refreshText(viewId) }}>{t('retry')}</button></div>}
       <div className="dsh-html-preview-controls">
         <button type="button" onClick={() => { void service.open(service.snapshot(viewId).descriptor, {
-          handlerId: TEXT_RESOURCE_HANDLER_ID, sideBySide: true, preview: false,
+          handlerId: 'text' as ResourceHandlerId, sideBySide: true, preview: false,
           target: { fromInstanceId: viewId, direction: 'left' },
         }) }}>{t('editBeside')}</button>
         <label><input type="checkbox" checked={scripts} onChange={event => {

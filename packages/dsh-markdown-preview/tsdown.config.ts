@@ -1,7 +1,7 @@
 import type { UserConfig } from 'tsdown'
 import { browserBuild } from '../../scripts/browser-build.ts'
 
-const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime', '@deepseek-ai/cordis', '@dsh-external/dsh-file-viewer/client', '@deepseek-ai/dsh-client-ui-primitives']
+const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime', '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-ui-primitives']
 
 const node: UserConfig = {
   entry: { index: 'lib/types/index.js' }, outDir: 'lib', format: 'esm', platform: 'node',

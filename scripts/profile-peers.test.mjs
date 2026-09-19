@@ -1,60 +1,40 @@
 import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 
-for (const format of ['directory', 'tarball']) {
-  test(`checks explicit sidebar ${format} identity and version before planning installation`, t => {
-    const root = mkdtempSync(join(tmpdir(), 'viewer-peer-source-'))
-    t.after(() => { rmSync(root, { recursive: true, force: true }) })
-    const directory = join(root, 'package')
-    mkdirSync(directory)
-    const profile = join(root, 'profile')
-    for (const [name, version, expectedError] of [
-      ['@dsh-external/dsh-right-sidebar', '0.0.1', undefined],
-      ['@dsh-external/dsh-right-sidebar', '1.0.0', /does not satisfy viewer peer/],
-      ['different-package', '0.0.1', /Expected @dsh-external\/dsh-right-sidebar/],
-    ]) {
-      writeFileSync(join(directory, 'package.json'), JSON.stringify({ name, version }))
-      const source = format === 'directory' ? directory : join(root, 'sidebar.tgz')
-      if (format === 'tarball') execFileSync('tar', ['-czf', source, 'package/package.json'], { cwd: root })
-      const result = spawnSync(process.execPath, [join(import.meta.dirname, 'profile-peers.mjs'), 'prepare', profile], {
-        env: { ...process.env, DSH_SIDEBAR: source }, encoding: 'utf8',
-      })
-      assert.equal(result.signal, null)
-      assert.equal(existsSync(profile), false)
-      if (expectedError === undefined) {
-        assert.equal(result.status, 0, result.stderr)
-        assert.ok(result.stdout.trim().split('\n').includes(source))
-      } else {
-        assert.notEqual(result.status, 0)
-        assert.match(result.stderr, expectedError)
-        assert.equal(result.stdout, '')
-      }
-    }
+test('local dependency overrides resolve every sibling package inside this worktree', () => {
+  const root = realpathSync(resolve(import.meta.dirname, '..'))
+  const result = spawnSync(process.execPath, [join(import.meta.dirname, 'install-local.mjs'), '--check'], {
+    encoding: 'utf8', env: { ...process.env, DSH_USER_FILES: root },
   })
-}
+  assert.equal(result.status, 0, result.stderr)
+  const overrides = JSON.parse(result.stdout)
+  for (const directory of ['dsh-file-viewer', 'dsh-file-viewer-editor', 'dsh-file-viewer-languages', 'dsh-html-preview', 'dsh-markdown-preview']) {
+    assert.equal(overrides[`@dsh-external/${directory}`], `link:${realpathSync(join(root, 'packages', directory))}`)
+  }
+})
 
-test('refuses a provider without the required segmented-read API before profile changes', t => {
+test('requires the shared provider without installing an external sidebar', t => {
   const root = mkdtempSync(join(tmpdir(), 'viewer-user-files-version-'))
   t.after(() => { rmSync(root, { recursive: true, force: true }) })
   const provider = join(root, 'node_modules', '@dsh-external', 'dsh-user-files')
-  const sidebar = join(root, 'node_modules', '@dsh-external', 'dsh-right-sidebar')
   mkdirSync(provider, { recursive: true })
-  mkdirSync(sidebar, { recursive: true })
   const manifest = JSON.stringify({ dependencies: { '@dsh-external/dsh-user-files': '0.1.0' }, dsh: { profile: { bundles: ['@dsh-external/dsh-user-files'] } } })
   writeFileSync(join(root, 'package.json'), manifest)
-  writeFileSync(join(sidebar, 'package.json'), JSON.stringify({ name: '@dsh-external/dsh-right-sidebar', version: '0.0.1' }))
-  for (const version of ['0.1.4', '0.1.5']) {
+  for (const version of ['0.1.12', '0.1.13']) {
     writeFileSync(join(provider, 'package.json'), JSON.stringify({ name: '@dsh-external/dsh-user-files', version }))
     const result = spawnSync(process.execPath, [join(import.meta.dirname, 'profile-peers.mjs'), 'prepare', root], { encoding: 'utf8' })
     assert.equal(result.signal, null)
-    if (version === '0.1.4') {
+    if (version === '0.1.12') {
       assert.notEqual(result.status, 0)
-      assert.match(result.stderr, /0\.1\.4.*\^0\.1\.5|\^0\.1\.5.*0\.1\.4/)
+      assert.match(result.stderr, /0\.1\.12.*\^0\.1\.13|\^0\.1\.13.*0\.1\.12/)
       assert.equal(result.stdout, '')
-    } else assert.equal(result.status, 0, result.stderr)
+    } else {
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(result.stdout, '')
+    }
   }
 })

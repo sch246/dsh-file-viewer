@@ -1,6 +1,6 @@
 # Markdown preview
 
-This optional Client plugin registers the stable `markdown` text handler with the viewer. It renders shared Local text immediately, including unsaved edits in another view of the same resource. It neither reads files independently nor requires manager or Links.
+This optional Client plugin registers the stable `markdown` text handler with the viewer. Markdown names and MIME types recommend it; More ways to open also exposes it for every source offering text reading, regardless of filename. It renders shared Local text immediately, including unsaved edits in another view of the same resource. It neither reads files independently nor requires manager or Links.
 
 Each preview retains its own scroll offsets and HTML toggle while mounted or switching handlers. Content edits do not reset scrolling; offsets clamp to the new maximum when the content becomes shorter. Browser scroll anchoring is disabled so edits above the viewport do not shift its numeric position. Late image/code layout changes use the same clamp. Closing the view ends its retained presentation.
 

@@ -6,6 +6,24 @@ import { FileViewerService, FileViewerSourceId, isFileViewerDirty } from '../src
 const policy = { minBytes: 8, targetBytes: 16, maxBytes: 32 }
 const hash = async (text: string) => createHash('sha256').update(text).digest('hex')
 
+it('retains a recoverable draft when an unpresented document is released', async () => {
+  const values = new Map<string, string>()
+  const service = new FileViewerService({ storage: {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => { values.set(key, value) }, removeItem: key => { values.delete(key) },
+  } })
+  const ref = { sessionId: 'session' as never, sourceId: FileViewerSourceId('memory'), resourceId: 'file' }
+  service.registerSource({ id: ref.sourceId, load: async () => ({ text: 'source' }) })
+  try {
+    const id = await service.open(ref)
+    service.edit(id, 'unsaved draft')
+    service.release(id)
+    expect(service.find(ref)).toBeUndefined()
+    const restored = await service.open(ref)
+    expect(service.snapshot(restored)).toMatchObject({ text: 'unsaved draft' })
+  } finally { service.dispose() }
+})
+
 it('retains shifted blocks and hashes across local insertion, cross-block delete and undo with different partitions', async () => {
   const original = TextDocumentSnapshot.fromText('a'.repeat(16) + '你😀'.repeat(20) + 'z'.repeat(32), policy)
   await original.check(hash)

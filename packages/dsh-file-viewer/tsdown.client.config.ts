@@ -3,7 +3,7 @@ import { browserBuild } from '../../scripts/browser-build.ts'
 
 const CLIENT_EXTERNALS = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
-  '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-client-ui-chat/client', '@dsh-external/dsh-file-viewer-editor/client',
+  '@deepseek-ai/dsh-client-ui-slots', '@deepseek-ai/dsh-client-ui-primitives', '@dsh-external/dsh-file-viewer-editor/client',
 ]
 
 const client: UserConfig = {

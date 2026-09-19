@@ -38,6 +38,9 @@
       "path": "../../harness/packages/client/ui-chat"
     },
     {
+      "path": "../../harness/packages/client/ui-sidebar-right"
+    },
+    {
       "path": "../../harness/packages/typert/protocol"
     },
     {

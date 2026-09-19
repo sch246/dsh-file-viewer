@@ -48,13 +48,21 @@ export function registerStreamHandlers(ctx: Context, service: ResourceWorkbenchC
     document.head.appendChild(style)
     const disposers = (['pdf', 'audio', 'video'] as const).map(kind => service.registerHandler({
       id: ResourceHandlerId(kind), label: () => t(kind),
-      match: (descriptor, capabilities) => {
-        if (!capabilities.stream) return false
+      supports: capabilities => capabilities.stream,
+      match: descriptor => {
         const mime = descriptor.mediaType?.toLowerCase()
         const matches = kind === 'pdf'
           ? mime === 'application/pdf' || /\.pdf$/i.test(descriptor.name)
           : mime?.startsWith(`${kind}/`) === true
         return matches ? { role: 'default' } : false
+      },
+      detect: async (descriptor, inspection) => {
+        if (kind !== 'video' || descriptor.mediaType?.toLowerCase() !== 'video/mp2t') return true
+        if (inspection.readPrefix === undefined || descriptor.size === 0) return false
+        // MPEG-TS packets have sync byte 0x47 every 188 bytes; BDAV adds a four-byte prefix per packet.
+        const bytes = await inspection.readPrefix(4 + 192 * 2 + 1)
+        return ([[0, 188], [4, 192]] as const).some(([offset, stride]) =>
+          bytes[offset] === 0x47 && bytes[offset + stride] === 0x47 && bytes[offset + stride * 2] === 0x47)
       },
       load: async () => {
         const { createStreamResourceView } = await import('./stream-handler.tsx')

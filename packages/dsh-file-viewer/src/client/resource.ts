@@ -155,6 +155,8 @@ export interface ResourceSource {
   readTextDelta?(ref: ResourceRef, baseHash: string, signal: AbortSignal, access?: ResourceTextAccess): Promise<FileViewerDeltaResult>
   /** @param ref Resource identity. @param signal Preparation cancellation. @returns Fresh URLs for browser-owned streaming; renderers release their media elements on unmount. */
   getStream?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceStream>
+  /** @param ref Exact resource identity. @param maxBytes Positive safe-integer byte limit. @param signal Inspection cancellation. @returns At most maxBytes leading bytes, without decoding or an unbounded resource read. */
+  readPrefix?(ref: ResourceRef, maxBytes: number, signal: AbortSignal): Promise<Uint8Array>
   /** @param ref Exact resource identity. @param signal Cancellation signal. @returns Opaque source bytes and revision. */
   readBytes?(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes>
   /** @param ref Exact resource identity. @param text Canonical text to publish. @param version Caller-observed revision. @param signal Cancellation signal. @param access Explicit document permission, also covering large saves. @returns Published revision. */
@@ -224,14 +226,25 @@ export interface ResourceHandlerModule {
   readonly View: ComponentType<ResourceHandlerProps>
 }
 
+/** Source-neutral inspection available only while choosing an automatic handler. */
+export interface ResourceHandlerDetection {
+  readonly signal: AbortSignal
+  /** @param maxBytes Positive safe-integer byte limit. @returns At most maxBytes leading source bytes; unavailable when the source cannot inspect a prefix. */
+  readPrefix?(maxBytes: number): Promise<Uint8Array>
+}
+
 /** One pluggable resource presentation. */
 export interface ResourceHandler {
   readonly id: ResourceHandlerId
   readonly label: string | (() => string)
   /** Attach the shared Base/Local/Source document; switching between text participants retains automation. */
   readonly document?: 'text'
-  /** @param descriptor Resource metadata. @param capabilities Available source operations. @returns Match role or false when unsupported. */
-  match(descriptor: ResourceDescriptor, capabilities: ResourceCapabilities): ResourceHandlerMatch | false
+  /** @param capabilities Available source operations. @returns Whether users may select this handler, independently of resource metadata. */
+  supports(capabilities: ResourceCapabilities): boolean
+  /** @param descriptor Resource metadata. @returns Recommendation and automatic default role, or false when the metadata does not recommend this handler. */
+  match(descriptor: ResourceDescriptor): ResourceHandlerMatch | false
+  /** @param descriptor Resource metadata. @param inspection Cancellable source inspection. @returns Whether automatic selection may use this handler; false excludes it, errors fail opening. Explicit requests and saved associations bypass detection. */
+  detect?(descriptor: ResourceDescriptor, inspection: ResourceHandlerDetection): boolean | Promise<boolean>
   /** @returns Lazily imported renderer module. */
   load(): Promise<ResourceHandlerModule>
 }
@@ -242,7 +255,12 @@ export interface ResourceHandlerChoice {
   readonly label: string
   readonly role: 'default' | 'available'
   readonly selected: boolean
+  /** Metadata recommends this handler; content detection is independent. */
+  readonly recommended: boolean
+  /** Preferred handler for this resource's type. */
   readonly associated: boolean
+  /** Preferred handler for this exact Session/source/resource identity. */
+  readonly resourceAssociated: boolean
 }
 
 /** Relative or explicit sidebar destination for a resource view. */
@@ -318,12 +336,12 @@ export interface ResourceWorkbenchClientService {
    * @returns Completion; unresolved links reject with the dispatch failure.
    */
   openWorkspaceLink(viewId: string, href: string): Promise<void>
-  /** @param descriptor Resource to match. @returns Deterministically ordered handler choices. */
+  /** @param descriptor Resource metadata. @returns All capability-eligible handlers in deterministic order, with metadata recommendations. */
   listOpenWith(descriptor: ResourceDescriptor): readonly ResourceHandlerChoice[]
-  /** @param viewId Existing resource view. @param handlerId Selected matching handler. @returns Nothing after the switch or veto. */
+  /** @param viewId Existing resource view. @param handlerId Selected capability-eligible handler. @returns Nothing after the switch or veto. */
   switchHandler(viewId: string, handlerId: ResourceHandlerId): Promise<void>
-  /** @param descriptor Association subject. @param handlerId Preferred handler, or undefined to inherit defaults. */
-  setAssociation(descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined): void
+  /** @param descriptor Association subject. @param handlerId Capability-eligible preferred handler, or undefined to clear this scope. @param scope Type association by default, or the exact Session/source/resource identity; resource preferences take precedence over type preferences. */
+  setAssociation(descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined, scope?: 'type' | 'resource'): void
   /** @param viewId Resource view. @returns Stable immutable snapshot until notification. */
   snapshot(viewId: string): ResourceViewSnapshot
   /** @param viewId Resource view. @param listener Change listener. @returns Subscription disposer. */

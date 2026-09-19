@@ -19,7 +19,6 @@ export default defineConfig({
       ...hostAliases,
       '@deepseek-ai/dsh-client-locale/client': fromRoot('./harness/packages/client/locale/src/client/index.ts'),
       '@deepseek-ai/dsh-client-ui-renderer/client': fromRoot('./harness/packages/client/ui-renderer/src/client/index.ts'),
-      '@dsh-external/dsh-right-sidebar/client': fromRoot(`${process.env.DSH_SIDEBAR ?? './node_modules/@dsh-external/dsh-right-sidebar'}/src/client/index.ts`),
     },
   },
 })

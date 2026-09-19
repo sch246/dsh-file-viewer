@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@dsh-external/dsh-user-files/remote'
-import { openWorkspaceFile } from '@deepseek-ai/dsh-client-ui-chat/client'
+import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@dsh-external/dsh-user-files/file-location'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import fileViewerRemote from '@dsh-external/dsh-file-viewer/remote'
@@ -15,10 +15,9 @@ import { createResourceViewHost } from './sidebar-host.ts'
 import { asFileViewerEditorModule } from './editor-module.ts'
 import { EditorPreferencesModel } from './editor-preferences.ts'
 import { createResourceWorkbenchClientService } from './face.ts'
-import { ResourceWorkbenchPanel } from './ResourceWorkbenchPanel.tsx'
+import { OfficialResourceWorkbenchPanel } from './ResourceWorkbenchPanel.tsx'
 import { en, NS, zh } from './locales.ts'
 import type {
-  ResourceCapabilities,
   ResourceDescriptor,
   ResourceHandler,
   ResourceHandlerMatch,
@@ -45,6 +44,7 @@ export type {
   ResourceDescriptor,
   ResourceHandler,
   ResourceHandlerChoice,
+  ResourceHandlerDetection,
   ResourceHandlerMatch,
   ResourceHandlerModule,
   ResourceHandlerProps,
@@ -89,29 +89,8 @@ export type {
 /** Client services required by generic resource views. */
 export const inject = ['remote']
 
-function textMatch(
-  descriptor: ResourceDescriptor,
-  capabilities: ResourceCapabilities,
-): ResourceHandlerMatch | false {
-  if (!capabilities.text) return false
-  const mediaType = descriptor.mediaType?.toLowerCase()
-  if (mediaType === 'image/svg+xml') return { role: 'available' }
-  if (mediaType?.startsWith('text/') === true
-    || mediaType === 'application/json'
-    || mediaType?.endsWith('+json') === true
-    || mediaType === 'application/xml'
-    || mediaType?.endsWith('+xml') === true
-    || mediaType === 'application/javascript') return { role: 'default' }
-  return { role: 'available' }
-}
-
-function imageMatch(
-  descriptor: ResourceDescriptor,
-  capabilities: ResourceCapabilities,
-): ResourceHandlerMatch | false {
-  return capabilities.bytes && descriptor.mediaType?.toLowerCase().startsWith('image/') === true
-    ? { role: 'default' }
-    : false
+function imageMatch(descriptor: ResourceDescriptor): ResourceHandlerMatch | false {
+  return descriptor.mediaType?.toLowerCase().startsWith('image/') === true ? { role: 'default' } : false
 }
 
 function valueOf<T>(result: RemoteResult<T>): T {
@@ -167,7 +146,8 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     id: TEXT_RESOURCE_HANDLER_ID,
     label: () => t('textHandler'),
     document: 'text',
-    match: textMatch,
+    supports: capabilities => capabilities.text,
+    match: () => ({ role: 'available' }),
     load: async () => {
       const module = await import('./text-handler.tsx')
       return { View: module.createTextResourceView({ editorLanguages: runtime.editorLanguages, editorPreferences, openEditorConfiguration, loadEditor, confirm: message => window.confirm(message), t }) }
@@ -176,6 +156,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const imageHandler: ResourceHandler = {
     id: IMAGE_RESOURCE_HANDLER_ID,
     label: () => t('imageHandler'),
+    supports: capabilities => capabilities.bytes,
     match: imageMatch,
     load: async () => {
       const module = await import('./image-handler.tsx')
@@ -209,30 +190,40 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     patchText: async (sessionId, path, ranges, signal, access) => valueOf(await ctx.remote.userFiles.patchText({ sessionId, path, ranges, ...access }, signal)),
     saveBytes: async (sessionId, path, dataBase64, version, signal) => valueOf(await ctx.remote.userFiles.saveBytes({ sessionId, path, dataBase64, version }, signal)),
     openLocation: async (sessionId, path, viewId) => {
-      await openWorkspaceFile(ctx, {
+      await ctx.workspaceFileOpener.open({
         sessionId, path, replace: 'current',
         ...(viewId === undefined ? {} : { viewId, sourceInstanceId: viewId }),
       })
     },
     openExternal: async (sessionId, path, signal) => {
       signal.throwIfAborted()
-      await openWorkspaceFile(ctx, { sessionId, path, mode: 'system', signal })
+      await ctx.workspaceFileOpener.open({ sessionId, path, mode: 'system', signal })
     },
   }, metadata)
   const offSource = runtime.registerSource(source)
+  const offType = ctx.sidebarRightTabs.register({
+    id: RESOURCE_WORKBENCH_VIEW_ID, kind: RESOURCE_WORKBENCH_VIEW_ID,
+    title: () => t('chooseHandler'),
+  })
   const offRestorer = runtime.registerRestorer()
   const offOpen = ctx.on('chat/open-workspace-file', async (request, next) => {
+    if (request.kind === 'directory') return next()
+    const sourceInstanceId = request.sourceInstanceId ?? request.viewId
+    const target = sourceInstanceId === undefined ? undefined : {
+      fromInstanceId: sourceInstanceId,
+      direction: request.replace === 'current' ? 'center' as const : 'right' as const,
+    }
     const navigation = host.beginNavigation(request.sessionId, {
       request,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
-      ...(request.target === undefined ? {} : { target: request.target }),
+      ...(target === undefined ? {} : { target }),
       ...((request.sourceInstanceId ?? request.viewId) === undefined ? {} : { sourceInstanceId: request.sourceInstanceId ?? request.viewId }),
     })
     if (!navigation.current()) return
     const descriptor = await resolveFile(request.sessionId, request.path, navigation.signal)
     if (!navigation.current()) return
     if (descriptor.kind !== 'file' || runtime.listOpenWith(descriptor).length === 0) return next()
-    const selection = request.textSelection
+    const selection = request.textSelection ?? (request.line === undefined ? undefined : { line: request.line })
     if (request.replace === 'current' && request.viewId !== undefined) {
       const outcome = await runtime.navigateTo(request.viewId, {
         descriptor,
@@ -244,7 +235,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
       navigation,
       ...(selection === undefined ? {} : { textSelection: selection }),
       ...(request.preview === undefined ? {} : { preview: request.preview }),
-      ...(request.target === undefined ? {} : { target: request.target }),
+      ...(target === undefined ? {} : { target }),
     })
   })
 
@@ -263,18 +254,19 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
     return () => { offLocale(); style.remove() }
   }, 'resource-workbench: locale and styles')
 
-  const offView = ctx.slots.inject('rightbar.view', () => ctx.slots.register({
-    name: 'rightbar.view',
-    id: RESOURCE_WORKBENCH_VIEW_ID,
+  const offView = ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+    name: 'sidebar.right.pane.tab',
+    key: RESOURCE_WORKBENCH_VIEW_ID,
     locale: NS,
     inject: () => ({ service }),
-  }, ResourceWorkbenchPanel))
+  }, OfficialResourceWorkbenchPanel))
 
   return () => {
     offOpen()
     offPagePersistence()
     offRestorer()
     offView()
+    offType()
     offPresentation()
     offStreamHandlers()
     offImageHandler()
@@ -288,7 +280,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
 /** @param ctx Browser Client context. @returns Plugin disposer after registration completes. */
 export async function apply(ctx: Context): Promise<() => Promise<void>> {
   const disposeRemote = await ctx.remote.$mount(fileViewerRemote)
-  const runtime = ctx.inject(['slots', 'locale', 'modules', 'rightSidebar', 'sessions', 'remote.session', 'remote.userFiles', 'remote.fileViewer'], registerRuntime)
+  const runtime = ctx.inject(['slots', 'locale', 'modules', 'sidebarRight', 'sidebarRightTabs', 'workspaceFileOpener', 'sessions', 'remote.session', 'remote.userFiles', 'remote.fileViewer'], registerRuntime)
   try {
     await runtime
   } catch (error: unknown) {

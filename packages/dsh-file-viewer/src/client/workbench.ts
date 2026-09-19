@@ -22,6 +22,7 @@ import {
   type ResourceDescriptor,
   type ResourceHandler,
   type ResourceHandlerChoice,
+  type ResourceHandlerDetection,
   type ResourceHandlerModule,
   type ResourceLoadedBytes,
   type ResourceStream,
@@ -65,6 +66,12 @@ interface ViewRecord {
   textAttachRequest: Promise<void> | undefined
   checkpointSuppressed: boolean
   saveAsController?: AbortController | undefined
+}
+
+interface HandlerSelection {
+  readonly handlerId: ResourceHandlerId | undefined
+  readonly signal: AbortSignal
+  current(): boolean
 }
 
 interface PersistedResourceView {
@@ -118,7 +125,8 @@ function extensionOf(name: string): string | undefined {
   return index <= 0 || index === name.length - 1 ? undefined : name.slice(index + 1).toLowerCase()
 }
 
-function associationKey(descriptor: ResourceDescriptor): string | undefined {
+function associationKey(descriptor: ResourceDescriptor, scope: 'type' | 'resource' = 'type'): string | undefined {
+  if (scope === 'resource') return `resource:${refKey(descriptor.ref)}`
   if (descriptor.mediaType !== undefined && descriptor.mediaType !== 'application/octet-stream') {
     return `media:${descriptor.mediaType.toLowerCase()}`
   }
@@ -245,6 +253,8 @@ export class ResourceWorkbenchRuntime {
   readonly #sources = new Map<ResourceSourceId, ResourceSource>()
   readonly #sourceDisposers = new Map<ResourceSourceId, () => void>()
   readonly #handlers = new Map<ResourceHandlerId, ResourceHandler>()
+  readonly #registrationLifetimes = new WeakMap<ResourceSource | ResourceHandler, AbortController>()
+  readonly #lifetime = new AbortController()
   readonly #views = new Map<string, ViewRecord>()
   readonly #associations = new Map<string, ResourceHandlerId>()
   readonly #confirmHandlerSwitch: NonNullable<ResourceWorkbenchOptions['confirmHandlerSwitch']>
@@ -278,6 +288,7 @@ export class ResourceWorkbenchRuntime {
     this.#assertLive()
     if (this.#sources.has(source.id)) throw new Error(`resource-workbench: duplicate source "${source.id}"`)
     this.#sources.set(source.id, source)
+    this.#registrationLifetimes.set(source, new AbortController())
     if (source.readText !== undefined) {
       const adapter: FileViewerSource = {
         id: FileViewerSourceId(source.id),
@@ -377,6 +388,7 @@ export class ResourceWorkbenchRuntime {
       if (!active) return
       active = false
       if (this.#sources.get(source.id) !== source) return
+      this.#registrationLifetimes.get(source)!.abort(new Error('resource source unloaded'))
       this.#sources.delete(source.id)
       this.#sourceDisposers.get(source.id)?.()
       this.#sourceDisposers.delete(source.id)
@@ -396,6 +408,7 @@ export class ResourceWorkbenchRuntime {
     this.#assertLive()
     if (this.#handlers.has(handler.id)) throw new Error(`resource-workbench: duplicate handler "${handler.id}"`)
     this.#handlers.set(handler.id, handler)
+    this.#registrationLifetimes.set(handler, new AbortController())
     for (const view of this.#views.values()) {
       if (view.handlerId === handler.id) {
         view.handlerStatus = this.#sources.has(view.descriptor.ref.sourceId) ? 'loading' : 'source-unavailable'
@@ -410,6 +423,7 @@ export class ResourceWorkbenchRuntime {
       if (!active) return
       active = false
       if (this.#handlers.get(handler.id) !== handler) return
+      this.#registrationLifetimes.get(handler)!.abort(new Error('resource handler unloaded'))
       this.#handlers.delete(handler.id)
       for (const view of this.#views.values()) {
         if (view.handlerId !== handler.id) continue
@@ -422,14 +436,18 @@ export class ResourceWorkbenchRuntime {
     }
   }
 
-  /** Open through an explicit, associated, default or safe text handler. */
+  /** Open through an explicit choice, saved association, detected default or text fallback. */
   async open(descriptor: ResourceDescriptor, options: ResourceOpenOptions = {}): Promise<string> {
     this.#assertLive()
-    const navigation = options.navigation ?? this.#host.beginNavigation(descriptor.ref.sessionId, {
+    const request = options.navigation ?? this.#host.beginNavigation(descriptor.ref.sessionId, {
       ...(options.target === undefined ? {} : { target: options.target }),
     })
-    if (!navigation.current()) throw new Error('resource navigation cancelled')
-    const handlerId = this.#selectHandler(descriptor, options.textSelection === undefined ? options.handlerId : TEXT_RESOURCE_HANDLER_ID)
+    if (!request.current()) throw new Error('resource navigation cancelled')
+    const selection = await this.#selectHandler(descriptor, options.textSelection === undefined ? options.handlerId : TEXT_RESOURCE_HANDLER_ID, request.signal)
+    selection.signal.throwIfAborted()
+    if (!request.current() || !selection.current()) throw new Error('resource navigation cancelled')
+    const handlerId = selection.handlerId
+    const navigation = request
     const targetGroup = options.target === undefined
       ? undefined
       : this.#host.resolveTarget(descriptor.ref.sessionId, options.target)
@@ -490,6 +508,8 @@ export class ResourceWorkbenchRuntime {
       checkpointSuppressed: false,
     }
     this.#views.set(viewId, view)
+    const cancel = () => { navigation.cancel(selection.signal.reason) }
+    selection.signal.addEventListener('abort', cancel, { once: true })
     try {
       await this.#host.open(descriptor.ref.sessionId, {
         id: viewId,
@@ -509,6 +529,8 @@ export class ResourceWorkbenchRuntime {
     } catch (error: unknown) {
       this.#views.delete(viewId)
       throw error
+    } finally {
+      selection.signal.removeEventListener('abort', cancel)
     }
   }
 
@@ -583,15 +605,21 @@ export class ResourceWorkbenchRuntime {
     const originalDocumentId = view.documentId
     let destinationId: string | undefined
     let committed = false
-    const current = () => transition.current() && !controller.signal.aborted && this.#transitionCurrent(viewId, view, generation)
+    let selection: HandlerSelection | undefined
+    const current = () => transition.current() && !controller.signal.aborted && (selection === undefined || selection.current())
+      && this.#transitionCurrent(viewId, view, generation)
     try {
       const target = await this.#resolveNavigation(viewId, targetRequest, AbortSignal.any([controller.signal, transition.signal]))
       if (!current()) return false
       if (target.descriptor.ref.sessionId !== view.descriptor.ref.sessionId) throw new Error('resource-workbench: cross-Session navigation is unavailable')
-      const matching = this.#matching(target.descriptor)
-      const preferred = restoration === undefined ? view.handlerId : restoration.handlerId
-      const handlerId = this.#selectHandler(target.descriptor, target.textSelection !== undefined
-        ? TEXT_RESOURCE_HANDLER_ID : matching.some(row => row.handler.id === preferred) ? preferred : undefined)
+      const available = this.#available(target.descriptor)
+      const restored = restoration?.handlerId
+      const explicit = target.textSelection !== undefined ? TEXT_RESOURCE_HANDLER_ID
+        : available.some(handler => handler.id === restored) ? restored : undefined
+      const inherited = restoration === undefined && view.handlerId !== TEXT_RESOURCE_HANDLER_ID ? view.handlerId : undefined
+      selection = await this.#selectHandler(target.descriptor, explicit, AbortSignal.any([controller.signal, transition.signal]), inherited)
+      if (!current()) return false
+      const handlerId = selection.handlerId
       if (refKey(view.descriptor.ref) === refKey(target.descriptor.ref) && view.handlerId === handlerId) {
         const descriptor = persistedDescriptor(view.descriptor, handlerId, target.textSelection ?? view.textSelection)
         const accepted = transition.commit(viewId, { descriptor, title: view.descriptor.name }, () => {
@@ -650,16 +678,22 @@ export class ResourceWorkbenchRuntime {
     }
   }
 
-  /** List matching handlers in deterministic id order. */
+  /** List capability-eligible handlers and their metadata recommendations in deterministic id order. */
   listOpenWith(descriptor: ResourceDescriptor): readonly ResourceHandlerChoice[] {
     const associated = this.#associatedHandler(descriptor)
-    return this.#matching(descriptor).map(({ handler, match }) => ({
-      id: handler.id,
-      label: typeof handler.label === 'function' ? handler.label() : handler.label,
-      role: match.role,
-      selected: false,
-      associated: handler.id === associated,
-    }))
+    const resourceAssociated = this.#associatedHandler(descriptor, 'resource')
+    return this.#available(descriptor).map((handler): ResourceHandlerChoice => {
+      const match = handler.match(descriptor)
+      return {
+        id: handler.id,
+        label: typeof handler.label === 'function' ? handler.label() : handler.label,
+        role: match === false ? 'available' : match.role,
+        selected: false,
+        recommended: match !== false,
+        associated: handler.id === associated,
+        resourceAssociated: handler.id === resourceAssociated,
+      }
+    })
   }
 
   /** Switch one view in place while retaining any shared text draft and editor state. */
@@ -667,7 +701,7 @@ export class ResourceWorkbenchRuntime {
     const view = this.#view(viewId)
     if (view.saveAsController !== undefined || view.navigationController !== undefined) return
     const generation = ++view.transitionGeneration
-    if (!this.#matching(view.descriptor).some(row => row.handler.id === handlerId)) {
+    if (!this.#available(view.descriptor).some(handler => handler.id === handlerId)) {
       this.#publishActionFailure(view, `Handler "${handlerId}" does not support this resource.`)
       return
     }
@@ -693,7 +727,7 @@ export class ResourceWorkbenchRuntime {
         if (!this.#transitionCurrent(viewId, view, generation) || !accepted) return
       }
     }
-    if (!this.#matching(view.descriptor).some(row => row.handler.id === handlerId)) {
+    if (!this.#available(view.descriptor).some(handler => handler.id === handlerId)) {
       this.#publishActionFailure(view, `Handler "${handlerId}" is no longer available for this resource.`)
       return
     }
@@ -722,13 +756,13 @@ export class ResourceWorkbenchRuntime {
     }
   }
 
-  /** Persist or clear the preferred handler for the descriptor's MIME/extension key. */
-  setAssociation(descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined): void {
-    const key = associationKey(descriptor)
+  /** Persist or clear a type or exact-resource preference without switching any open view. */
+  setAssociation(descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined, scope: 'type' | 'resource' = 'type'): void {
+    const key = associationKey(descriptor, scope)
     if (key === undefined) return
     if (handlerId === undefined) this.#associations.delete(key)
     else {
-      if (!this.#matching(descriptor).some(row => row.handler.id === handlerId)) {
+      if (!this.#available(descriptor).some(handler => handler.id === handlerId)) {
         throw new Error(`resource-workbench: handler "${handlerId}" does not support this association`)
       }
       this.#associations.set(key, handlerId)
@@ -750,12 +784,9 @@ export class ResourceWorkbenchRuntime {
       ...(view.handlerId === undefined ? {} : { handlerId: view.handlerId }),
       handlerStatus: view.handlerStatus,
       ...(view.failure === undefined ? {} : { failure: view.failure }),
-      openWith: this.#matching(view.descriptor).map(({ handler, match }) => ({
-        id: handler.id,
-        label: typeof handler.label === 'function' ? handler.label() : handler.label,
-        role: match.role,
-        selected: handler.id === view.handlerId,
-        associated: handler.id === this.#associatedHandler(view.descriptor),
+      openWith: this.listOpenWith(view.descriptor).map(choice => ({
+        ...choice,
+        selected: choice.id === view.handlerId,
       })),
       capabilities,
       externalOpenSupported: source?.openExternal !== undefined,
@@ -1142,7 +1173,7 @@ export class ResourceWorkbenchRuntime {
     return this.#transitionCurrent(viewId, view, generation)
   }
 
-  #finalizeClose(viewId: string): void {
+  #finalizeClose(viewId: string, preserveDraft = false): void {
     const view = this.#views.get(viewId)
     if (view === undefined) return
     this.#views.delete(viewId)
@@ -1154,9 +1185,11 @@ export class ResourceWorkbenchRuntime {
     view.textSubscription = undefined
     view.listeners.clear()
     if (view.documentId !== undefined) {
-      const shared = [...this.#views.values()].filter(other => other.documentId === view.documentId)
+      const shared = [...this.#views.values()].filter(other => other.documentId === view.documentId
+        || (preserveDraft && refKey(other.descriptor.ref) === refKey(view.descriptor.ref)))
       if (shared.length === 0) {
-        this.documents.discard(view.documentId)
+        if (preserveDraft) this.documents.release(view.documentId)
+        else this.documents.discard(view.documentId)
       } else if (!shared.some(other => this.#usesText(other.handlerId))) {
         this.documents.setPresented(view.documentId, false)
       }
@@ -1166,6 +1199,7 @@ export class ResourceWorkbenchRuntime {
   /** Register restoration and flush retained text before page suspension. */
   registerRestorer(): () => void {
     return this.#host.registerRestorer(RESOURCE_WORKBENCH_VIEW_ID, async context => {
+      context.signal.throwIfAborted()
       const persisted = parsePersisted(context.descriptor)
       if (persisted === undefined || persisted.ref.sessionId !== context.sessionId) {
         throw new Error('resource-workbench: invalid persisted resource descriptor')
@@ -1180,6 +1214,11 @@ export class ResourceWorkbenchRuntime {
         ...(persisted.kind === undefined ? {} : { kind: persisted.kind }),
         ...(persisted.size === undefined ? {} : { size: persisted.size }),
         ...(persisted.location === undefined ? {} : { location: persisted.location }),
+      }
+      const source = this.#sources.get(descriptor.ref.sourceId)
+      const handler = persisted.handlerId === undefined ? undefined : this.#handlers.get(persisted.handlerId)
+      if (source !== undefined && handler !== undefined && !handler.supports(this.#capabilities(source))) {
+        throw new Error(`resource-workbench: handler "${handler.id}" does not support this resource`)
       }
       const view: ViewRecord = {
         descriptor,
@@ -1205,13 +1244,26 @@ export class ResourceWorkbenchRuntime {
         checkpointSuppressed: true,
       }
       this.#views.set(context.instanceId, view)
-      if (this.#usesText(persisted.handlerId) && this.#sources.has(descriptor.ref.sourceId)) {
-        await this.#attachText(context.instanceId, view)
+      const cancel = () => {
+        this.#finalizeClose(context.instanceId, true)
+        const shared = [...this.#views.values()].some(other => refKey(other.descriptor.ref) === refKey(descriptor.ref))
+        const documentId = this.documents.find(toTextRef(descriptor.ref))
+        if (!shared && documentId !== undefined) this.documents.release(documentId)
+      }
+      context.signal.addEventListener('abort', cancel, { once: true })
+      try {
+        if (this.#usesText(persisted.handlerId) && this.#sources.has(descriptor.ref.sourceId)) {
+          await this.#attachText(context.instanceId, view)
+        }
+        context.signal.throwIfAborted()
+      } catch (error: unknown) {
+        context.signal.removeEventListener('abort', cancel)
+        throw error
       }
       return {
         onClose: () => this.#canClose(context.instanceId),
-        onClosed: () => { this.#finalizeClose(context.instanceId) },
-        onRestored: () => { this.#checkpointRestoredView(context.instanceId, view) },
+        onClosed: () => { context.signal.removeEventListener('abort', cancel); this.#finalizeClose(context.instanceId) },
+        onRestored: () => { context.signal.removeEventListener('abort', cancel); this.#checkpointRestoredView(context.instanceId, view) },
         onNavigate: (descriptor, navigation) => this.#restoreNavigation(context.instanceId, descriptor, navigation),
       }
     })
@@ -1226,6 +1278,7 @@ export class ResourceWorkbenchRuntime {
   dispose(): void {
     if (this.#disposed) return
     this.#disposed = true
+    this.#lifetime.abort(new Error('resource workbench disposed'))
     for (const dispose of this.#sourceDisposers.values()) dispose()
     this.#sourceDisposers.clear()
     this.#sources.clear()
@@ -1265,7 +1318,7 @@ export class ResourceWorkbenchRuntime {
       const documentId = await this.documents.open(toTextRef(view.descriptor.ref), view.descriptor.size)
       if (this.#views.get(viewId) !== view) {
         const shared = [...this.#views.values()].some(other => other.documentId === documentId)
-        if (!shared) this.documents.discard(documentId)
+        if (!shared) this.documents.release(documentId)
         return
       }
       view.documentId = documentId
@@ -1300,38 +1353,83 @@ export class ResourceWorkbenchRuntime {
     }
   }
 
-  #selectHandler(descriptor: ResourceDescriptor, explicit: ResourceHandlerId | undefined): ResourceHandlerId | undefined {
-    const matches = this.#matching(descriptor)
+  async #selectHandler(
+    descriptor: ResourceDescriptor,
+    explicit: ResourceHandlerId | undefined,
+    callerSignal: AbortSignal,
+    inherited?: ResourceHandlerId,
+  ): Promise<HandlerSelection> {
+    const source = this.#sources.get(descriptor.ref.sourceId)
+    const available = this.#available(descriptor)
+    const signal = AbortSignal.any([
+      callerSignal,
+      this.#lifetime.signal,
+      ...(source === undefined ? [] : [this.#registrationLifetimes.get(source)!.signal]),
+      ...available.map(handler => this.#registrationLifetimes.get(handler)!.signal),
+    ])
+    signal.throwIfAborted()
+    const current = () => !signal.aborted && this.#sources.get(descriptor.ref.sourceId) === source
+      && available.every(handler => this.#handlers.get(handler.id) === handler)
+    const selected = (handlerId: ResourceHandlerId | undefined): HandlerSelection => {
+      signal.throwIfAborted()
+      if (!current()) throw new Error('resource-workbench: stale handler selection')
+      return { handlerId, signal, current }
+    }
     if (explicit !== undefined) {
-      if (!matches.some(row => row.handler.id === explicit)) {
+      if (!available.some(handler => handler.id === explicit)) {
         throw new Error(`resource-workbench: handler "${explicit}" does not support this resource`)
       }
-      return explicit
+      return selected(explicit)
     }
-    const associated = this.#associatedHandler(descriptor)
-    if (associated !== undefined && matches.some(row => row.handler.id === associated)) return associated
-    const defaults = matches.filter(row => row.match.role === 'default')
-    if (defaults.length > 0) {
-      const priority = Math.max(...defaults.map(row => row.match.priority ?? 0))
-      const winners = defaults.filter(row => (row.match.priority ?? 0) === priority)
-      return winners.length === 1 ? winners[0]!.handler.id : undefined
+    for (const scope of ['resource', 'type'] as const) {
+      const associated = this.#associatedHandler(descriptor, scope)
+      if (associated !== undefined && available.some(handler => handler.id === associated)) return selected(associated)
     }
-    const source = this.#sources.get(descriptor.ref.sourceId)
-    const text = matches.find(row => row.handler.id === TEXT_RESOURCE_HANDLER_ID)
-    return source?.readText !== undefined && text !== undefined ? text.handler.id : undefined
-  }
-
-  #matching(descriptor: ResourceDescriptor): readonly { handler: ResourceHandler; match: Exclude<ReturnType<ResourceHandler['match']>, false> }[] {
-    const source = this.#sources.get(descriptor.ref.sourceId)
-    const capabilities = this.#capabilities(source)
-    return [...this.#handlers.values()]
-      .map(handler => ({ handler, match: handler.match(descriptor, capabilities) }))
+    const matches = available.map(handler => ({ handler, match: handler.match(descriptor) }))
       .filter((row): row is { handler: ResourceHandler; match: Exclude<typeof row.match, false> } => row.match !== false)
-      .sort((left, right) => left.handler.id.localeCompare(right.handler.id))
+    const inspection: ResourceHandlerDetection = {
+      signal,
+      ...(source?.readPrefix === undefined ? {} : {
+        readPrefix: async (maxBytes: number) => {
+          signal.throwIfAborted()
+          const bytes = await source.readPrefix!(descriptor.ref, maxBytes, signal)
+          signal.throwIfAborted()
+          return bytes
+        },
+      }),
+    }
+    const detects = async (handler: ResourceHandler): Promise<boolean> => {
+      signal.throwIfAborted()
+      const accepted = handler.detect === undefined || await handler.detect(descriptor, inspection)
+      signal.throwIfAborted()
+      return accepted
+    }
+    const preferred = matches.find(row => row.handler.id === inherited)
+    if (preferred !== undefined && await detects(preferred.handler)) return selected(preferred.handler.id)
+    const defaults = matches.filter(row => row.match.role === 'default' && row !== preferred)
+      .sort((left, right) => (right.match.priority ?? 0) - (left.match.priority ?? 0))
+    while (defaults.length > 0) {
+      const priority = defaults[0]!.match.priority ?? 0
+      const winners: ResourceHandlerId[] = []
+      while (defaults.length > 0 && (defaults[0]!.match.priority ?? 0) === priority) {
+        const candidate = defaults.shift()!
+        if (await detects(candidate.handler)) winners.push(candidate.handler.id)
+      }
+      if (winners.length > 0) return selected(winners.length === 1 ? winners[0] : undefined)
+    }
+    const text = available.find(handler => handler.id === TEXT_RESOURCE_HANDLER_ID)
+    return selected(source?.readText !== undefined ? text?.id : undefined)
   }
 
-  #associatedHandler(descriptor: ResourceDescriptor): ResourceHandlerId | undefined {
-    const key = associationKey(descriptor)
+  #available(descriptor: ResourceDescriptor): readonly ResourceHandler[] {
+    const capabilities = this.#capabilities(this.#sources.get(descriptor.ref.sourceId))
+    return [...this.#handlers.values()]
+      .filter(handler => handler.supports(capabilities))
+      .sort((left, right) => left.id.localeCompare(right.id))
+  }
+
+  #associatedHandler(descriptor: ResourceDescriptor, scope: 'type' | 'resource' = 'type'): ResourceHandlerId | undefined {
+    const key = associationKey(descriptor, scope)
     return key === undefined ? undefined : this.#associations.get(key)
   }
 

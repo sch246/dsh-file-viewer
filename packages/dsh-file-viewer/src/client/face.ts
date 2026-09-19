@@ -27,8 +27,8 @@ export function createResourceWorkbenchClientService(
     openWorkspaceLink: (viewId: string, href: string) => runtime.openWorkspaceLink(viewId, href),
     listOpenWith: (descriptor: ResourceDescriptor) => runtime.listOpenWith(descriptor),
     switchHandler: (viewId: string, handlerId: ResourceHandlerId) => runtime.switchHandler(viewId, handlerId),
-    setAssociation: (descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined) => {
-      runtime.setAssociation(descriptor, handlerId)
+    setAssociation: (descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined, scope?: 'type' | 'resource') => {
+      runtime.setAssociation(descriptor, handlerId, scope)
     },
     snapshot: (viewId: string) => runtime.snapshot(viewId),
     subscribe: (viewId: string, listener: () => void) => runtime.subscribe(viewId, listener),

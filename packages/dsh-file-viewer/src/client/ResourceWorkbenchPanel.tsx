@@ -1,6 +1,8 @@
 import { formatFileSize } from './file-size.ts'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ResourceViewOwnerProps } from './host.ts'
+import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { resourceViewEnvelope } from './sidebar-host.ts'
 import type {
   ResourceHandlerId,
   ResourceHandlerModule,
@@ -54,6 +56,14 @@ export type ResourceWorkbenchPanelProps = ResourceWorkbenchPanelInjected & Resou
   readonly t: (key: import('./locales.ts').FileViewerLocaleKey) => string
 }
 
+/** @param props Official tab information, viewer service and localized copy. @returns One feature body without sidebar layout ownership. */
+export function OfficialResourceWorkbenchPanel({ useTabInfo, service, t }: PropsRuntime<'sidebar.right.pane.tab'>
+  & ResourceWorkbenchPanelInjected & Pick<ResourceWorkbenchPanelProps, 't'>) {
+  const { tab } = useTabInfo()
+  const { instanceId } = resourceViewEnvelope(tab.descriptor)
+  return <ResourceWorkbenchPanel key={instanceId} instanceId={instanceId} service={service} t={t} />
+}
+
 function HandlerHost({
   viewId,
   service,
@@ -103,6 +113,12 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
   )
   const rootRef = useRef<HTMLElement>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [showMore, setShowMore] = useState(false)
+  const selected = state.openWith.find(choice => choice.selected)
+  const primary = state.openWith.filter(choice => choice.selected || choice.recommended)
+    .sort((left, right) => Number(right.selected) - Number(left.selected))
+  const other = state.openWith.filter(choice => !choice.selected && !choice.recommended)
+  const choices = showMore ? [...primary, ...other] : primary
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
@@ -137,21 +153,25 @@ export function ResourceWorkbenchPanel({ instanceId, service, t }: ResourceWorkb
           <button type="button" ref={triggerRef}
             aria-label={t('openWith')}
             aria-expanded={menuOpen}
-            onClick={() => { setMenuOpen(value => !value) }}
+            onClick={() => { setShowMore(false); setMenuOpen(value => !value) }}
           >
             {state.openWith.find(choice => choice.id === state.handlerId)?.label ?? t('chooseHandler')} <span aria-hidden="true">⌄</span>
           </button>
           {menuOpen && <div className="dsh-resource-handler-menu" role="group" aria-label={t('openWith')}>
-            {state.openWith.map(choice => <div className="dsh-resource-handler-row" key={choice.id}>
-              <button type="button" className="dsh-resource-handler-default"
-                title={t('rememberHandler')} aria-label={`${t('rememberHandler')}: ${choice.label}`}
-                aria-pressed={choice.associated}
-                onClick={() => { service.setAssociation(state.descriptor, choice.associated ? undefined : choice.id) }}>
-                <span aria-hidden="true">{choice.associated ? '●' : '○'}</span>
-              </button>
+            {choices.map(choice => <div className="dsh-resource-handler-row" key={choice.id}>
               <button type="button" className="dsh-resource-handler-name" aria-pressed={choice.selected}
                 onClick={() => { switchHandler(choice.id) }}>{choice.label}</button>
             </div>)}
+            {other.length > 0 && <button type="button" aria-expanded={showMore}
+              onClick={() => { setShowMore(value => !value) }}>{t(showMore ? 'fewerHandlers' : 'moreHandlers')}</button>}
+            {selected !== undefined && <div className="dsh-resource-handler-preferences">
+              <label><input type="checkbox" checked={selected.resourceAssociated}
+                onChange={event => { service.setAssociation(state.descriptor, event.currentTarget.checked ? selected.id : undefined, 'resource') }} />
+                {t('rememberResourceHandler')}</label>
+              <label><input type="checkbox" checked={selected.associated}
+                onChange={event => { service.setAssociation(state.descriptor, event.currentTarget.checked ? selected.id : undefined, 'type') }} />
+                {t('rememberTypeHandler')}</label>
+            </div>}
             {state.externalOpenSupported && <button type="button" onClick={() => {
               void service.openExternal(instanceId)
               setMenuOpen(false)

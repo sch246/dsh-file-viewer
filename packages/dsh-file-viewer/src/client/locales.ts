@@ -18,7 +18,7 @@ export type FileViewerLocaleKey =
   | 'automationPaused' | 'sourceStale' | 'conflict' | 'conflictHelp' | 'differences'
   | 'local' | 'source' | 'noDifferences' | 'backToEditor' | 'overwriteSource' | 'discardLocal'
   | 'confirmOverwrite' | 'confirmDiscard' | 'confirmClose'
-  | 'openWith' | 'chooseHandler' | 'rememberHandler'
+  | 'openWith' | 'chooseHandler' | 'moreHandlers' | 'fewerHandlers' | 'rememberResourceHandler' | 'rememberTypeHandler'
   | 'unsupportedResource' | 'handlerFailed' | 'textHandler' | 'imageHandler'
   | 'handlerLoading'
   | 'globalAutoUpdate' | 'globalAutoSave'
@@ -115,7 +115,7 @@ export const en: Record<FileViewerLocaleKey, string> = {
   autoUpdateUnsupported: 'Automatic update requires source watching.',
   autoSave: 'Save automatically with revision protection.',
   autoSaveUnsupported: 'Automatic save requires conditional writes.',
-  openExternal: 'Open',
+  openExternal: 'Open in system application',
   openExternalUnsupported: 'External opening is unavailable for this source.',
   readOnly: 'Read only',
   location: 'Source location',
@@ -149,7 +149,10 @@ export const en: Record<FileViewerLocaleKey, string> = {
   confirmClose: 'Close this document and discard its unsaved local edits?',
   openWith: 'Open with',
   chooseHandler: 'Choose a viewer',
-  rememberHandler: 'Use by default',
+  moreHandlers: 'More ways to open…',
+  fewerHandlers: 'Show fewer',
+  rememberResourceHandler: 'Use this viewer by default for this file',
+  rememberTypeHandler: 'Use this viewer by default for this file type',
   unsupportedResource: 'No installed viewer supports this resource.',
   handlerFailed: 'The selected viewer could not be loaded.',
   handlerLoading: 'Loading viewer…',
@@ -242,7 +245,7 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   autoUpdateUnsupported: '自动更新需要来源支持监听变化。',
   autoSave: '使用版本保护自动保存。',
   autoSaveUnsupported: '自动保存需要来源支持条件写入。',
-  openExternal: '打开',
+  openExternal: '在系统中打开',
   openExternalUnsupported: '该来源不支持外部打开。',
   readOnly: '只读',
   location: '来源位置',
@@ -276,7 +279,10 @@ export const zh: Record<FileViewerLocaleKey, string> = {
   confirmClose: '关闭此文档并放弃尚未保存的本地修改吗？',
   openWith: '打开方式',
   chooseHandler: '选择查看器',
-  rememberHandler: '设为默认',
+  moreHandlers: '更多打开方式…',
+  fewerHandlers: '收起其他方式',
+  rememberResourceHandler: '此文件默认使用当前方式',
+  rememberTypeHandler: '此文件类型默认使用当前方式',
   unsupportedResource: '没有已安装的查看器支持此资源。',
   handlerFailed: '无法加载所选查看器。',
   handlerLoading: '正在加载查看器…',

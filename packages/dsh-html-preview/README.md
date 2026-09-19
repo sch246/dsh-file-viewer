@@ -2,9 +2,9 @@
 
 Use Edit side by side to open an editor to the left of the preview.
 
-This optional Client plugin registers an HTML handler for `.html`, `.htm` and `text/html` resources. It consumes the viewer’s shared fully loaded Local text, so unsaved edits can appear beside the text editor. Incomplete loading never executes a partial page.
+This optional Client plugin recommends its HTML handler for `.html`, `.htm` and `text/html` resources. It is manually available through More ways to open for every source offering text reading, regardless of filename. It consumes the viewer’s shared fully loaded Local text, so unsaved edits can appear beside the text editor. Incomplete loading never executes a partial page.
 
-The HTML document renders in a sandboxed iframe with an opaque origin. Scripts are disabled by default. Each preview has its own Allow scripts toggle and a separate browser-local default for new previews. Enabling scripts adds only `allow-scripts`; same-origin access, top navigation, popups and form submission remain unavailable. Turning the toggle or using Reload recreates the iframe, and changed Local text reloads its document. Runtime state inside the page does not survive that reload.
+The HTML document fills the sidebar content below its toolbar and scrolls inside a sandboxed iframe with an opaque origin. Scripts are disabled by default. Each preview has its own Allow scripts toggle and a separate browser-local default for new previews. Enabling scripts adds only `allow-scripts`; same-origin access, top navigation, popups and form submission remain unavailable. Turning the toggle or using Reload recreates the iframe, and changed Local text reloads its document. Runtime state inside the page does not survive that reload.
 
 Self-contained HTML/CSS and absolute web assets can render. A fixed `about:blank` base prevents relative paths from resolving against Harness; this is not a local project web server. JavaScript has the iframe’s sandboxed browser environment, without access to the Harness DOM, storage or authenticated application context.
 

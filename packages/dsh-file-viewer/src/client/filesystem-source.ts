@@ -215,6 +215,30 @@ export class FilesystemResourceSource implements ResourceSource {
     }
   }
 
+  /** Read at most maxBytes from byte zero for handler inspection, independently of full-text loading. */
+  async readPrefix(ref: ResourceRef, maxBytes: number, signal: AbortSignal): Promise<Uint8Array> {
+    const url = userFileTransferUrl({ sessionId: ref.sessionId, path: ref.resourceId, disposition: 'attachment' })
+    const response = await fetch(url, { credentials: 'same-origin', signal, headers: { Range: `bytes=0-${maxBytes - 1}` } })
+    const range = response.headers.get('content-range') ?? ''
+    if (response.status === 416 && range === 'bytes */0') {
+      await response.body?.cancel()
+      return new Uint8Array()
+    }
+    const match = /^bytes 0-(\d+)\/(\d+)$/.exec(range)
+    const length = match === null ? 0 : Number(match[1]) + 1
+    const total = match === null ? 0 : Number(match[2])
+    if (response.status !== 206 || match === null || !Number.isSafeInteger(length)
+      || !Number.isSafeInteger(total) || length < 1 || length !== Math.min(maxBytes, total)) {
+      await response.body?.cancel()
+      if (response.status === 404) throw new ResourceMissingError('File not found.')
+      throw new Error(`File prefix: invalid byte range (HTTP ${response.status}).`)
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    signal.throwIfAborted()
+    if (bytes.byteLength !== length) throw new Error('File prefix: incomplete byte range.')
+    return bytes
+  }
+
   /** Load exact bounded bytes without decoding or text rejection. */
   async readBytes(ref: ResourceRef, signal: AbortSignal): Promise<ResourceLoadedBytes> {
     const loaded = loadedBytes(await readResource(() => this.#gateway.readBytes(ref.sessionId, ref.resourceId, signal)))

@@ -5,6 +5,8 @@ import type { ResourceOpenTarget, ResourceTextPosition } from './resource.ts'
 /** One provider-owned request shared by source resolution and the reached destination. */
 export interface ResourceNavigation {
   readonly signal: AbortSignal
+  /** @param reason Source/handler lifetime failure that invalidates this owned request. */
+  cancel(reason?: unknown): void
   /** @returns Whether this request still owns its Session and destination group. */
   current(): boolean
   /** @param id Resolved view identity. @returns False when a newer request owns its group. */
@@ -101,6 +103,8 @@ export interface ResourceViewHost {
     readonly sessionId: SessionId
     readonly instanceId: string
     readonly descriptor: unknown
+    /** Aborted when restoration loses its occurrence or provider lifetime. */
+    readonly signal: AbortSignal
   }) => void | ResourceViewRestored | Promise<void | ResourceViewRestored>): () => void
   /** @param sessionId Owning Session. @param viewId Existing view. @returns Completion after asynchronous guards and committed removal, veto or supersession. */
   close(sessionId: SessionId, viewId: string): Promise<void>

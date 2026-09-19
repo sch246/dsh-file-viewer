@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { TEXT_RESOURCE_HANDLER_ID, type ResourceHandlerProps } from '@dsh-external/dsh-file-viewer/client'
+import type { ResourceHandlerId, ResourceHandlerProps } from '@dsh-external/dsh-file-viewer/client'
 import { MarkdownContent } from './content.tsx'
 import { defaultHtml, setDefaultHtml, subscribeHtmlDefault } from './html-default.ts'
 import type { MarkdownLocaleKey } from './locales.ts'
@@ -56,7 +56,7 @@ export function createMarkdownResourceView(t: (key: MarkdownLocaleKey) => string
     return <section className="dsh-resource-markdown" aria-label={t('localPreview')}>
       <div className="dsh-resource-markdown-controls">
         <button type="button" onClick={() => { void service.open(service.snapshot(viewId).descriptor, {
-          handlerId: TEXT_RESOURCE_HANDLER_ID, sideBySide: true, preview: false,
+          handlerId: 'text' as ResourceHandlerId, sideBySide: true, preview: false,
           target: { fromInstanceId: viewId, direction: 'left' },
         }) }}>{t('editBeside')}</button>
         <label><input type="checkbox" checked={html} onChange={event => {
