@@ -5,7 +5,7 @@ import { editorSearchPhrases } from './locales.ts'
 import { formatFileSize } from './file-size.ts'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent } from 'react'
-import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
+import type { ResourceViewOwnerProps } from './host.ts'
 import type { FileViewerEditorModule, FileViewerTextChange } from './editor-module.ts'
 import type {
   FileViewerFailure,
@@ -65,7 +65,7 @@ export interface FileViewerPanelInjected {
 }
 
 /** Composed editor view props. */
-export type FileViewerPanelProps = FileViewerPanelInjected & RightbarViewOwnerProps & {
+export type FileViewerPanelProps = FileViewerPanelInjected & ResourceViewOwnerProps & {
   readonly textSelection?: { readonly line: number; readonly column?: number; readonly requestId: number }
   readonly t: (key: import('./locales.ts').FileViewerLocaleKey) => string
 }

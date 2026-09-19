@@ -1,4 +1,4 @@
-import type { RightSidebarNavigation } from '@dsh-external/dsh-right-sidebar/client'
+import type { ResourceNavigation } from './host.ts'
 import type { EditorLanguage } from './editor-languages.ts'
 import type { FileViewerTextChange } from './editor-module.ts'
 import type { ComponentType } from 'react'
@@ -274,7 +274,7 @@ export type ResourceNavigationTarget =
 
 /** Placement and presentation intent for one open request. */
 export interface ResourceOpenOptions {
-  readonly navigation?: RightSidebarNavigation
+  readonly navigation?: ResourceNavigation
   readonly textSelection?: ResourceTextPosition
   readonly handlerId?: ResourceHandlerId
   readonly target?: ResourceOpenTarget
@@ -309,7 +309,7 @@ export interface ResourceWorkbenchClientService {
   /** @param viewId Current tab. @param href Source-owned hyperlink. @returns Nothing after navigation or a reported failure; unsaved close guards can veto. */
   navigateLink(viewId: string, href: string): Promise<void>
   /** @param viewId Current tab. @param target Link or resolved destination. @param navigation Shared cancellable opening request. @returns Committed, cancelled (including veto), or unhandled when this runtime does not own the tab. */
-  navigateTo(viewId: string, target: ResourceNavigationTarget, navigation?: RightSidebarNavigation): Promise<'committed' | 'cancelled' | 'unhandled'>
+  navigateTo(viewId: string, target: ResourceNavigationTarget, navigation?: ResourceNavigation): Promise<'committed' | 'cancelled' | 'unhandled'>
   /**
    * Open a document link through the shared workspace-file dispatch, so a handler that owns the
    * tab moves it in place and a directory reaches a directory handler.

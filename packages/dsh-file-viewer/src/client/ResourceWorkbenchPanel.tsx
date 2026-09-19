@@ -1,6 +1,6 @@
 import { formatFileSize } from './file-size.ts'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import type { RightbarViewOwnerProps } from '@dsh-external/dsh-right-sidebar/client'
+import type { ResourceViewOwnerProps } from './host.ts'
 import type {
   ResourceHandlerId,
   ResourceHandlerModule,
@@ -50,7 +50,7 @@ export interface ResourceWorkbenchPanelInjected {
 }
 
 /** Props for one resource view occurrence. */
-export type ResourceWorkbenchPanelProps = ResourceWorkbenchPanelInjected & RightbarViewOwnerProps & {
+export type ResourceWorkbenchPanelProps = ResourceWorkbenchPanelInjected & ResourceViewOwnerProps & {
   readonly t: (key: import('./locales.ts').FileViewerLocaleKey) => string
 }
 

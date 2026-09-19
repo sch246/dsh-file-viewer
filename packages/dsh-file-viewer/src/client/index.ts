@@ -11,13 +11,10 @@ import { FilesystemResourceSource } from './filesystem-source.ts'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-modules/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import type {} from '@dsh-external/dsh-right-sidebar/client'
+import { createResourceViewHost } from './sidebar-host.ts'
 import { asFileViewerEditorModule } from './editor-module.ts'
 import { EditorPreferencesModel } from './editor-preferences.ts'
-import {
-  createResourceViewHost,
-  createResourceWorkbenchClientService,
-} from './face.ts'
+import { createResourceWorkbenchClientService } from './face.ts'
 import { ResourceWorkbenchPanel } from './ResourceWorkbenchPanel.tsx'
 import { en, NS, zh } from './locales.ts'
 import type {
@@ -36,6 +33,7 @@ import {
 import { FILE_VIEWER_CSS } from './styles.ts'
 
 export type { EditorLanguage, EditorTextMateLanguage } from './editor-languages.ts'
+export type { ResourceNavigation, ResourceNavigationOptions, ResourceViewHost } from './host.ts'
 export type { WorkspaceFileOpenIntent } from '@dsh-external/dsh-user-files/file-location'
 
 export type {
@@ -124,7 +122,7 @@ function valueOf<T>(result: RemoteResult<T>): T {
 async function registerRuntime(ctx: Context): Promise<() => void> {
   const metadata = valueOf(await ctx.remote.fileViewer.metadata())
   const t = ctx.locale.bind(NS)
-  const host = createResourceViewHost(ctx, ctx.rightSidebar)
+  const host = createResourceViewHost(ctx)
   const runtime = new ResourceWorkbenchRuntime({
     host,
     textBlockPolicy: { minBytes: metadata.textBlockMinBytes, targetBytes: metadata.textBlockTargetBytes, maxBytes: metadata.textBlockMaxBytes },
@@ -224,7 +222,7 @@ async function registerRuntime(ctx: Context): Promise<() => void> {
   const offSource = runtime.registerSource(source)
   const offRestorer = runtime.registerRestorer()
   const offOpen = ctx.on('chat/open-workspace-file', async (request, next) => {
-    const navigation = ctx.rightSidebar.beginNavigation(request.sessionId, {
+    const navigation = host.beginNavigation(request.sessionId, {
       request,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(request.target === undefined ? {} : { target: request.target }),

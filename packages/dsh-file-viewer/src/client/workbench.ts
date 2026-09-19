@@ -1,4 +1,4 @@
-import type { RightSidebarNavigation, RightSidebarNavigationOptions } from '@dsh-external/dsh-right-sidebar/client'
+import type { ResourceNavigation, ResourceViewHost } from './host.ts'
 import { EditorLanguageRegistry } from './editor-languages.ts'
 import type { TextBlockPolicy } from './text-document.ts'
 import type { FileViewerTextChange } from './editor-module.ts'
@@ -28,7 +28,6 @@ import {
   type ResourceBytesWatchEvent,
   type ResourceNavigationTarget,
   type ResourceOpenOptions,
-  type ResourceOpenTarget,
   type ResourceRef,
   type ResourceSource,
   type ResourceViewSnapshot,
@@ -41,69 +40,6 @@ export const RESOURCE_WORKBENCH_VIEW_ID = 'resource-workbench'
 export const TEXT_RESOURCE_HANDLER_ID = ResourceHandlerId('text')
 /** Built-in byte-preserving image handler. */
 export const IMAGE_RESOURCE_HANDLER_ID = ResourceHandlerId('image')
-
-/** Sidebar methods needed by the resource-opening runtime. */
-export interface ResourceViewHost {
-  open(
-    sessionId: SessionId,
-    input: {
-      readonly id: string
-      readonly viewId: string
-      readonly title: string
-      readonly resourceMissing?: boolean
-      readonly restoreDescriptor?: unknown
-      readonly onClose?: () => boolean | Promise<boolean>
-      readonly onClosed?: () => void
-      readonly onNavigate?: (descriptor: unknown, navigation: RightSidebarNavigation) => boolean | Promise<boolean>
-    },
-    options?: {
-      readonly target?: ResourceOpenTarget
-      readonly preview?: boolean
-      readonly navigation?: RightSidebarNavigation
-    },
-  ): Promise<string>
-  /** Open a document link through the shared Client workspace-file dispatch. */
-  openWorkspaceFile(request: {
-    readonly sessionId: SessionId
-    readonly path: string
-    readonly viewId: string
-    readonly replace: 'current'
-    readonly sourceInstanceId?: string
-    readonly signal?: AbortSignal
-    readonly textSelection?: ResourceTextPosition
-  }): Promise<void>
-  beginNavigation(sessionId: SessionId, options?: RightSidebarNavigationOptions): RightSidebarNavigation
-  update(
-    sessionId: SessionId,
-    viewId: string,
-    update: {
-      readonly title?: string
-      /** Marks the tab whose exact resource the source reports as gone. */
-      readonly resourceMissing?: boolean
-      readonly restoreDescriptor?: unknown
-    },
-  ): void
-  pin(sessionId: SessionId, viewId: string): void
-  group(sessionId: SessionId, viewId: string): string
-  resolveTarget(sessionId: SessionId, target: ResourceOpenTarget): string | undefined
-  launch(sessionId: SessionId, selectorId: string, selection?: unknown): Promise<void>
-  registerRestorer(
-    viewId: string,
-    restore: (context: { readonly sessionId: SessionId; readonly instanceId: string; readonly descriptor: unknown }) =>
-      void | {
-        readonly onClose?: () => boolean | Promise<boolean>
-        readonly onClosed?: () => void
-        readonly onRestored?: () => void
-        readonly onNavigate?: (descriptor: unknown, navigation: RightSidebarNavigation) => boolean | Promise<boolean>
-      } | Promise<void | {
-        readonly onClose?: () => boolean | Promise<boolean>
-        readonly onClosed?: () => void
-        readonly onRestored?: () => void
-        readonly onNavigate?: (descriptor: unknown, navigation: RightSidebarNavigation) => boolean | Promise<boolean>
-      }>,
-  ): () => void
-  close(sessionId: SessionId, viewId: string): Promise<void>
-}
 
 interface ViewRecord {
   textSelection?: ResourceTextPosition & { readonly requestId: number }
@@ -582,7 +518,7 @@ export class ResourceWorkbenchRuntime {
   }
 
   /** Replace an owned view; refusal and cancellation never mean an unhandled request. */
-  async navigateTo(viewId: string, target: ResourceNavigationTarget, navigation?: RightSidebarNavigation): Promise<'committed' | 'cancelled' | 'unhandled'> {
+  async navigateTo(viewId: string, target: ResourceNavigationTarget, navigation?: ResourceNavigation): Promise<'committed' | 'cancelled' | 'unhandled'> {
     if (navigation !== undefined && !navigation.current()) return 'cancelled'
     if (!this.#views.has(viewId)) return 'unhandled'
     if (navigation !== undefined && !navigation.claim(viewId)) return 'cancelled'
@@ -614,7 +550,7 @@ export class ResourceWorkbenchRuntime {
     }
   }
 
-  async #restoreNavigation(viewId: string, value: unknown, navigation: RightSidebarNavigation): Promise<boolean> {
+  async #restoreNavigation(viewId: string, value: unknown, navigation: ResourceNavigation): Promise<boolean> {
     const persisted = parsePersisted(value)
     if (persisted === undefined) return false
     const { format: _format, handlerId, textSelection, ...descriptor } = persisted
@@ -634,7 +570,7 @@ export class ResourceWorkbenchRuntime {
   async #navigate(
     viewId: string,
     targetRequest: ResourceNavigationTarget,
-    navigation?: RightSidebarNavigation,
+    navigation?: ResourceNavigation,
     restoration?: { handlerId: ResourceHandlerId | undefined },
   ): Promise<boolean> {
     const view = this.#view(viewId)

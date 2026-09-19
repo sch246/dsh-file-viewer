@@ -65,6 +65,8 @@ The [handler dropdown](../../README.md#choose-a-handler) separates current-view 
 
 [`cordis.patch.yml`](cordis.patch.yml) inserts the workbench and editor Client rows. [`src/client/workbench.ts`](src/client/workbench.ts) owns resource views, handlers, associations and sidebar restoration. [`src/client/service.ts`](src/client/service.ts) owns shared text documents, exact hashes and guarded asynchronous operations. The CodeMirror implementation stays in the sibling editor package and materializes after a ready or partial text view mounts.
 
+[`src/client/host.ts`](src/client/host.ts) defines the workbench's required navigation, placement, checkpoint and occurrence-lifecycle operations. [`src/client/sidebar-host.ts`](src/client/sidebar-host.ts) binds them to the installed sidebar. Public resource types and renderer props do not import sidebar provider types. Navigation commits publish prepared view state and a group destination together; asynchronous close guards can retain a view, and only committed removal releases its documents and handler state. Layout, preview replacement and content history remain provider-owned.
+
 </details>
 
 -----

@@ -1,9 +1,6 @@
 import type { EditorLanguage } from './editor-languages.ts'
 import type { FileViewerTextChange } from './editor-module.ts'
-import { openWorkspaceFile } from '@deepseek-ai/dsh-client-ui-chat/client'
-import type { Context } from '@deepseek-ai/cordis'
-import type { RightSidebarService, RightSidebarNavigation } from '@dsh-external/dsh-right-sidebar/client'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ResourceNavigation } from './host.ts'
 import type { ResourceBytesWatchEvent, ResourceAutomationPreferences } from './resource.ts'
 import type {
   ResourceDescriptor,
@@ -14,32 +11,7 @@ import type {
   ResourceSource,
   ResourceWorkbenchClientService,
 } from './resource.ts'
-import {
-  ResourceWorkbenchRuntime,
-  type ResourceViewHost,
-} from './workbench.ts'
-
-/** @param ctx - Client context with sessions and remote.session injected. @param rightSidebar - Right-sidebar service. @returns Resource-view host adapter. */
-export function createResourceViewHost(ctx: Context, rightSidebar: RightSidebarService): ResourceViewHost {
-  return {
-    openWorkspaceFile: request => openWorkspaceFile(ctx, request),
-    open: (sessionId, input, options) => rightSidebar.openInstance(sessionId, input, options),
-    beginNavigation: (sessionId, options) => rightSidebar.beginNavigation(sessionId, options),
-    update: (sessionId, viewId, update) => {
-      rightSidebar.updateInstance(sessionId, viewId, update)
-    },
-    pin: (sessionId, viewId) => { rightSidebar.pinInstance(sessionId, viewId) },
-    group: (sessionId, viewId) => rightSidebar.getInstanceGroup(sessionId, viewId),
-    resolveTarget: (sessionId, target) => rightSidebar.resolveTarget(sessionId, target),
-    launch: (sessionId, selectorId, selection) => rightSidebar.launch(sessionId, selectorId, selection),
-    registerRestorer: (viewId, restore) => rightSidebar.registerRestorer(viewId, context => restore({
-      sessionId: context.sessionId as SessionId,
-      instanceId: context.instanceId,
-      descriptor: context.descriptor,
-    })),
-    close: (sessionId, viewId) => rightSidebar.closeInstance(sessionId, viewId),
-  }
-}
+import { ResourceWorkbenchRuntime } from './workbench.ts'
 
 /** @param runtime Sole resource-workbench runtime. @returns Frozen public resource service. */
 export function createResourceWorkbenchClientService(
@@ -51,7 +23,7 @@ export function createResourceWorkbenchClientService(
     registerHandler: (handler: ResourceHandler) => runtime.registerHandler(handler),
     open: (descriptor: ResourceDescriptor, options?: ResourceOpenOptions) => runtime.open(descriptor, options),
     navigateLink: (viewId: string, href: string) => runtime.navigateLink(viewId, href),
-    navigateTo: (viewId: string, target: ResourceNavigationTarget, navigation?: RightSidebarNavigation) => runtime.navigateTo(viewId, target, navigation),
+    navigateTo: (viewId: string, target: ResourceNavigationTarget, navigation?: ResourceNavigation) => runtime.navigateTo(viewId, target, navigation),
     openWorkspaceLink: (viewId: string, href: string) => runtime.openWorkspaceLink(viewId, href),
     listOpenWith: (descriptor: ResourceDescriptor) => runtime.listOpenWith(descriptor),
     switchHandler: (viewId: string, handlerId: ResourceHandlerId) => runtime.switchHandler(viewId, handlerId),
