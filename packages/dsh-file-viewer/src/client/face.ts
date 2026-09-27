@@ -25,6 +25,7 @@ export function createResourceWorkbenchClientService(
     navigateLink: (viewId: string, href: string) => runtime.navigateLink(viewId, href),
     navigateTo: (viewId: string, target: ResourceNavigationTarget, navigation?: ResourceNavigation) => runtime.navigateTo(viewId, target, navigation),
     openWorkspaceLink: (viewId: string, href: string) => runtime.openWorkspaceLink(viewId, href),
+    readLinkedBytes: (viewId: string, href: string, signal: AbortSignal) => runtime.readLinkedBytes(viewId, href, signal),
     listOpenWith: (descriptor: ResourceDescriptor) => runtime.listOpenWith(descriptor),
     switchHandler: (viewId: string, handlerId: ResourceHandlerId) => runtime.switchHandler(viewId, handlerId),
     setAssociation: (descriptor: ResourceDescriptor, handlerId: ResourceHandlerId | undefined, scope?: 'type' | 'resource') => {

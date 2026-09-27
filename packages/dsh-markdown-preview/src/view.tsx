@@ -27,6 +27,12 @@ export function createMarkdownResourceView(t: (key: MarkdownLocaleKey) => string
     const onOpenFile = useCallback((href: string) => {
       void service.openWorkspaceLink(viewId, href)
     }, [service, viewId])
+    // Local images read through the containing document so relative sources resolve beside it.
+    const loadImage = useCallback(async (src: string, signal: AbortSignal): Promise<Blob> => {
+      const loaded = await service.readLinkedBytes(viewId, src, signal)
+      const mediaType = loaded.descriptor?.mediaType ?? 'application/octet-stream'
+      return new Blob([loaded.bytes.slice().buffer as ArrayBuffer], { type: mediaType })
+    }, [service, viewId])
     const newHtml = useSyncExternalStore(subscribeHtmlDefault, defaultHtml, defaultHtml)
     const viewport = useRef<HTMLDivElement>(null)
     const body = useRef<HTMLDivElement>(null)
@@ -87,7 +93,7 @@ export function createMarkdownResourceView(t: (key: MarkdownLocaleKey) => string
       }}>
         <div ref={body}><MarkdownContent text={text} streaming={state.status === 'partial'} allowHtml={html}
           copyLabel={t('copy')} copiedLabel={t('copied')} footnotes={t('footnotes')}
-          onOpenFile={onOpenFile} /></div>
+          onOpenFile={onOpenFile} loadImage={loadImage} /></div>
       </div>}
     </section>
   }

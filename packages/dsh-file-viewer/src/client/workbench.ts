@@ -572,6 +572,22 @@ export class ResourceWorkbenchRuntime {
     }
   }
 
+  /** Resolve a document-relative link and read its bytes under the containing view's byte lifetime. */
+  async readLinkedBytes(viewId: string, href: string, signal: AbortSignal): Promise<ResourceLoadedBytes> {
+    const view = this.#view(viewId)
+    const source = this.#sources.get(view.descriptor.ref.sourceId)
+    if (source?.resolveLink === undefined || source.readBytes === undefined) {
+      throw new Error('resource-workbench: linked byte reading is unavailable')
+    }
+    return await this.#runBytes(viewId, view, source, signal, async combined => {
+      const target = await source.resolveLink!(view.descriptor.ref, href, combined)
+      const loaded = await source.readBytes!(target.descriptor.ref, combined)
+      const { ref: _ref, ...resolved } = target.descriptor
+      return loaded.descriptor === undefined ? { ...loaded, descriptor: resolved }
+        : { ...loaded, descriptor: { ...resolved, ...loaded.descriptor } }
+    })
+  }
+
   async #restoreNavigation(viewId: string, value: unknown, navigation: ResourceNavigation): Promise<boolean> {
     const persisted = parsePersisted(value)
     if (persisted === undefined) return false

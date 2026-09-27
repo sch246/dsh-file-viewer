@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import Markdown, { type Components } from 'react-markdown'
+import { useEffect, useMemo, useRef, useState, type ImgHTMLAttributes } from 'react'
+import Markdown, { type Components, type UrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeRaw from 'rehype-raw'
@@ -44,12 +44,14 @@ function literalHtmlNode(node: TreeNode): void {
 }
 const literalPlugins: typeof htmlPlugins = [literalHtml, localDriveLinks, [rehypeSanitize, schema], [rehypeKatex, { trust: false }]]
 
-/** @param url Parsed destination. @param key URL attribute. @returns Supported external destination or document anchor. */
-function previewUrl(url: string, key: string): string | undefined {
+/** @param url Parsed destination. @param key URL attribute. @param node Destination element. @returns Supported external destination, document anchor, or local image source. */
+const previewUrl: UrlTransform = (url, key, node) => {
   if (/^https?:\/\//i.test(url)) return url
   if (key === 'href' && url.startsWith('#')) return `#dsh-markdown-${url.slice(1)}`
   if (key === 'href' && /^mailto:/i.test(url)) return url
   if (key === 'href' && isLocalPath(url)) return url
+  // The image component replaces a local source with bytes read from the containing document.
+  if (key === 'src' && node.tagName === 'img' && isLocalPath(url)) return url
   return undefined
 }
 
@@ -66,8 +68,48 @@ function splitFrontMatter(text: string): { metadata?: string; body: string } {
   return match ? { metadata: match[1], body: text.slice(match[0].length) } : { body: text }
 }
 
+/** @param src Document-relative source. @param load Byte loader resolving that source against the containing document. @param props Remaining image attributes. @returns Image backed by document-relative bytes, loaded once it nears the viewport. */
+function LinkedImage({ src, load, ...props }: {
+  readonly src: string
+  readonly load: (src: string, signal: AbortSignal) => Promise<Blob>
+} & Omit<ImgHTMLAttributes<HTMLImageElement>, 'src'>) {
+  const [url, setUrl] = useState<string>()
+  const element = useRef<HTMLImageElement>(null)
+  useEffect(() => {
+    const target = element.current
+    if (target === null) return
+    const controller = new AbortController()
+    let objectUrl: string | undefined
+    const start = () => {
+      void load(src, controller.signal).then(blob => {
+        if (controller.signal.aborted) return
+        objectUrl = URL.createObjectURL(blob)
+        setUrl(objectUrl)
+      }, () => {
+        // A failed or cancelled read keeps the alt text in place.
+      })
+    }
+    const release = () => {
+      controller.abort()
+      if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
+    }
+    if (typeof IntersectionObserver === 'undefined') {
+      start()
+      return release
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return
+      observer.disconnect()
+      start()
+    }, { rootMargin: '256px 0px' })
+    observer.observe(target)
+    return () => { observer.disconnect(); release() }
+  }, [src, load])
+  return <img {...props} ref={element} src={url} alt={props.alt ?? src} loading="lazy" />
+}
+
 /** Render Markdown and sanitized HTML while keeping shared code highlighting and copy controls. */
-export function MarkdownContent({ text, streaming, allowHtml, copyLabel, copiedLabel, footnotes, onOpenFile }: {
+export function MarkdownContent({ text, streaming, allowHtml, copyLabel, copiedLabel, footnotes, onOpenFile, loadImage }: {
   readonly text: string
   readonly streaming: boolean
   readonly allowHtml: boolean
@@ -75,6 +117,7 @@ export function MarkdownContent({ text, streaming, allowHtml, copyLabel, copiedL
   readonly copiedLabel: string
   readonly footnotes: string
   readonly onOpenFile: (href: string) => void
+  readonly loadImage: (src: string, signal: AbortSignal) => Promise<Blob>
 }) {
   const source = useMemo(() => splitFrontMatter(text), [text])
   const components = useMemo<Components>(() => ({
@@ -96,9 +139,10 @@ export function MarkdownContent({ text, streaming, allowHtml, copyLabel, copiedL
       } : props.onClick} {...(href?.startsWith('#') || local ? {} : { target: '_blank', rel: 'noopener noreferrer' })}>{children}</a>
     },
     img({ node: _node, src, ...props }) {
+      if (src !== undefined && isLocalPath(src)) return <LinkedImage src={src} load={loadImage} {...props} />
       return <img {...props} src={src} loading="lazy" />
     },
-  }), [streaming, copyLabel, copiedLabel, onOpenFile])
+  }), [streaming, copyLabel, copiedLabel, onOpenFile, loadImage])
   return <>
     {source.metadata !== undefined && <section className="dsh-markdown-front-matter"><pre>{source.metadata}</pre></section>}
     <Markdown remarkPlugins={remarkPlugins} rehypePlugins={allowHtml ? htmlPlugins : literalPlugins}

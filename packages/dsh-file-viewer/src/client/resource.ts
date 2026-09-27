@@ -336,6 +336,15 @@ export interface ResourceWorkbenchClientService {
    * @returns Completion; unresolved links reject with the dispatch failure.
    */
   openWorkspaceLink(viewId: string, href: string): Promise<void>
+  /**
+   * Resolve a document-relative link and read its bytes without opening a view, so a renderer can
+   * embed a sibling resource such as a Markdown image.
+   * @param viewId - Tab containing the link.
+   * @param href - Source-authored link, resolved relative to the containing document.
+   * @param signal - Cancellation signal.
+   * @returns Opaque bytes and the descriptor resolved for that destination.
+   */
+  readLinkedBytes(viewId: string, href: string, signal: AbortSignal): Promise<ResourceLoadedBytes>
   /** @param descriptor Resource metadata. @returns All capability-eligible handlers in deterministic order, with metadata recommendations. */
   listOpenWith(descriptor: ResourceDescriptor): readonly ResourceHandlerChoice[]
   /** @param viewId Existing resource view. @param handlerId Selected capability-eligible handler. @returns Nothing after the switch or veto. */
